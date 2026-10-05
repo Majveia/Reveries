@@ -32,7 +32,7 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
     { red: '#d9d4c8', dark: '#2b2d31', light: '#a3121a', trim: '#5b6066' },
   ][livery % 3];
   const RED = col(L.red), DARK = col(L.dark), LIGHT = col(L.light), TRIM = col(L.trim);
-  const GUN = col('#3a3d42'), STEEL = col('#8d9096');
+  const GUN = col('#3a3d42'), STEEL = col('#8d9096'), BLACK0 = col('#0b0c0e');
   const paint = [], metal = [], glass = [], hot = [], cool = [];
 
   // ---- fuselage: red top, charcoal belly, a cream cheat-line along the flank
@@ -144,6 +144,21 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   vent.rotateZ(-Math.PI / 2); vent.translate(0, -0.6, 0);
   paint.push(finish(vent, DARK, 0.5));
 
+  // wing detail: gunmetal leading edge, split flaps, hardpoint rails, tip strake
+  for (const s of [1, -1]) {
+    const le = cyl([0.95 * s, -0.12, -0.75], [4.2 * s, -0.5, -3.12], 0.05, 0.035, 8);
+    metal.push(finish(le, GUN, 2));
+    const te = (x) => -3.6 - (x - 0.7) * 0.28 + 0.32, wy = (x) => -0.08 - x * 0.12 + 0.085;
+    for (const [x0, x1] of [[1.1, 2.35], [2.55, 3.3]]) metal.push(finish(cyl([x0 * s, wy(x0), te(x0)], [x1 * s, wy(x1), te(x1)], 0.014, 0.014, 4), BLACK0, 2));
+    metal.push(finish(box(0.06, 0.08, 1.3, 2.3 * s, -0.42, -2.6), GUN, 2));
+    metal.push(finish(cyl([2.3 * s, -0.5, -1.9], [2.3 * s, -0.5, -3.25], 0.06, 0.06, 8), DARK, 2));
+  }
+  // pilot (helmet + headrest) visible through the canopy
+  metal.push(finish(box(0.3, 0.42, 0.1, 0, 0.6, 0.62), DARK, 2));
+  paint.push(finish(new THREE.SphereGeometry(0.16, 16, 12).scale(1, 1.08, 1.1).translate(0, 0.69, 0.86), LIGHT, 2));
+  glass.push(finish(new THREE.SphereGeometry(0.1, 12, 8).scale(1.1, 0.7, 0.6).translate(0, 0.7, 0.97), 0xffffff, 2));
+  metal.push(finish(box(0.5, 0.18, 0.5, 0, 0.42, 0.85), DARK, 2));
+
   // ---- greebles: spine hatches, antenna, vents, sensor blisters
   for (let k = 0; k < 9; k++) {
     const z = rng.range(-3.9, -0.6), w = rng.range(0.08, 0.2), d = rng.range(0.15, 0.5);
@@ -170,9 +185,10 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   const group = new THREE.Group();
   group.add(mesh(merge(paint), M.paint));
   group.add(mesh(merge(metal), M.metal));
-  const gl = mesh(merge(glass), M.glass); gl.castShadow = true; group.add(gl);
+  const gl = mesh(merge(glass.slice(1)), M.glass); group.add(gl);
+  const canopy = mesh(merge(glass.slice(0, 1)), M.canopy); canopy.castShadow = false; canopy.renderOrder = 2; group.add(canopy);
   group.add(gear);
-  const hotM = M.glow('#ffb36b', 14);
+  const hotM = M.glow('#ffb36b', 14).clone(); // per-ship: animated with throttle
   const hotMesh = new THREE.Mesh(merge([finish(hotDisk), ...hot.map((h) => finish(h))]), hotM);
   group.add(hotMesh);
 
@@ -213,92 +229,133 @@ function flipWinding(g) {
 export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   const rng = new Random(seed);
   const L = [
-    { body: '#b0131b', dark: '#1d1f23', light: '#e4ddcf', accent: '#f2c14a' },
-    { body: '#e6e0d3', dark: '#202227', light: '#c0392b', accent: '#2fa3c8' },
-    { body: '#1f6a73', dark: '#1b1d21', light: '#e4ddcf', accent: '#ff8a3c' },
+    { body: '#b3121c', dark: '#1b1d21', light: '#e6dfd0', accent: '#f2c14a' },
+    { body: '#e6e0d3', dark: '#202227', light: '#b3121c', accent: '#2fa3c8' },
+    { body: '#1f6a73', dark: '#1b1d21', light: '#e6dfd0', accent: '#ff8a3c' },
     { body: '#2a2d33', dark: '#141518', light: '#c9a35a', accent: '#ff3b6b' },
   ][livery % 4];
-  const BODY = col(L.body), DARK = col(L.dark), LIGHT = col(L.light), ACC = col(L.accent), GUN = col('#3a3d42'), STEEL = col('#9a9da3');
+  const BODY = col(L.body), DARK = col(L.dark), LIGHT = col(L.light), ACC = col(L.accent), GUN = col('#34373c'), STEEL = col('#9a9da3'), BLACK = col('#0c0d0f');
   const paint = [], metal = [], glass = [];
 
-  // main body: high front fairing, waisted seat, tall tail cowl
+  // ---- main hull: long, low, crisp superellipse sections (Akira fairing on a speeder spine)
   const bodyPaint = (x, y, z, nx, ny, nz, o) => {
-    if (y < 0.42) return o.copy(DARK);
-    if (Math.abs(y - 0.55) < 0.035 && z > -1.5) return o.copy(LIGHT); // pin stripe
+    if (ny < -0.35 || y < 0.24) return o.copy(DARK);
+    if (Math.abs(x) < 0.055 && ny > 0.6 && z > -1.7) return o.copy(LIGHT); // centre racing stripe
+    if (Math.abs(y - 0.38) < 0.022 && z > -1.6 && z < 1.75) return o.copy(LIGHT); // flank pin-stripe
     return o.copy(BODY);
   };
   paint.push(finish(loft([
-    { z: -1.78, w: 0.16, h: 0.2, y: 0.68, n: 2.2 },
-    { z: -1.55, w: 0.33, h: 0.36, y: 0.66, n: 2.8 },
-    { z: -1.05, w: 0.39, h: 0.4, y: 0.62, n: 3.0, top: 1.05 },
-    { z: -0.5, w: 0.3, h: 0.27, y: 0.6, n: 2.8 },
-    { z: 0.05, w: 0.27, h: 0.26, y: 0.62, n: 2.6 },
-    { z: 0.6, w: 0.37, h: 0.4, y: 0.66, n: 3.0, top: 1.12 },
-    { z: 1.2, w: 0.4, h: 0.44, y: 0.62, n: 3.0 },
-    { z: 1.65, w: 0.3, h: 0.32, y: 0.56, n: 2.6 },
-    { z: 1.95, w: 0.12, h: 0.14, y: 0.5, n: 2.2 },
-  ], { seg: 36 }), bodyPaint, 0.9));
-  // seat
+    { z: -2.0, w: 0.1, h: 0.12, y: 0.47, n: 2.4 },
+    { z: -1.82, w: 0.25, h: 0.22, y: 0.46, n: 3.2 },
+    { z: -1.35, w: 0.31, h: 0.25, y: 0.43, n: 3.4, top: 1.15 },
+    { z: -0.8, w: 0.24, h: 0.19, y: 0.34, n: 3.2 },
+    { z: -0.15, w: 0.22, h: 0.19, y: 0.33, n: 3.0 },
+    { z: 0.5, w: 0.3, h: 0.26, y: 0.42, n: 3.4, top: 1.25 },
+    { z: 1.15, w: 0.29, h: 0.25, y: 0.44, n: 3.4, top: 1.1 },
+    { z: 1.65, w: 0.2, h: 0.18, y: 0.4, n: 2.8 },
+    { z: 2.0, w: 0.08, h: 0.08, y: 0.34, n: 2.2 },
+  ], { seg: 40 }), bodyPaint, 0.9));
+  // keel / chassis spine underneath (dark metal)
+  metal.push(finish(loft([
+    { z: -1.6, w: 0.08, h: 0.06, y: 0.2, n: 4 },
+    { z: -0.6, w: 0.16, h: 0.08, y: 0.13, n: 4 },
+    { z: 0.6, w: 0.16, h: 0.08, y: 0.15, n: 4 },
+    { z: 1.5, w: 0.08, h: 0.06, y: 0.22, n: 4 },
+  ], { seg: 20 }), GUN, 1.5));
+  // seat with a raised rear bolster
   paint.push(finish(loft([
-    { z: -1.15, w: 0.2, h: 0.08, y: 1.0, n: 3 },
-    { z: -0.75, w: 0.21, h: 0.08, y: 0.9, n: 3 },
-    { z: -0.15, w: 0.19, h: 0.06, y: 0.86, n: 3 },
-    { z: 0.15, w: 0.12, h: 0.05, y: 0.9, n: 3 },
-  ], { seg: 20 }), col('#16171a'), 2));
-  // windscreen
+    { z: -1.18, w: 0.17, h: 0.1, y: 0.62, n: 3.5 },
+    { z: -0.95, w: 0.2, h: 0.07, y: 0.55, n: 3.5 },
+    { z: -0.4, w: 0.19, h: 0.05, y: 0.5, n: 3.5 },
+    { z: 0.0, w: 0.14, h: 0.05, y: 0.52, n: 3 },
+  ], { seg: 20 }), col('#141518'), 2));
+  // windscreen over the front cowl
   const ws = new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
-  ws.scale(0.3, 0.22, 0.48); ws.rotateX(-0.45); ws.translate(0, 1.04, 0.9);
+  ws.scale(0.24, 0.2, 0.42); ws.rotateX(-0.5); ws.translate(0, 0.7, 0.98);
   glass.push(finish(ws, 0xffffff, 1));
-  // front & rear repulsor housings (where Akira's wheels were)
-  const pods = [[1.05, 0.44], [-1.15, 0.47]];
+  // instrument binnacle + twin headlamp housing
+  metal.push(finish(box(0.2, 0.07, 0.16, 0, 0.74, 0.55), DARK, 3));
+  metal.push(finish(loft([
+    { z: 1.55, w: 0.16, h: 0.07, y: 0.5, n: 3 },
+    { z: 1.95, w: 0.12, h: 0.05, y: 0.44, n: 3 },
+  ], { seg: 16 }), BLACK, 2));
+
+  // ---- repulsor housings: flat discs where Akira's wheels were, on forked arms
+  const pods = [[1.2, 0.42], [-1.25, 0.46]];
   for (const [z, r] of pods) {
-    const h = lathe([[0.001, -0.14], [r * 0.82, -0.14], [r, -0.06], [r * 1.02, 0.05], [r * 0.9, 0.14], [0.001, 0.14]], 32);
-    h.rotateX(Math.PI / 2); h.scale(0.62, 1, 1); h.translate(0, 0.3, z);
+    const h = lathe([[0.001, -0.1], [r * 0.85, -0.1], [r, -0.04], [r * 1.02, 0.05], [r * 0.92, 0.11], [0.001, 0.11]], 36);
+    h.rotateX(Math.PI / 2); h.scale(0.6, 1, 1); h.translate(0, 0.06, z);
     metal.push(finish(h, GUN, 1.5));
+    // cooling fins on the housing rim
+    for (let k = 0; k < 7; k++) {
+      const a = (k / 6 - 0.5) * 2.2;
+      for (const s of [1, -1]) metal.push(finish(box(0.012, 0.09, 0.12, s * Math.sin(1.57 + a * 0.3) * r * 0.62, 0.07, z + Math.cos(1.57 + a) * r * 0.75), BLACK, 3));
+    }
   }
-  // rear thruster
-  metal.push(finish(lathe([[0.001, -2.05], [0.17, -2.05], [0.22, -1.95], [0.25, -1.7], [0.2, -1.45], [0.001, -1.45]], 24).translate(0, 0.72, 0), GUN, 1.5));
-  // handlebars & controls
+  // ---- outrigger steering vanes (speeder DNA): long blades sweeping forward past the nose
   for (const s of [1, -1]) {
-    metal.push(finish(cyl([0.08 * s, 1.0, 0.45], [0.46 * s, 1.03, 0.3], 0.025, 0.022, 8), STEEL, 3));
-    metal.push(finish(cyl([0.4 * s, 1.03, 0.32], [0.55 * s, 1.03, 0.27], 0.035, 0.035, 8), col('#111214'), 3));
-    // footpegs
-    metal.push(finish(cyl([0.25 * s, 0.42, -0.4], [0.42 * s, 0.42, -0.42], 0.025, 0.025, 6), STEEL, 3));
-    // speeder vanes
-    const vane = plate([[0, 0.55], [0, 1.6], [0.04, 1.75], [0.16, 0.6]], 0.03, 0.01);
-    vane.rotateZ(-Math.PI / 2); vane.translate(0.42 * s, 0.68, 0);
-    paint.push(finish(vane, LIGHT, 2));
-    // side panel greebles
-    for (let k = 0; k < 3; k++) metal.push(finish(box(0.02, 0.06, 0.18, 0.37 * s, 0.6 + k * 0.08, -1.05 + rng.range(-0.05, 0.05)), DARK, 3));
+    const arm = loft([
+      { z: 0.85, w: 0.035, h: 0.05, x: 0.27 * s, y: 0.32, n: 3 },
+      { z: 1.7, w: 0.04, h: 0.06, x: 0.4 * s, y: 0.26, n: 3 },
+      { z: 2.35, w: 0.03, h: 0.04, x: 0.42 * s, y: 0.24, n: 3 },
+    ], { seg: 12 });
+    metal.push(finish(arm, GUN, 2));
+    const vane = plate([[0, 1.75], [0, 2.55], [0.03, 2.62], [0.2, 1.85]], 0.025, 0.008);
+    vane.rotateZ(-Math.PI / 2); vane.translate(0.42 * s, 0.24, 0);
+    paint.push(finish(vane, (x, y, z, nx, ny, nz, o) => o.copy(z > 2.3 ? ACC : LIGHT), 2));
+    // footpegs, handlebars, grips, mirrors
+    metal.push(finish(cyl([0.2 * s, 0.24, -0.35], [0.36 * s, 0.24, -0.38], 0.022, 0.022, 6), STEEL, 3));
+    metal.push(finish(cyl([0.06 * s, 0.76, 0.48], [0.4 * s, 0.8, 0.36], 0.022, 0.02, 8), STEEL, 3));
+    metal.push(finish(cyl([0.36 * s, 0.8, 0.37], [0.5 * s, 0.8, 0.33], 0.032, 0.032, 8), BLACK, 3));
+    metal.push(finish(cyl([0.3 * s, 0.81, 0.4], [0.36 * s, 0.98, 0.42], 0.008, 0.008, 4), STEEL, 3));
+    metal.push(finish(box(0.1, 0.05, 0.015, 0.37 * s, 0.99, 0.42), BLACK, 3));
+    // side intakes and panel greebles on the rear cowl
+    metal.push(finish(box(0.03, 0.12, 0.34, 0.3 * s, 0.42, -1.3), BLACK, 3));
+    for (let k = 0; k < 4; k++) metal.push(finish(box(0.012, 0.012, 0.3, 0.315 * s, 0.37 + k * 0.03, -1.3), STEEL, 3));
+    for (let k = 0; k < 3; k++) metal.push(finish(box(0.02, 0.05, rng.range(0.1, 0.22), 0.27 * s, 0.3 + k * 0.05, 0.6 + rng.range(-0.15, 0.15)), DARK, 3));
+    // exhaust pipes along the lower flanks
+    metal.push(finish(cyl([0.2 * s, 0.2, 0.4], [0.24 * s, 0.26, -1.75], 0.035, 0.045, 10), STEEL, 3));
+    // canted tail fins
+    const fin = plate([[0, -1.25], [0, -1.95], [0.32, -2.1], [0.3, -1.7]], 0.025, 0.008);
+    fin.rotateZ(Math.PI / 2 - 0.5);
+    if (s < 0) fin.scale(-1, 1, 1);
+    fin.translate(0.16 * s, 0.62, 0);
+    paint.push(finish(s < 0 ? flipWinding(fin) : fin, BODY, 2));
   }
-  metal.push(finish(box(0.16, 0.08, 0.14, 0, 1.06, 0.48), DARK, 3)); // dash
-  // accent badge on the nose
-  paint.push(finish(new THREE.SphereGeometry(0.07, 12, 8).scale(1, 1, 0.4).translate(0, 0.9, 1.7), ACC, 3));
+  // rear turbine nacelle with intake ring and nozzle petals
+  metal.push(finish(lathe([[0.001, -2.3], [0.16, -2.3], [0.2, -2.22], [0.23, -2.0], [0.22, -1.75], [0.16, -1.55], [0.001, -1.55]], 28).translate(0, 0.5, 0), GUN, 1.5));
+  metal.push(finish(lathe([[0.15, -2.33], [0.185, -2.33], [0.185, -2.18], [0.15, -2.18]], 28).translate(0, 0.5, 0), BLACK, 1.5));
+  // badge, antenna
+  paint.push(finish(new THREE.SphereGeometry(0.05, 12, 8).scale(1, 1, 0.4).translate(0, 0.6, 1.78), ACC, 3));
+  metal.push(finish(cyl([-0.12, 0.62, -1.6], [-0.16, 1.15, -1.75], 0.006, 0.003, 4), STEEL, 3));
 
   const group = new THREE.Group();
   group.add(mesh(merge(paint), M.paint));
   group.add(mesh(merge(metal), M.metal));
   group.add(mesh(merge(glass), M.glass));
 
-  // repulsor glow discs underneath + rings
-  const hoverM = M.glow('#6fe4ff', 8);
+  // repulsor glow: rings + discs underneath (per-bike material, animated with throttle)
+  const hoverM = M.glow('#6fe4ff', 8).clone();
   const discs = [];
   for (const [z, r] of pods) {
-    const ring = new THREE.TorusGeometry(r * 0.72, 0.03, 6, 40); ring.rotateX(Math.PI / 2); ring.scale(0.62, 1, 1); ring.translate(0, 0.15, z);
-    const d = new THREE.CircleGeometry(r * 0.5, 24); d.rotateX(Math.PI / 2); d.scale(0.62, 1, 1); d.translate(0, 0.155, z);
+    const ring = new THREE.TorusGeometry(r * 0.74, 0.022, 6, 48); ring.rotateX(Math.PI / 2); ring.scale(0.6, 1, 1); ring.translate(0, -0.045, z);
+    const d = new THREE.CircleGeometry(r * 0.45, 24); d.rotateX(Math.PI / 2); d.scale(0.6, 1, 1); d.translate(0, -0.042, z);
     discs.push(ring, d);
   }
-  const hoverMesh = new THREE.Mesh(merge(discs.map((g) => finish(g))), hoverM);
-  group.add(hoverMesh);
-  const tailM = M.glow('#ff3a2a', 30);
-  const tail = new THREE.Mesh(merge([finish(box(0.34, 0.04, 0.02, 0, 0.82, -1.79)), finish(new THREE.CircleGeometry(0.14, 20).rotateY(Math.PI).translate(0, 0.72, -2.06))]), tailM);
-  group.add(tail);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 6).scale(1.6, 0.6, 0.5).translate(0, 0.82, 1.92), M.glow('#fff1d6', 40));
+  const nozzleRing = new THREE.TorusGeometry(0.165, 0.012, 6, 32); nozzleRing.translate(0, 0.5, -2.31);
+  discs.push(nozzleRing);
+  group.add(new THREE.Mesh(merge(discs.map((g) => finish(g))), hoverM));
+  const tailM = M.glow('#ff2a1a', 18);
+  group.add(new THREE.Mesh(merge([finish(box(0.36, 0.025, 0.02, 0, 0.6, -1.87)), finish(box(0.02, 0.025, 0.2, 0.25, 0.47, -1.78)), finish(box(0.02, 0.025, 0.2, -0.25, 0.47, -1.78))]), tailM));
+  const head = new THREE.Mesh(merge([
+    finish(new THREE.SphereGeometry(0.045, 10, 6).scale(1.4, 0.7, 0.5).translate(0.06, 0.47, 1.95)),
+    finish(new THREE.SphereGeometry(0.045, 10, 6).scale(1.4, 0.7, 0.5).translate(-0.06, 0.47, 1.95)),
+  ]), M.glow('#fff1d6', 30));
   group.add(head);
   return {
     group, hoverMat: hoverM,
-    nozzles: [{ pos: new THREE.Vector3(0, 0.72, -2.06), r: 0.15, len: 1.6 }],
-    pods: pods.map(([z]) => new THREE.Vector3(0, 0.15, z)),
-    seat: new THREE.Vector3(0, 0.84, -0.45), length: 4, radius: 2.2,
+    nozzles: [{ pos: new THREE.Vector3(0, 0.5, -2.3), r: 0.15, len: 1.4 }],
+    pods: pods.map(([z]) => new THREE.Vector3(0, -0.05, z)),
+    seat: new THREE.Vector3(0, 0.02, -0.55), length: 4.6, radius: 2.4,
   };
 }

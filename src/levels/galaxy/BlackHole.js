@@ -28,7 +28,7 @@ uniform sampler2D tInput;
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv, uView, uProj;
 uniform vec3 uCam;            // camera position in Rs units (BH at origin)
-uniform float uTime, uSteps, uIn, uOut, uDoppler, uGain, uTmax, uRint;
+uniform float uBg, uTime, uSteps, uIn, uOut, uDoppler, uGain, uTmax, uRint;
 varying vec2 vUv;
 const float TAU = 6.2831853;
 
@@ -47,7 +47,7 @@ vec3 background(vec3 dir){
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float inside = smoothstep(0.0, 0.04, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
     vec3 c = texture2D(tInput, clamp(uv, 0.001, 0.999)).rgb;
-    return mix(sky + c * 0.6, c, inside);
+    return mix(sky + c * 0.6 * uBg, c * uBg, inside);
   }
   return sky;
 }
@@ -82,32 +82,44 @@ vec4 diskSample(vec3 hit, vec3 v){
   return vec4(c * alpha, alpha);
 }
 
+// rotate v toward the hole (perpendicular component direction n) by angle a
+vec3 bend(vec3 v, vec3 n, float a){ return normalize(v * cos(a) + n * sin(a)); }
+
 void main(){
   vec4 cp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
   vec3 p = uCam;
   vec3 v = rd;
   float r0 = length(p);
-  vec3 L = cross(p, v);
-  float b = length(L);
   float tca = -dot(p, v);
+  vec3 cpt = p + v * tca;                 // closest approach of the straight line
+  float b = length(cpt);
+  vec3 toBH = -cpt / max(b, 1e-5);
+  float sObs = -tca;                      // observer's signed position along the line
   vec3 col = vec3(0.0);
   float T = 1.0;
+  // weak field (exact first-order GR deflection, integrated along the straight line):
+  // alpha(s1→s2) = (Rs/b)·(s2/√(s2²+b²) − s1/√(s1²+b²))
   if (r0 > uRint && (b > uRint || tca < 0.0)) {
-    // weak field: deflect toward the hole
-    vec3 toBH = -(p + v * tca) / max(b, 1e-4);
-    float cosPsi = tca / sqrt(tca * tca + b * b);
-    float alpha = (1.0 / b) * (1.0 + cosPsi);
-    gl_FragColor = vec4(background(normalize(v + toBH * alpha)), 1.0);
+    float a = (1.0 / b) * (1.0 - sObs / sqrt(sObs * sObs + b * b));
+    gl_FragColor = vec4(background(bend(v, toBH, a)), 1.0);
     return;
   }
-  if (r0 > uRint) p += v * (tca - sqrt(max(uRint * uRint - b * b, 0.0)));
+  if (r0 > uRint) {
+    // bend by the deflection accumulated before entering the integration sphere
+    float sIn = -sqrt(max(uRint * uRint - b * b, 0.0));
+    float a = (1.0 / b) * (sIn / uRint - sObs / sqrt(sObs * sObs + b * b));
+    p = cpt + v * sIn;
+    v = bend(v, toBH, a);
+  }
   float h2 = dot(cross(p, v), cross(p, v));
   bool captured = false;
-  for (int i = 0; i < 400; i++) {
+  float minR = 1e9;
+  for (int i = 0; i < 500; i++) {
     if (float(i) >= uSteps) break;
     float r = length(p);
-    float dt = clamp((r - 0.9) * 0.11, 0.008, 1.2);
+    minR = min(minR, r);
+    float dt = clamp((r - 0.95) * 0.09, 0.006, 1.6);
     vec3 acc = -1.5 * h2 * p / pow(r, 5.0);
     vec3 vn = v + acc * dt;
     vec3 pn = p + vn * dt;
@@ -121,10 +133,21 @@ void main(){
     p = pn; v = vn;
     if (dot(p, p) < 1.0) { captured = true; break; }
     if (T < 0.01) break;
-    if (r > uRint * 1.02 && dot(p, v) > 0.0) break;
+    if (length(p) > uRint * 1.02 && dot(p, v) > 0.0) break;
   }
-  if (!captured && T > 0.01) col += T * background(normalize(v));
-  gl_FragColor = vec4(col, 1.0);
+  if (!captured && T > 0.01) {
+    // remaining deflection on the way out to infinity
+    v = normalize(v);
+    float rr = length(p);
+    vec3 pn = p / rr;
+    float cosE = dot(pn, v);
+    vec3 perp = v * cosE - pn;
+    float bb = rr * sqrt(max(1.0 - cosE * cosE, 0.0));
+    if (bb > 1e-3) v = bend(v, normalize(perp - v * dot(perp, v)), (1.0 / bb) * (1.0 - cosE));
+    col += T * background(v);
+  }
+  if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
 }`;
 
 export class BlackHole {
@@ -143,8 +166,8 @@ export class BlackHole {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() },
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
-        uSteps: { value: engine.shotMode ? 320 : q.pick(140, 200, 280, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uDoppler: { value: 0.8 }, uGain: { value: 9.0 }, uTmax: { value: 9500 }, uRint: { value: 40.0 },
+        uSteps: { value: engine.shotMode ? 320 : q.pick(160, 220, 300, 360) },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.1 }, uTmax: { value: 6200 }, uRint: { value: 60.0 },
       },
     });
   }
@@ -154,6 +177,8 @@ export class BlackHole {
   update(camera, t) {
     const d = camera.position.distanceTo(this.position) / this.rs;
     this.enabled = d < 6000;
+    // eye adaptation to the disk: the bright nuclear sky is exposed down near the hole
+    this.mat.uniforms.uBg.value = 0.035 + 0.965 * THREE.MathUtils.smoothstep(d, 150, 4000);
     this.mat.uniforms.uTime.value = this.engine.shotMode ? 3.0 : t;
   }
 

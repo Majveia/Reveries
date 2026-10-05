@@ -534,6 +534,8 @@ function makePieces(spec, body) {
       line: (x, y, z) => {
         if (Math.abs(x) > 0.128) return Math.hypot(y - 1.662, z + 0.004) - 0.025; // pod rings
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
+        // visor wrap: a thin light band continuing the visor gasket around the helmet sides
+        if (Math.abs(x) > 0.07 && z > -0.11 && z < 0.07 && y > 1.6 && y < 1.7) return y - (1.64 + z * 0.22);
         return FAR;
       },
       seam: (x, y, z) => {
@@ -594,7 +596,7 @@ function makePieces(spec, body) {
     pieces.push({
       name: 'jetpack', bone: B.chest, f, bounds: [-0.2, 1.02, -0.3, 0.2, 1.5, 0.13], h: 0.0068,
       color: () => ivory, mat: () => [0.31, 0.0],
-      split: (x, y, z) => -Math.max(z + 0.15, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.12 - y, Math.min(Math.abs(x) - 0.1, y - 1.385)),
+      split: (x, y, z) => -Math.max(z + 0.15, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.12 - y, Math.abs(x) - 0.098),
       line: (x, y, z) => {
         if (Math.abs(x) < 0.032 && z < -0.26 && y > 1.18 && y < 1.42) return Math.abs(x) - 0.006; // spine light
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth

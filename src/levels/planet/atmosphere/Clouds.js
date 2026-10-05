@@ -69,8 +69,14 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   t1 = min(t1, min(sceneDist, uMaxDist));
   if (t1 <= t0) { return vec4(0.0, 0.0, 0.0, 1.0); }
 
+#ifdef CLOUD_DEBUG_WEATHER
+  { vec3 wq = cloudWeather(ro + rd * max(t0, 1.0)); dOut = -1.0; return vec4(wq.r * 0.5, wq.g * 0.5, wq.b * 0.5, 0.0); }
+#endif
   float seg = t1 - t0;
-  float N = clamp(seg / 90.0, 12.0, uSteps);
+  float N = clamp(seg / 70.0, 16.0, uSteps);
+  // from orbit, fade the layer toward the limb so grazing rays don't pile up into a grey rim
+  float graze = 1.0;
+  if (r0 > uCloudTop) { vec3 Pe = ro + rd * t0; graze = smoothstep(0.02, 0.25, -dot(rd, normalize(Pe))); }
   float dt = seg / N;
   float jit = fract(ign(gl_FragCoord.xy) + uFrame * 0.618034);
   float cosK = dot(rd, uKeyDir);
@@ -89,7 +95,8 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     vec3 wx = cloudWeather(P);
     if (wx.r < 0.02) continue;
     float lod = max(lod0, step(18000.0, t));
-    float d = cloudDensityW(P, wx, lod);
+    // near-field fade: flying through the deck shows soft wisps, not a smeared wall
+    float d = cloudDensityW(P, wx, lod) * graze * smoothstep(20.0, 320.0, t);
     if (d <= 0.002) continue;
     float r = length(P);
     vec3 up = P / r;
@@ -119,8 +126,8 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     powder = mix(1.0, powder, 0.65 * smoothstep(-0.2, 0.6, -cosK) + 0.25);
     vec3 Sk = uKeyE * Tl * ms * powder * 3.14159;
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
-    float ambOcc = exp(-d * sigma * shellH * 0.12 * (1.0 - h01));
-    vec3 Sa = mix(uAmbGround, uAmbSky, 0.35 + 0.65 * h01) * (0.45 + 0.55 * ambOcc) * 3.14159 * 0.25;
+    float ambOcc = exp(-d * sigma * shellH * 0.2 * (1.0 - h01));
+    vec3 Sa = mix(uAmbGround, uAmbSky, 0.25 + 0.75 * h01) * (0.22 + 0.78 * ambOcc) * 3.14159 * 0.25;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -189,6 +196,16 @@ void main(){
     wsum += w;
   }
   vec4 c = acc / max(wsum, 1e-6);
+  // depth edges: nearest-depth upsample (pick the low-res texel whose depth matches best)
+  float best = 1e9; vec4 cb = c; float spread = 0.0;
+  for (int y = 0; y <= 1; y++) for (int x = 0; x <= 1; x++) {
+    vec2 tc = (i0 + vec2(float(x), float(y)) + 0.5) / uLowRes;
+    float dl = linDepth(tc);
+    float rel = abs(dl - dc) / max(min(dl, dc), 1.0);
+    spread = max(spread, rel);
+    if (rel < best) { best = rel; cb = texture2D(tCloud, tc); }
+  }
+  c = mix(c, cb, smoothstep(0.05, 0.25, spread));
   gl_FragColor = vec4(col * c.a + c.rgb, 1.0);
 }`;
 
@@ -245,7 +262,9 @@ export default class Clouds {
       uCloudBase: { value: m.Rb + this.baseH }, uCloudTop: { value: m.Rb + this.topH },
       uCloudCov: { value: 1 }, uCloudDensity: { value: this.preset.density },
       uCloudWind: { value: new THREE.Vector3() },
-      uCloudShapeScale: { value: 1 / 10500 }, uCloudDetailScale: { value: 1 / 1300 },
+      uCloudShapeScale: { value: 1 / 7000 }, uCloudDetailScale: { value: 1 / 1100 },
+      uCloudWeatherSize: { value: r.weatherSize }, uCloudFlat: { value: 0 },
+      uCloud3DInfo: { value: new THREE.Vector3(r.shapeSize, r.detailSize, r.manual3D ? 1 : 0) },
     };
     // A separate uniform object for the march (shares the cloud + atmosphere values by reference).
     this.marchMat = new THREE.ShaderMaterial({
@@ -261,6 +280,7 @@ export default class Clouds {
         tHistory: { value: null }, uPrevViewProj: { value: new THREE.Matrix4() }, uHistoryBlend: { value: 0 },
       },
     });
+    if ((this.engine.params.get('atmo') || '').includes('dbgw')) this.marchMat.defines = { CLOUD_DEBUG_WEATHER: 1 };
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG, depthTest: false, depthWrite: false, blending: THREE.NoBlending,
       uniforms: { tInput: { value: null }, tCloud: { value: null }, tDepth: { value: null }, uLowRes: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 } },
@@ -321,14 +341,29 @@ export default class Clouds {
     if (light) {
       mu.uAmbSky.value.set(light.skyColor.r, light.skyColor.g, light.skyColor.b);
       mu.uAmbGround.value.set(light.groundColor.r, light.groundColor.g, light.groundColor.b);
+      // night: settlements light the cloud bases from below (sodium/lantern glow)
+      if (light.night > 0.05) {
+        if (this._cityGlow === undefined || (this._cgFrame = (this._cgFrame || 0) + 1) % 30 === 0) {
+          let g = 0;
+          const sz = { megacity: 3, city: 2, spaceport: 1.6, town: 1, village: 0.5, outpost: 0.25, ruins: 0 };
+          for (const site of this.world.sites || []) {
+            const d = site.position ? site.position.distanceTo(ctx.cameraPosition) : 1e9;
+            g += (sz[site.kind] ?? 0.5) * Math.exp(-d / 9000);
+          }
+          this._cityGlow = Math.min(g, 3);
+        }
+        const k = 0.0035 * this._cityGlow * light.night;
+        mu.uAmbGround.value.x += k; mu.uAmbGround.value.y += k * 0.62; mu.uAmbGround.value.z += k * 0.3;
+      }
     }
     const q = this.engine.quality;
     const alt = ctx.cameraPosition.length() - m.Rb;
     const orbit = alt > this.topH * 1.6;
-    mu.uSteps.value = orbit ? q.pick(16, 24, 32, 40) : q.pick(32, 48, 72, 96);
+    mu.uSteps.value = orbit ? q.pick(16, 24, 32, 40) : q.pick(32, 56, 84, 112);
+    this.uniforms.uCloudFlat.value = orbit ? 1 : 0;
     mu.uLightSteps.value = orbit ? 3 : q.pick(3, 4, 6, 6);
     mu.uOrbitLod.value = orbit ? 1 : 0;
-    mu.uMaxDist.value = orbit ? 4e5 : 9e4;
+    mu.uMaxDist.value = orbit ? 4e5 : 7e4;
     mu.uFrame.value = this.engine.shotMode ? 0 : (this._frame++ % 64);
     // temporal accumulation (real time only): swap, reproject last frame's result
     const tmp = this.rtPrev; this.rtPrev = this.rt; this.rt = tmp;

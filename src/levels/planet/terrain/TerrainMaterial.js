@@ -286,9 +286,15 @@ const FRAG_SURFACE = /* glsl */`
   float meso = m2.w * 0.6 + m3.w * 0.4;
 
   // ---- layer weights (before detail: lets us skip invisible layers) ----
-  float rockSlope = smoothstep( 0.2, 0.42, slope + meso * 0.08 );
-  float rockW = clamp( max( max( rockA, cliffA ), rockSlope ), 0.0, 1.0 );
-  float shore = uSeaLevel > -1e8 ? 1.0 - smoothstep( 1.5, 4.0 + meso * 2.5, h - uSeaLevel ) : 0.0;
+  // sand never turns to rock just because it is steep (slip faces sit at 30–34°)
+  float rockSlope = smoothstep( 0.2, 0.42, slope + meso * 0.08 ) * ( 1.0 - sandA );
+  // convex shoulders & crests shed soil → bedrock shows; hollows stay soft
+  float convex = smoothstep( 0.45, 0.32, cav ) * smoothstep( 0.12, 0.35, slope ) * ( 1.0 - sandA );
+  float conc = smoothstep( 0.53, 0.66, cav );
+  // alpine: high ground is bare rock (relief-relative), broken by meso noise
+  float alpine = smoothstep( 0.42, 0.62, h / max( uRelief, 1.0 ) + meso * 0.06 ) * ( 1.0 - sandA );
+  float rockW = clamp( max( max( max( rockA, cliffA ), rockSlope ), max( convex * 0.6, alpine * smoothstep( 0.04, 0.2, slope + meso * 0.1 ) ) ), 0.0, 1.0 );
+  float shore = uSeaLevel > -1e8 ? 1.0 - smoothstep( 0.8 + meso * 1.2, 3.0 + meso * 4.5 + m1.w * 2.0, h - uSeaLevel ) : 0.0;
   float sandW = max( sandA, shore * ( 1.0 - rockSlope ) );
   float soilW = clamp( smoothstep( 0.1, 0.24, slope + meso * 0.06 ) + ( 1.0 - smoothstep( 0.12, 0.35, moist ) ) * 0.5, 0.0, 1.0 );
   float snowW = clamp( snowA * ( 1.0 - smoothstep( 0.32, 0.6, slope + meso * 0.1 ) ) * 1.25, 0.0, 1.0 );
@@ -307,7 +313,7 @@ const FRAG_SURFACE = /* glsl */`
   float peb = 0.0;
   {
     vec4 g1 = nA( D.zxy + 4.4, 1.0 / 16.0 ); w = octW( 1.0 / 16.0, pix );
-    gSoil += g1.xyz * 0.25 * w; hGrass += g1.w * 0.5;
+    gSoil += g1.xyz * 0.06 * w; hGrass += g1.w * 0.5;
     w = octW( 1.0, pix );
     if ( w > 0.0 ) { vec4 g2 = nA( D + 8.8, 1.0 ); gSoil += g2.xyz * 0.02 * w; hGrass += g2.w * 0.3 * w; }
     w = octW( 0.5, pix );
@@ -364,22 +370,26 @@ const FRAG_SURFACE = /* glsl */`
   vec3 gSand = vec3( 0.0 );
   float hSand = 0.0;
   float rippleShade = 0.0;
+  float leeF = 0.0;
   if ( sandW > 0.004 ) {
-    vec3 wt = normalize( uWindDir - up * dot( uWindDir, up ) + vec3( 1e-4 ) );
+    // zonal wind frame (west → east), matching the dune phase in TerrainHeight
+    vec3 east = vec3( up.z, 0.0, -up.x );
+    vec3 wt = dot( east, east ) > 1e-4 ? normalize( east ) : normalize( uWindDir - up * dot( uWindDir, up ) + vec3( 1e-4 ) );
+    leeF = smoothstep( 0.04, 0.3, dot( Ng, wt ) ) * sandA;
     vec3 wb = cross( up, wt );
     vec4 wq = nA( D + 21.0, 1.0 / 16.0 );
     // primary ripples (~0.22 m) + megaripples (~1.6 m), curved by noise
-    float ph1 = dot( D, wt ) / 0.22 + wq.w * 5.0 + dot( D, wb ) * 0.35;
-    float ph2 = dot( D, wt ) / 1.6 + wq.w * 2.0;
+    float ph1 = dot( D, wt ) / 0.22 + wq.w * 1.4 + dot( D, wb ) * 0.12;
+    float ph2 = dot( D, wt ) / 1.6 + wq.w * 1.1 + dot( D, wb ) * 0.05;
     float f1 = fract( ph1 ), f2 = fract( ph2 );
     // asymmetric profile: long stoss slope, steep lee face
     float p1 = f1 < 0.75 ? f1 / 0.75 : ( 1.0 - f1 ) / 0.25;
     float d1 = f1 < 0.75 ? 1.0 / 0.75 : -1.0 / 0.25;
     float p2 = f2 < 0.7 ? f2 / 0.7 : ( 1.0 - f2 ) / 0.3;
     float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3;
-    float w1 = octW( 1.0 / 1.8, pix ) * uStyleA.w;
-    float w2 = octW( 1.0 / 12.0, pix ) * uStyleA.w;
-    gSand += wt * ( d1 / 0.22 ) * 0.012 * w1 + wt * ( d2 / 1.6 ) * 0.05 * w2;
+    float w1 = octW( 1.0 / 1.8, pix ) * uStyleA.w * ( 1.0 - 0.85 * leeF );
+    float w2 = octW( 1.0 / 12.0, pix ) * uStyleA.w * ( 1.0 - 0.7 * leeF );
+    gSand += wt * ( d1 / 0.22 ) * 0.016 * w1 + wt * ( d2 / 1.6 ) * 0.07 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1;
     w = octW( 0.25, pix );
@@ -389,30 +399,63 @@ const FRAG_SURFACE = /* glsl */`
   // ================= ALBEDO =================
   // rock: base + strata band colors + macro hue drift + weathering
   vec3 rockCol = uRockA;
-  float bandMix = mix( 0.5, bandRnd, uStyleA.y );
+  // strata bands read on walls only; on near-flat rock they would marble into contour blotches
+  float wallK = smoothstep( 0.12, 0.4, slope );
+  float bandMix = mix( 0.5, bandRnd, uStyleA.y * wallK );
   rockCol = mix( rockCol, uRockB, smoothstep( 0.3, 0.9, bandMix ) * uStyleB.z );
-  rockCol = mix( rockCol, uRockC, smoothstep( 0.55, 1.0, bandRnd2 ) * uStyleB.z * 0.8 );
+  rockCol = mix( rockCol, uRockC, smoothstep( 0.55, 1.0, bandRnd2 ) * uStyleB.z * 0.8 * wallK );
   rockCol *= 0.78 + 0.32 * ( macro * 0.5 + 0.5 ) + 0.18 * hRock;
   rockCol *= 1.0 - crack * 0.55;
+  // wind-blown dust settles on flat rock in sandy worlds (desert pavement)
+  rockCol = mix( rockCol, uSand * ( 0.82 + 0.1 * meso ), ( 1.0 - smoothstep( 0.06, 0.3, slope ) ) * 0.5 * uStyleA.w * ( 1.0 - crack ) );
   // dark streaks down the walls, pale dry crowns
   float streak = clamp( 0.5 - hRock * 0.9, 0.0, 1.0 ) * uStyleA.z * smoothstep( 0.3, 0.7, slope );
-  rockCol *= 1.0 - streak * 0.35;
+  rockCol *= 1.0 - streak * ( 0.25 + 0.3 * uStyleA.z );
 
   // vegetation colour from moisture, temperature and macro noise
   vec3 lush = mix( uGround1, uGround0, smoothstep( -0.4, 0.5, macro ) );
   vec3 meadow = mix( uGround2, uGround0, smoothstep( -0.2, 0.6, meso ) );
   vec3 dry = mix( uGround3, uSand, 0.35 );
   vec3 grassCol = mix( lush, meadow, smoothstep( 0.2, 0.7, meso * 0.5 + 0.5 ) * 0.6 );
+  // ---- patchwork: 3–12 m Worley patches (dry / lush / bare), each its own tint ----
+  float bare = 0.0;
+  {
+    float pw = octW( 1.0 / 96.0, pix );
+    vec4 pc = nB( D.yzx + 13.0, 1.0 / 96.0 );   // ~12 m cells
+    vec4 ps = nB( D.zxy + 5.0, 1.0 / 32.0 );    // ~4 m cells
+    float pws = octW( 1.0 / 32.0, pix );
+    float edge = smoothstep( 0.0, 0.25, pc.y );
+    float dryP = smoothstep( 0.62, 0.8, pc.z ) * edge * pw;
+    float lushP = smoothstep( 0.3, 0.12, pc.z ) * edge * pw;
+    grassCol = mix( grassCol, mix( uGround3, uSand, 0.25 ) * 0.95, dryP * 0.55 );
+    grassCol = mix( grassCol, uGround1 * 0.82, lushP * 0.5 );
+    // per-cell hue / value jitter (±8%)
+    float j1 = ( ps.z - 0.5 ) * pws, j2 = ( pc.w - 0.5 );
+    grassCol *= 1.0 + j1 * 0.18 + j2 * 0.12;
+    grassCol = mix( grassCol, grassCol * vec3( 1.1, 1.0, 0.75 ), clamp( j1 + 0.5, 0.0, 1.0 ) * 0.25 * pws );
+    bare = smoothstep( 0.86, 0.95, pc.z ) * smoothstep( 0.42, 0.18, pc.x ) * pw;
+  }
+  // desaturate a touch: real meadows are greyer than paint
+  grassCol = mix( vec3( dot( grassCol, vec3( 0.3, 0.55, 0.15 ) ) ), grassCol, 0.8 );
+  // hollows: lusher, darker; forests (beyond flora's reach) read as darker canopy masses
+  grassCol *= 1.0 - 0.15 * conc;
+  float farK = smoothstep( 3.0, 50.0, pix );
+  float forest = smoothstep( 0.52, 0.78, moist + macro * 0.18 ) * smoothstep( 0.22, 0.42, temp );
+  grassCol = mix( grassCol, grassCol * vec3( 0.52, 0.64, 0.56 ), forest * ( 0.25 + 0.5 * farK ) );
   grassCol = mix( dry, grassCol, smoothstep( 0.18, 0.55, moist + macro * 0.12 ) );
   grassCol = mix( grassCol, grassCol * vec3( 1.08, 1.0, 0.72 ), smoothstep( 0.55, 0.85, temp ) * 0.5 );
   grassCol *= 0.82 + 0.3 * ( hGrass * 0.5 + 0.5 );
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );
   soilCol = mix( soilCol, uRockA * 0.9, 0.25 + peb * 0.4 );
-  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.1 * rippleShade );
+  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.05 * rippleShade );
+  // lee (slip) faces: finer, darker avalanche sand; crests catch light
+  sandCol *= 1.0 - 0.09 * leeF;
+  sandCol *= 1.0 + 0.08 * smoothstep( 0.46, 0.38, cav );
   vec3 snowCol = uSnow * ( 0.94 + 0.06 * meso );
 
   // ---- composite with height-based blending ----
+  soilW = max( soilW, bare );
   float wSoil = hblend( soilW, hGrass * 0.3, 0.0, 0.35 );
   vec3 albedo = mix( grassCol, soilCol, wSoil );
   vec3 gN = gSoil * ( 1.0 + 0.6 * wSoil );
@@ -442,12 +485,27 @@ const FRAG_SURFACE = /* glsl */`
   wet *= ( 1.0 - wSnow );
   albedo *= mix( 1.0, 0.52, wet );
   rough = mix( rough, 0.28, wet * 0.85 );
+  // river channel core: standing water film → dark, mirror-like, flat
+  float riverW = smoothstep( 0.74, 0.92, wetA ) * ( 1.0 - wSnow );
+  albedo *= mix( 1.0, 0.45, riverW );
+  rough = mix( rough, 0.07, riverW );
+  gN *= 1.0 - riverW * 0.9;
+  // damp hollows in wet climates: mud & rain puddles that mirror the sky
+  float pw2 = octW( 1.0 / 24.0, pix );
+  if ( pw2 > 0.0 ) {
+    vec4 pd = nA( D.yzx + 31.0, 1.0 / 24.0 );
+    float pud = smoothstep( 0.45, 0.62, moist ) * smoothstep( 0.35, 0.6, pd.w + conc * 0.6 + hGrass * -0.15 ) * ( 1.0 - wRock ) * ( 1.0 - wSnow ) * ( 1.0 - wSand ) * pw2;
+    albedo *= mix( 1.0, 0.55, pud );
+    rough = mix( rough, 0.12, smoothstep( 0.5, 0.9, pud ) );
+    gN *= 1.0 - 0.8 * smoothstep( 0.5, 0.9, pud );
+  }
   if ( uSeaLevel > -1e8 && h < uSeaLevel ) albedo *= vec3( 0.55, 0.7, 0.72 );
 
   // ---- ambient occlusion: chunk cavity + crack + micro hollows ----
   float ao = clamp( 1.0 - ( cav - 0.5 ) * 1.8, 0.35, 1.0 );
   ao *= 1.0 - crack * 0.6 * wRock;
   ao *= mix( 1.0, 0.75 + 0.25 * clamp( hRock + 0.5, 0.0, 1.0 ), wRock );
+  ao *= mix( 0.8 + 0.2 * clamp( hGrass * 0.5 + 0.5, 0.0, 1.0 ), 1.0, max( wRock, wSand ) );
   tAO = ao;
 
   // ---- volcanic glow in deep cracks of hot basalt ----
@@ -481,7 +539,9 @@ export function createTerrainMaterial(world, style) {
     rockB.copy(rock).lerp(new THREE.Color('#b0603a'), 0.5);
     rockC.copy(rock).lerp(new THREE.Color('#e8d0a8'), 0.45);
   }
-  if (style === 'karst') { rockB.copy(rock).lerp(new THREE.Color('#c8c4b8'), 0.55); rockC.copy(rock).lerp(new THREE.Color('#4a4a44'), 0.4); }
+  // sand seas: bedrock is the sand's parent rock → close in tone (no clay marbling)
+  if (style === 'dunes') { rock.lerp(sand, 0.4); rockB.lerp(sand, 0.3); rockC.lerp(sand, 0.3); }
+  if (style === 'karst') { rock.lerp(new THREE.Color('#b8b4a8'), 0.5); rockB.copy(rock).lerp(new THREE.Color('#d8d4c8'), 0.7); rockC.copy(rock).lerp(new THREE.Color('#3e443a'), 0.55); }
   if (style === 'glacial') { rockB.copy(rock).lerp(new THREE.Color('#3a4450'), 0.4); rockC.copy(rock).lerp(new THREE.Color('#8a96a4'), 0.4); }
   const soil = col(g[3], '#8a7050').lerp(new THREE.Color('#5a4630'), 0.55);
   const moss = col(P.foliage?.[2] || P.foliage?.[0], '#4a6a34').lerp(col(g[1]), 0.4);
@@ -532,6 +592,6 @@ export function createTerrainMaterial(world, style) {
       .replace('#include <lights_fragment_begin>', lights)
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.35 );');
   };
-  material.customProgramCacheKey = () => 'reveries-terrain-v1';
+  material.customProgramCacheKey = () => 'reveries-terrain-v2';
   return { material, uniforms };
 }

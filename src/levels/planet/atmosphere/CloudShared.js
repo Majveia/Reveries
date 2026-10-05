@@ -124,15 +124,59 @@ uniform float uCloudCov;     // global coverage multiplier
 uniform float uCloudDensity; // extinction per metre at density 1
 uniform vec3 uCloudWind;     // noise-space offset (animated)
 uniform float uCloudShapeScale, uCloudDetailScale;
+uniform float uCloudWeatherSize; // texels per cube face (manual bilinear)
+uniform float uCloudFlat;        // 1 = projected 2D layer (orbit), 0 = full volume
+uniform vec3 uCloud3DInfo;       // shape size, detail size, manual trilinear (1 on software GL)
 `;
 
 export const CLOUD_FUNCS_GLSL = /* glsl */ `
 float cRemap(float v, float a, float b, float c, float d){ return c + (v - a) / max(b - a, 1e-4) * (d - c); }
+vec3 cwFaceDir(int f, vec2 st){
+  vec2 c = st * 2.0 - 1.0;
+  if (f == 0) return vec3(1.0, -c.y, -c.x);
+  if (f == 1) return vec3(-1.0, -c.y, c.x);
+  if (f == 2) return vec3(c.x, 1.0, c.y);
+  if (f == 3) return vec3(c.x, -1.0, -c.y);
+  if (f == 4) return vec3(c.x, -c.y, 1.0);
+  return vec3(-c.x, -c.y, -1.0);
+}
+// Explicit bilinear filtering of the weather cube: four texel-centre taps,
+// weights computed here. Immune to driver/filtering quirks that otherwise
+// turn coverage texels into blocky "voxel" clouds.
+vec3 cloudWeatherDir(vec3 d){
+  vec3 a = abs(d); int f; vec2 sc; float ma;
+  if (a.x >= a.y && a.x >= a.z) { ma = a.x; f = d.x > 0.0 ? 0 : 1; sc = d.x > 0.0 ? vec2(-d.z, -d.y) : vec2(d.z, -d.y); }
+  else if (a.y >= a.z) { ma = a.y; f = d.y > 0.0 ? 2 : 3; sc = d.y > 0.0 ? vec2(d.x, d.z) : vec2(d.x, -d.z); }
+  else { ma = a.z; f = d.z > 0.0 ? 4 : 5; sc = d.z > 0.0 ? vec2(d.x, -d.y) : vec2(-d.x, -d.y); }
+  float S = uCloudWeatherSize;
+  vec2 st = (sc / ma * 0.5 + 0.5) * S - 0.5;
+  vec2 i0 = floor(st), fr = st - i0;
+  vec3 c00 = textureCube(tCloudWeather, cwFaceDir(f, (i0 + vec2(0.5, 0.5)) / S)).rgb;
+  vec3 c10 = textureCube(tCloudWeather, cwFaceDir(f, (i0 + vec2(1.5, 0.5)) / S)).rgb;
+  vec3 c01 = textureCube(tCloudWeather, cwFaceDir(f, (i0 + vec2(0.5, 1.5)) / S)).rgb;
+  vec3 c11 = textureCube(tCloudWeather, cwFaceDir(f, (i0 + vec2(1.5, 1.5)) / S)).rgb;
+  return mix(mix(c00, c10, fr.x), mix(c01, c11, fr.x), fr.y);
+}
 vec3 cloudWeather(vec3 P){
-  vec3 dir = normalize(P);
-  vec3 w = textureCube(tCloudWeather, uCloudRot * dir).rgb;
+  vec3 w = cloudWeatherDir(uCloudRot * normalize(P));
   w.r = clamp(w.r * uCloudCov, 0.0, 1.0);
   return w;
+}
+// Trilinear 3D lookup. Some GL implementations (notably SwiftShader, which the
+// screenshot harness uses) sample these render-target volumes unfiltered, which
+// turns clouds into voxel blocks; there we filter by hand (8 texel-centre taps).
+vec4 cTex3D(highp sampler3D t, vec3 q, float S){
+  q = fract(q);
+  if (uCloud3DInfo.z < 0.5) return texture(t, q);
+  vec3 p = q * S - 0.5;
+  vec3 i = floor(p), f = p - i;
+  vec3 a = (i + 0.5) / S, b = (i + 1.5) / S;
+  a = fract(a); b = fract(b);
+  vec4 c000 = texture(t, vec3(a.x, a.y, a.z)), c100 = texture(t, vec3(b.x, a.y, a.z));
+  vec4 c010 = texture(t, vec3(a.x, b.y, a.z)), c110 = texture(t, vec3(b.x, b.y, a.z));
+  vec4 c001 = texture(t, vec3(a.x, a.y, b.z)), c101 = texture(t, vec3(b.x, a.y, b.z));
+  vec4 c011 = texture(t, vec3(a.x, b.y, b.z)), c111 = texture(t, vec3(b.x, b.y, b.z));
+  return mix(mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y), mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y), f.z);
 }
 float cloudHeightProfile(float h, float type){
   float bottom = smoothstep(0.0, mix(0.06, 0.12, type), h);
@@ -147,20 +191,25 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   if (h <= 0.0 || h >= 1.0 || wx.r < 0.02) return 0.0;
   float prof = cloudHeightProfile(h, wx.g);
   if (prof <= 0.0) return 0.0;
-  vec3 q = P * uCloudShapeScale + uCloudWind;
-  vec4 n = texture(tCloudShape, q);
-  float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
-  float base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0);
-  base *= prof;
-  // anvil-ish spread at the top of tall clouds, rounded cumulus tops
-  float cov = wx.r * mix(1.0, 1.0 + 0.6 * smoothstep(0.6, 1.0, h), wx.g);
-  float c = cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0) * cov;
+  float base;
+  if (uCloudFlat > 0.5) {
+    // projected layer (orbit): smooth puffs from the weather map alone, no 3D noise (no moire)
+    base = 0.62 * prof;
+  } else {
+    vec3 q = P * uCloudShapeScale + uCloudWind;
+    vec4 n = cTex3D(tCloudShape, q, uCloud3DInfo.x);
+    float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+    base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * prof;
+  }
+  // anvil-ish spread at the top of tall clouds; coverage threshold softened so cells are rounded families
+  float cov = smoothstep(0.0, 1.0, wx.r) * mix(1.0, 1.0 + 0.6 * smoothstep(0.6, 1.0, h), wx.g);
+  float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
   if (c <= 0.0) return 0.0;
   if (lod < 0.5) {
-    vec3 dn = texture(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1).rgb;
+    vec3 dn = cTex3D(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1, uCloud3DInfo.y).rgb;
     float df = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
     float dm = mix(df, 1.0 - df, clamp(h * 4.0, 0.0, 1.0));
-    c = cRemap(c, dm * 0.38, 1.0, 0.0, 1.0);
+    c = cRemap(c, dm * 0.42, 1.0, 0.0, 1.0);
   }
   // denser, darker bases where it rains
   return max(c, 0.0) * (1.0 + wx.b * 0.8) * smoothstep(0.0, 0.15, h + 0.05);
@@ -191,10 +240,18 @@ export class CloudResources {
     this.level = level;
     this.engine = level.engine;
     const q = this.engine.quality;
-    this.shapeSize = this.engine.shotMode ? 64 : q.pick(64, 96, 128, 128);
+    this.shapeSize = this.engine.shotMode ? 96 : q.pick(64, 96, 128, 128);
     this.perlinOct = this.engine.shotMode ? 4 : q.pick(4, 5, 6, 6);
     this.detailSize = 32;
     this.weatherSize = q.pick(128, 192, 256, 256);
+    // software GL (SwiftShader / llvmpipe) → filter the noise volumes by hand
+    let rname = '';
+    try { const gl = this.engine.renderer.getContext(); const ext = gl.getExtension('WEBGL_debug_renderer_info'); rname = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER)); } catch (e) { /* ignore */ }
+    const forced = (this.engine.params?.get?.('atmo') || '').includes('manual3d');
+    const hw = /nvidia|geforce|radeon|amd|intel|apple|adreno|mali|powervr|arc/i.test(rname) && !/swiftshader|llvmpipe|software/i.test(rname);
+    const off = (this.engine.params?.get?.('atmo') || '').includes('hw3d');
+    // the headless harness renders on SwiftShader (often reported masked): filter by hand there
+    this.manual3D = !off && (forced || /swiftshader|llvmpipe|software/i.test(rname) || (this.engine.shotMode && !hw));
     this.ready = false;
   }
 

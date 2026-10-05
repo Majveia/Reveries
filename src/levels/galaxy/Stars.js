@@ -31,7 +31,7 @@ const STAR_VERT = /* glsl */ `
 ${GAL_GLSL}
 attribute vec4 aCol;          // linear color (rgb) + log2 luminosity code (a)
 uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade;
-varying vec3 vColor; varying float vSharp;
+varying vec3 vColor; varying float vSharp, vRc;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -39,26 +39,42 @@ void main(){
   float L = exp2((aCol.a * 255.0 - 128.0) / 16.0);
   float flux = L * uBright / (d2 + 1e-6);
   flux = uSat * (1.0 - exp(-flux / uSat));
-  float lod = log2(max(sqrt(d2) * 0.004, uMapTexel) / uMapTexel);
+  float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
   flux *= exp(-galTau(cameraPosition, position, int(uTauSteps), lod));
+  // stars embedded in a lane are dimmed by the column around them (screen term, matches the volume)
+  flux *= exp(-galMap(position, 1.0).b * 1.1);
   float px = clamp(1.0 + sqrt(flux) * uPxScale, uMinPx, uMaxPx);
   gl_PointSize = px;
   vSharp = px;
-  // energy: flux spread over the gaussian footprint (~0.36·px² pixels)
-  vColor = aCol.rgb * flux / (0.36 * px * px) * uFade;
+  vRc = 0.45 + 0.07 * px;
+  // energy: flux concentrated in a compact PSF core (~π·rc² pixels); the footprint holds spikes/halo
+  vColor = aCol.rgb * flux / max(1.0, 3.1416 * vRc * vRc) * uFade;
   if (flux < 1e-4) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
 
+// Telescope PSF: compact gaussian core, faint halo and — on bright stars — the
+// six-pointed JWST diffraction pattern (three spike axes at 60° + a faint horizontal strut).
 const STAR_FRAG = /* glsl */ `
-varying vec3 vColor; varying float vSharp;
+varying vec3 vColor; varying float vSharp, vRc;
 void main(){
-  vec2 c = gl_PointCoord * 2.0 - 1.0;
-  float r2 = dot(c, c);
-  if (r2 > 1.0) discard;
-  float core = exp(-r2 * 7.0);
-  // faint diffraction cross on the brightest stars (telescope look)
-  float spike = vSharp > 6.0 ? (exp(-abs(c.x) * 22.0) + exp(-abs(c.y) * 22.0)) * (1.0 - r2) * 0.25 : 0.0;
-  gl_FragColor = vec4(vColor * (core + spike), 1.0);
+  vec2 pc = (gl_PointCoord * 2.0 - 1.0) * vSharp * 0.5;   // pixels from the centre
+  float d2 = dot(pc, pc), R = vSharp * 0.5;
+  if (d2 > R * R) discard;
+  float f = exp(-d2 / (vRc * vRc));
+  if (vSharp > 5.0) {
+    float d = sqrt(d2), edge = 1.0 - d / R;
+    float sp = 0.0;
+    for (int k = 0; k < 3; k++) {
+      float a = 1.5708 + float(k) * 1.0472;
+      vec2 ax = vec2(cos(a), sin(a));
+      float across = abs(dot(pc, vec2(-ax.y, ax.x)));
+      sp += exp(-across * across * 1.6) * exp(-d / (R * 0.32));
+    }
+    sp += 0.35 * exp(-pc.y * pc.y * 1.6) * exp(-d / (R * 0.2));
+    float k = smoothstep(5.0, 12.0, vSharp);
+    f += (sp * 0.16 + exp(-d / (vRc * 2.5)) * 0.05) * edge * edge * k;
+  }
+  gl_FragColor = vec4(vColor * f, 1.0);
 }`;
 
 // World-sized soft sprites (HII regions, cluster haze)
@@ -74,7 +90,7 @@ void main(){
   float px = aSize * uProj / max(d, 1e-5);
   float pxc = clamp(px, 1.5, uMaxPx);
   float lod = log2(max(d * 0.004, uMapTexel) / uMapTexel);
-  float ext = exp(-galTau(cameraPosition, position, 4, lod) * 0.8);
+  float ext = exp(-galTau(cameraPosition, position, 4, lod) * 0.8 - galMap(position, 1.0).b * 0.6);
   // surface brightness is distance-independent; unresolved blobs keep their total flux
   float sb = aCol.a * uGain * ext * min(1.0, px * px / (pxc * pxc));
   // fade out when the camera is inside / very close (the nebula renderer takes over)
@@ -102,7 +118,7 @@ ${GAL_GLSL}
 attribute vec4 aRnd;     // xyz position in unit box, w = luminosity/keep random
 uniform float uS, uBright, uPxScale, uSat, uDensRef, uBulgeScale, uBulgeQ, uBulgeAmp, uHOldU, uHYoungU;
 uniform vec3 uCamPos;
-varying vec3 vColor; varying float vSharp;
+varying vec3 vColor; varying float vSharp, vRc;
 vec3 bb(float t){ // compact blackbody approx (linear)
   t = clamp(t, 1500.0, 30000.0) / 100.0;
   float r = t <= 66.0 ? 1.0 : clamp(1.2929 * pow(t - 60.0, -0.1332), 0.0, 1.0);
@@ -125,7 +141,7 @@ void main(){
   float dens = young * 0.5 + old + bul;
   float keep = clamp(dens / uDensRef, 0.0, 1.0);
   float rnd = fract(aRnd.w * 13.37);
-  if (rnd > keep || boxFade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vColor = vec3(0.0); vSharp = 0.0; return; }
+  if (rnd > keep || boxFade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vColor = vec3(0.0); vSharp = 0.0; vRc = 1.0; return; }
   // population: young (blue) fraction follows the arm light; bulge is old and warm
   float fy = young * 0.5 / max(dens, 1e-6);
   float l = aRnd.w;
@@ -139,10 +155,11 @@ void main(){
   float flux = L * uBright * uS * uS / (dist * dist + 1e-12);
   flux = uSat * (1.0 - exp(-flux / uSat));
   flux *= exp(-galTau(uCamPos, p, 2, 0.0));
-  float px = clamp(1.0 + sqrt(flux) * uPxScale, 1.25, 9.0);
+  float px = clamp(1.0 + sqrt(flux) * uPxScale, 1.25, 24.0);
   gl_PointSize = px;
   vSharp = px;
-  vColor = bb(T) * flux / (0.36 * px * px) * boxFade;
+  vRc = 0.45 + 0.07 * px;
+  vColor = bb(T) * flux / max(1.0, 3.1416 * vRc * vRc) * boxFade;
 }`;
 
 const MARK_VERT = /* glsl */ `
@@ -217,7 +234,7 @@ export class Stars {
       const youngP = s.arm * g.starFormation * 0.32;
       if (g.type === 'elliptical' || g.type === 'lenticular' || (bulge && s.r < R * 0.12)) {
         if (u < 0.07) { T = rng.range(3300, 4300); L = rng.range(8, 60); } else { T = rng.range(3600, 5600); L = rng.logRange(0.15, 3); }
-      } else if (u < youngP) { T = rng.range(9000, 30000); L = rng.logRange(4, 120); }
+      } else if (u < youngP) { T = rng.range(9000, 30000); L = rng.logRange(4, 120); pos[o * 3 + 1] *= 0.3; }
       else if (u < youngP + 0.04) { T = rng.range(3300, 4400); L = rng.logRange(5, 60); }
       else { T = rng.range(3800, 8000); L = rng.logRange(0.1, 4); }
       bbColor(T, tmp);
@@ -235,14 +252,14 @@ export class Stars {
       if (s.r < R * 0.08) continue;
       const spread = crng.range(0.006, 0.03);
       for (let k = 0; k < perCluster; k++) {
-        pos[o * 3] = s.x + crng.gaussian(0, spread); pos[o * 3 + 1] = s.y + crng.gaussian(0, spread * 0.5); pos[o * 3 + 2] = s.z + crng.gaussian(0, spread);
+        pos[o * 3] = s.x + crng.gaussian(0, spread); pos[o * 3 + 1] = s.y * 0.3 + crng.gaussian(0, spread * 0.5); pos[o * 3 + 2] = s.z + crng.gaussian(0, spread);
         const T = crng.range(10000, 32000), L = crng.logRange(3, 200);
         bbColor(T, tmp);
         col[o * 4] = tmp[0] * 255; col[o * 4 + 1] = tmp[1] * 255; col[o * 4 + 2] = tmp[2] * 255; col[o * 4 + 3] = lumCode(L);
         o++;
       }
       // a blue haze around the association
-      hiiPos.push(s.x, s.y, s.z); hiiCol.push(0.45, 0.62, 1.0, 0.35); hiiSize.push(spread * 5);
+      hiiPos.push(s.x, s.y * 0.3, s.z); hiiCol.push(0.45, 0.62, 1.0, 0.35); hiiSize.push(spread * 5);
       made++;
     }
     const geo = new THREE.BufferGeometry();
@@ -259,22 +276,24 @@ export class Stars {
 
     // HII knots: complexes of pink blobs on the arm ridges
     const hrng = new Random(seedFrom(g.seed, 'hii'));
-    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(900, 1600, 2600, 3200);
+    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(350, 600, 900, 1100);
     let hm = 0; guard = 0;
     while (hm < nHII && guard++ < nHII * 60) {
       const s = U.galaxySample(g, hrng);
       if (g.arms > 0 && s.arm < 0.88) continue;
       if (s.r < R * 0.1) continue;
-      const sub = hrng.int(2, 6);
-      const size = hrng.range(0.025, 0.08) * (hrng.chance(0.08) ? 2.2 : 1);
+      if (hrng.chance(0.45)) continue;   // gaps: star formation is patchy along the arm
+      const sub = hrng.int(1, 5);
+      const size = hrng.logRange(0.01, 0.06) * (hrng.chance(0.06) ? 2.4 : 1);
+      const y0 = s.y * 0.25;
       for (let k = 0; k < sub; k++) {
-        hiiPos.push(s.x + hrng.gaussian(0, size * 0.8), s.y + hrng.gaussian(0, size * 0.2), s.z + hrng.gaussian(0, size * 0.8));
+        hiiPos.push(s.x + hrng.gaussian(0, size * 0.9), y0 + hrng.gaussian(0, size * 0.15), s.z + hrng.gaussian(0, size * 0.9));
         const pinkish = hrng.float();
-        hiiCol.push(1.0, 0.18 + pinkish * 0.12, 0.32 + pinkish * 0.12, hrng.range(0.6, 1.6) * g.starFormation);
+        hiiCol.push(1.0, 0.16 + pinkish * 0.14, 0.26 + pinkish * 0.2, hrng.logRange(0.4, 2.2) * g.starFormation);
         hiiSize.push(size * hrng.range(0.5, 1.2));
       }
       // hot white-blue core (the ionizing cluster)
-      hiiPos.push(s.x, s.y, s.z); hiiCol.push(0.85, 0.85, 1.0, 1.2); hiiSize.push(size * 0.35);
+      hiiPos.push(s.x, y0, s.z); hiiCol.push(0.85, 0.85, 1.0, 1.2); hiiSize.push(size * 0.35);
       hm++;
     }
     if (hiiPos.length) {
@@ -306,7 +325,7 @@ export class Stars {
       // density reference: keep ~all points in a dense arm, fewer in sparse regions
       m.uniforms.uDensRef.value = 1.2;
       // brightness tuned so a typical star at the box's typical distance is ~equally visible on every layer
-      m.uniforms.uBright.value = 0.04 / (S * S) * (S * S);
+      m.uniforms.uBright.value = 0.1;
       const pts = new THREE.Points(lg, m);
       pts.frustumCulled = false;
       this.locals.push(pts);
@@ -375,7 +394,7 @@ export class Stars {
     if (this.blobMat) this.blobMat.uniforms.uProj.value = proj;
     for (const l of this.locals) l.material.uniforms.uCamPos.value.copy(camera.position);
     const s = Math.max(1, height / 720);
-    this.starMat.uniforms.uMaxPx.value = 7 * s;
+    this.starMat.uniforms.uMaxPx.value = 18 * s;
     if (this.markMat) this.markMat.uniforms.uPx.value = 18 * s;
   }
 

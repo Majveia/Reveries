@@ -141,7 +141,10 @@ vec3 starColor(float h){
   return h < 0.3 ? mix(c1, c2, h / 0.3) : h < 0.75 ? mix(c2, c3, (h - 0.3) / 0.45) : mix(c3, c4, (h - 0.75) / 0.25);
 }
 
-vec3 starLayer(vec3 d, float scale, float seed, float density, float gain){
+// One cell-hashed star layer. Fluxes follow a Euclidean power law
+// N(>F) ∝ F^-1.5 (F = Fmin·u^-2/3): a handful of bright stars over a fine dust
+// of faint ones. Energy is spread over the pixel footprint (resolution-stable).
+vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float fmax){
   vec3 p = d * scale;
   vec3 c = floor(p);
   vec3 h = hash33(c + seed);
@@ -149,13 +152,16 @@ vec3 starLayer(vec3 d, float scale, float seed, float density, float gain){
   vec3 j = hash33(c * 1.73 + seed + 11.3);
   vec3 sp = normalize(c + 0.2 + 0.6 * j) * scale;
   vec3 f = sp - c;
-  if (any(lessThan(f, vec3(0.18))) || any(greaterThan(f, vec3(0.82)))) return vec3(0.0);
+  if (any(lessThan(f, vec3(0.12))) || any(greaterThan(f, vec3(0.88)))) return vec3(0.0);
   vec3 sd = normalize(sp);
   float ang = length(d - sd);
-  float sig = uPixelAng * 0.62;
-  float flux = gain * pow(h.y, 7.0) * 26.0 + gain * 0.05 * h.y;
+  float sig = uPixelAng * 0.55;
+  float u = max(h.y / max(density, 1e-3), 1e-4);
+  float flux = min(fmin * pow(u, -0.6667), fmax);
   float g = exp(-ang * ang / (2.0 * sig * sig)) / (6.2831853 * sig * sig);
-  return starColor(h.z) * flux * g * 2.5e-6;
+  // mostly white with a gentle B-V tint
+  vec3 tint = mix(vec3(1.0), starColor(h.z), 0.45);
+  return tint * flux * g * 2.5e-6;
 }
 
 vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
@@ -228,17 +234,23 @@ void main(){
     col += uSunRadiance * limb * disk * occl;
   }
   // inner corona (visible from space and through thin air)
-  col += uSunRadiance * 0.00035 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 1.8)) * occl;
+  col += uSunRadiance * (0.00035 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 1.8)) + 0.000012 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 9.0))) * occl;
 
   // ---- galaxy band + stars ------------------------------------------------
   if (uStarVis > 0.001) {
     vec3 gal = textureCube(tGalaxy, dc).rgb;
     float gl = dot(gal, vec3(0.333));
+    // contrast curve: the diffuse disk glow we sit inside is cut to black (OLED),
+    // the band, bulge and star clouds keep their structure; mostly neutral colour.
+    vec3 galD = mix(vec3(gl) * vec3(0.95, 0.97, 1.05), gal, 0.4) * uGalaxyGain;
+    float gd = gl * uGalaxyGain;
+    galD *= smoothstep(0.006, 0.035, gd) * clamp(gd / 0.035, 0.3, 1.3);
     vec3 stars = vec3(0.0);
-    float dens = clamp(0.35 + gl * 160.0, 0.35, 1.0);
-    stars += starLayer(dc, 90.0, 1.0, 0.55, 3.2);
-    stars += starLayer(dc, 210.0, 7.0, 0.5 * dens, 1.0);
-    stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.45);
+    // band density: faint stars crowd into the Milky Way, sparse elsewhere
+    float dens = smoothstep(0.0, 1.0, gl * 90.0);
+    stars += starLayer(dc, 70.0, 1.0, 0.42, 0.010, 6.0);               // naked-eye stars (~8k)
+    stars += starLayer(dc, 190.0, 7.0, 0.10 + 0.55 * dens, 0.0035, 0.25); // faint field, clustered in the band
+    stars += starLayer(dc, 420.0, 13.0, 0.03 + 0.5 * dens * dens, 0.0016, 0.05); // unresolved band grain
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
     float el = dot(rd, up);
@@ -251,7 +263,7 @@ void main(){
       float sig = uPixelAng * 0.8;
       pl += uPlanetCol[i] * uPlanetDir[i].w * exp(-a * a / (2.0 * sig * sig)) / (6.2831853 * sig * sig) * 2.5e-6;
     }
-    col += (gal * uGalaxyGain + stars * tw + pl) * uStarVis * occl;
+    col += (galD + stars * tw + pl) * uStarVis * occl;
   }
 
   // ---- aurora curtains --------------------------------------------------------
@@ -472,7 +484,7 @@ export default class Sky {
     // Sun disk radiance: illuminance spread over the (enlarged) disk, capped for
     // a hot core that blooms without blowing out the whole frame.
     const ar = u.uSunAngR.value;
-    const rad = Math.min(m.sunE0 / (Math.PI * ar * ar), 900);
+    const rad = Math.min(m.sunE0 / (Math.PI * ar * ar), 4000);
     const sc = m.starColor;
     u.uSunRadiance.value.set(sc.r, sc.g, sc.b).multiplyScalar(rad);
     // moons
@@ -490,7 +502,7 @@ export default class Sky {
     const night = 1 - THREE.MathUtils.smoothstep(sunEl, -0.16, 0.04);
     const space = m.present ? THREE.MathUtils.smoothstep(alt, m.thickness * 0.8, m.thickness * 2.0) : 1;
     u.uStarVis.value = Math.max(night, space);
-    u.uGalaxyGain.value = 1;
+    u.uGalaxyGain.value = this.galaxyGain ?? 0.38;
     // aurora (weather decides)
     const ws = L.weatherState;
     u.uAurora.value = (ws?.aurora || 0) * night * (1 - space);

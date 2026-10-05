@@ -212,6 +212,7 @@ export default class PlanetLevel {
       cam.near = THREE.MathUtils.clamp(alt * 0.02, 0.1, 2000);
       cam.far = Math.max(cam.near * 2e5, 5000);
     }
+    if (this.maxNear) cam.near = Math.min(cam.near, this.maxNear); // vehicles: a ship close to the camera high above the ground
     cam.updateProjectionMatrix();
   }
 

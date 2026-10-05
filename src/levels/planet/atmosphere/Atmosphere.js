@@ -125,7 +125,7 @@ export default class Atmosphere {
         tInput: { value: null }, tDepth: { value: null },
         uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
-        uMaxSteps: { value: this.engine.quality.pick(12, 18, 28, 36) },
+        uMaxSteps: { value: this.engine.quality.pick(16, 24, 40, 56) },
         uMarchSky: { value: 0 }, uGroundShadow: { value: 0 }, uShadowAmt: { value: 0 }, uFrameJit: { value: 0 },
       },
     });
@@ -174,7 +174,9 @@ export default class Atmosphere {
       // march the sky (for crepuscular shafts) only when inside the air and the sun is low-ish
       const up = _v.copy(ctx.cameraPosition).normalize();
       const el = up.dot(this.world.sunDir);
-      u.uMarchSky.value = !this.dbg.has('noshafts') && this.engine.quality.level >= 2 && el > -0.05 && el < 0.5 && ctx.cameraPosition.length() < m.Rt ? 1 : 0;
+      // Full-res sky marching for shafts banded badly (few steps over 100+ km); the sky now always
+      // comes from the sky-view LUT. Opt back in for experiments with ?atmo=shafts.
+      u.uMarchSky.value = this.dbg.has('shafts') && this.engine.quality.level >= 2 && el > -0.05 && el < 0.5 && ctx.cameraPosition.length() < m.Rt ? 1 : 0;
     }
     ctx.fullscreen(this.mat, output);
   }

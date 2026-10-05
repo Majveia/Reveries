@@ -133,6 +133,7 @@ export class Ship {
   get atmosphereHeight() { return Math.max(this.world.atmosphereHeight || 0, this.world.radius * 0.04); }
 
   update(dt, input, t) {
+    if (this._holdForShot) { this._fx(dt, t, true); return; }
     const camD = this.sys.level.camera.position.distanceToSquared(this.position);
     if (!input && this.landed && camD > 3000 * 3000) { this.object3d.visible = camD < 20000 * 20000; return; }
     this.object3d.visible = true;
@@ -325,7 +326,7 @@ export class Ship {
     const sys = this.sys, M = this.model;
     const thr = this.landed ? (driven ? 0.06 : 0) : clamp(this.throttle, 0.1, 1);
     this.flames.forEach((f, i) => f.set(i ? thr * 0.8 : thr, this.boost, t + i * 3.1));
-    M.hotMat.color.setRGB(1.0, 0.55, 0.3).multiplyScalar(this.landed && !driven ? 0.4 : 4 + thr * 12 + this.boost * 14);
+    M.hotMat.color.setRGB(1.0, 0.5, 0.25).multiplyScalar(this.landed && !driven ? 0.25 : 1.5 + thr * 4 + this.boost * 6);
     // gear animation (rotate up into the belly)
     const gt = this.gearT;
     M.gear.visible = gt > 0.02;

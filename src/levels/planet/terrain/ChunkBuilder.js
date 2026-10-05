@@ -95,6 +95,11 @@ export function buildChunk(T, job) {
   const DX = new Float64Array(G * G), DY = new Float64Array(G * G), DZ = new Float64Array(G * G);
   const matA = new Uint8Array(V * V * 4 + 4 * V * 4), matB = new Uint8Array(V * V * 4 + 4 * V * 4);
   let minH = Infinity, maxH = -Infinity;
+  // LOD band limit: octaves finer than ~2–4 vertex spacings are faded so the
+  // mesh never aliases the height field (exact at spacing ≤ 1 m → physics).
+  const spacing = (Math.PI * 0.5 * R) / total;
+  const hasLod = typeof T.setLod === 'function';
+  if (hasLod) T.setLod(spacing);
   for (let j = -1; j <= N + 1; j++) {
     const b = -1 + (2 * (iy * N + j)) / total;
     for (let i = -1; i <= N + 1; i++) {
@@ -117,6 +122,25 @@ export function buildChunk(T, job) {
       }
     }
   }
+
+  // ---- parent-band heights at the even (parent-grid) vertices ----
+  // CDLOD morph target must equal what the parent chunk rendered there,
+  // including the parent's coarser band limit → seamless, pop-free morphs.
+  let PH = null;
+  if (hasLod && level > 0) {
+    T.setLod(spacing * 2);
+    const parentLS = T.lod;
+    T.setLod(spacing);
+    if (parentLS !== T.lod) {
+      T.setLod(spacing * 2);
+      PH = new Float64Array(G * G);
+      for (let j = 0; j <= N; j += 2) for (let i = 0; i <= N; i += 2) {
+        const g = (j + 1) * G + (i + 1);
+        PH[g] = T.evaluate(DX[g], DY[g], DZ[g], false).h;
+      }
+    }
+  }
+  if (hasLod) T.setLod(0);
 
   // ---- origin: chunk center on the base sphere ----
   faceDir(face, -1 + (2 * (ix * N + N / 2)) / total, -1 + (2 * (iy * N + N / 2)) / total, dir);
@@ -147,7 +171,6 @@ export function buildChunk(T, job) {
   }
 
   // cavity: height relative to the 4-neighbour mean, scaled by spacing (concave → >0.5)
-  const spacing = (Math.PI * 0.5 * R) / total;
   let maxDelta = 0;
   for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
     const g = (j + 1) * G + (i + 1), k = j * V + i;
@@ -157,14 +180,18 @@ export function buildChunk(T, job) {
     hgt[k] = H[g];
     // morph target (parent grid: even vertices; diagonal a→d split)
     const io = i & 1, jo = j & 1;
-    let tx = PX[g], ty = PY[g], tz = PZ[g];
+    // parent-grid position at grid index g (parent band limit when available)
+    const ppx = (gg) => (PH ? DX[gg] * (R + PH[gg]) : PX[gg]);
+    const ppy = (gg) => (PH ? DY[gg] * (R + PH[gg]) : PY[gg]);
+    const ppz = (gg) => (PH ? DZ[gg] * (R + PH[gg]) : PZ[gg]);
+    let tx = ppx(g), ty = ppy(g), tz = ppz(g);
     let mx = NX[k], my = NY[k], mz = NZ[k];
     if (io || jo) {
       let g0, g1, k0, k1;
       if (io && jo) { g0 = g - G - 1; g1 = g + G + 1; k0 = k - V - 1; k1 = k + V + 1; }
       else if (io) { g0 = g - 1; g1 = g + 1; k0 = k - 1; k1 = k + 1; }
       else { g0 = g - G; g1 = g + G; k0 = k - V; k1 = k + V; }
-      tx = (PX[g0] + PX[g1]) * 0.5; ty = (PY[g0] + PY[g1]) * 0.5; tz = (PZ[g0] + PZ[g1]) * 0.5;
+      tx = (ppx(g0) + ppx(g1)) * 0.5; ty = (ppy(g0) + ppy(g1)) * 0.5; tz = (ppz(g0) + ppz(g1)) * 0.5;
       mx = NX[k0] + NX[k1]; my = NY[k0] + NY[k1]; mz = NZ[k0] + NZ[k1];
       const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1; mx /= ml; my /= ml; mz /= ml;
     }

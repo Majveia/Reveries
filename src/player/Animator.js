@@ -137,7 +137,7 @@ export class Animator {
     this.gait = damp(this.gait, sstep(2.6, 4.6, sp), 6, dt);
     this.sprint = damp(this.sprint, sstep(7.5, 10.5, sp), 4, dt);
     const accF = clamp(s.accel?.z || 0, -25, 25), accX = clamp(s.accel?.x || 0, -25, 25);
-    this.lean = damp(this.lean, clamp(sp * 0.02 + this.sprint * 0.16 + accF * 0.012, -0.25, 0.48), 5, dt);
+    this.lean = damp(this.lean, clamp(sp * 0.045 + this.sprint * 0.12 + accF * 0.012, -0.25, 0.48), 5, dt);
     this.bank = damp(this.bank, clamp(-(s.turnRate || 0) * sp * 0.035 - accX * 0.004, -0.35, 0.35), 5, dt);
     this.idleTime = sp < 0.15 && s.state === 'ground' ? this.idleTime + dt : 0;
     // squash spring (critically-damped-ish)
@@ -399,15 +399,15 @@ export class Animator {
     const bob = lerp(walkBob * Math.min(1, sp / 1.6), runBob, g) * move;
     const base = lerp(lerp(-0.012, -0.028, g), -0.035, spr) * move - 0.014 * (1 - move);
     p.root.set(swayX + 0.008 * Math.sin(TAU * ph) * move * (1 - g), base + bob + br * 0.002 * (1 - move), 0);
-    const pYaw = -Math.cos(TAU * ph) * lerp(0.13, 0.09, g) * move;
-    const pRoll = Math.sin(TAU * ph) * 0.045 * move * (1 - g * 0.5) + swayX * 1.5;
+    const pYaw = -Math.cos(TAU * ph) * lerp(0.13, 0.17, g) * move;
+    const pRoll = Math.sin(TAU * ph) * 0.06 * move * (1 - g * 0.3) + swayX * 1.5;
     // whole-body lean & bank applied at the hips
     qYXZ(p.D[B.hips], this.lean * 0.55, pYaw, this.bank + pRoll);
     qYXZ(p.D[B.spine], this.lean * 0.35 + 0.02 * br * (1 - move), -pYaw * 0.6, -pRoll * 0.7);
-    qYXZ(p.D[B.chest], this.lean * 0.15 - 0.025 * br * (1 - move) + g * 0.04 * Math.abs(Math.sin(TAU * ph)), -pYaw * 1.3, -pRoll * 0.4 - this.bank * 0.25);
-    qYXZ(p.D[B.neck], -this.lean * 0.4, pYaw * 0.4, 0);
+    qYXZ(p.D[B.chest], this.lean * 0.15 - 0.025 * br * (1 - move) + g * 0.04 * Math.abs(Math.sin(TAU * ph)), -pYaw * 1.6, -pRoll * 0.4 - this.bank * 0.25);
+    qYXZ(p.D[B.neck], -this.lean * 0.4, pYaw * 1.0, pRoll * 0.5);
     // arms counter-swing
-    const A = lerp(lerp(0.3, 0.7, g), 0.85, spr) * move;
+    const A = lerp(lerp(0.32, 0.82, g), 0.95, spr) * move;
     const swingL = -Math.cos(TAU * ph) * A + 0.05 - 0.12 * spr;
     const swingR = Math.cos(TAU * ph) * A + 0.05 - 0.12 * spr;
     const elBase = lerp(lerp(0.28, 1.3, g), 1.42, spr) * move + 0.22 * (1 - move);

@@ -56,6 +56,9 @@ export default class Vehicles {
     this._shake = 0;
     this._prompt = null;
     this._telT = 0;
+    // shot tuning from the URL (?vp=head:1.9;tod:0.74) — harness only
+    this.shotParams = {};
+    for (const kv of (this.engine.params.get('vp') || '').split(';')) { const [k, v] = kv.split(':'); if (k && v != null && !isNaN(+v)) this.shotParams[k] = +v; }
     level.vehicles = this;
   }
 
@@ -255,6 +258,8 @@ export default class Vehicles {
     this.dust.update(t, level.camera, h);
     this.spray.update(t, level.camera, h);
 
+    const camVeh = this.shotCam?.vehicle || driving;
+    level.maxNear = camVeh && camVeh.type === 'ship' ? 0.5 : 0;
     if (driving && this.list.includes(driving) && !this.shotCam) this._drive(dt, driving);
     else if (!driving) { this.streaks.mesh.visible = false; }
     if (this.shotCam) this._updateShotCam();
@@ -357,16 +362,25 @@ export default class Vehicles {
   // =====================================================================================
   _updateShotCam() {
     const sc = this.shotCam, v = sc.vehicle, level = this.level;
-    const up = _v.copy(v.position).normalize();
-    const f = _v2.copy(Z).applyQuaternion(v.quaternion);
-    f.addScaledVector(up, -f.dot(up)).normalize();
-    const left = _v3.crossVectors(up, f).normalize();
+    let up, f, left;
+    if (sc.frame === 'ship') {
+      // rigid in the vehicle frame (space shots: no meaningful local horizon)
+      up = _v.copy(Y).applyQuaternion(v.quaternion);
+      f = _v2.copy(Z).applyQuaternion(v.quaternion);
+      left = _v3.copy(X).applyQuaternion(v.quaternion);
+    } else {
+      up = _v.copy(v.position).normalize();
+      f = _v2.copy(Z).applyQuaternion(v.quaternion);
+      f.addScaledVector(up, -f.dot(up)).normalize();
+      left = _v3.crossVectors(up, f).normalize();
+    }
     const fc = level.freeCam && level.freeCam._shot ? level.freeCam : (level.freeCam = { position: new THREE.Vector3(), target: new THREE.Vector3(), up: new THREE.Vector3(), _shot: true });
     const o = sc.offset, tg = sc.target;
     fc.position.copy(v.position).addScaledVector(left, o.x).addScaledVector(up, o.y).addScaledVector(f, o.z);
     fc.target.copy(v.position).addScaledVector(left, tg.x).addScaledVector(up, tg.y).addScaledVector(f, tg.z);
     fc.up.copy(up);
-    if (sc.roll) fc.up.applyAxisAngle(_p.copy(fc.target).sub(fc.position).normalize(), sc.roll);
+    const roll = (sc.roll || 0) + (sc.bankRoll ? (v.bank || 0) * sc.bankRoll : 0);
+    if (roll) fc.up.applyAxisAngle(_p.copy(fc.target).sub(fc.position).normalize(), roll);
     if (sc.minClear) {
       const g = this.world.groundAt(fc.position, this._cg || (this._cg = {}));
       const minR = Math.max(g.radius, g.water ? g.waterRadius : -Infinity) + sc.minClear;
@@ -389,86 +403,89 @@ export default class Vehicles {
     }
   }
 
+  /** Unit tangent at `dir` pointing toward `target` (any tangent if degenerate). */
+  _tangentTo(dir, target) {
+    const t = target.clone().normalize().sub(dir);
+    t.addScaledVector(dir, -t.dot(dir));
+    if (t.lengthSq() < 1e-12) t.set(0, 1, 0).cross(dir);
+    return t.normalize();
+  }
+
   async shot(name, spot) {
     if (!['bike', 'ship', 'orbit'].includes(name)) return false;
     const level = this.level, w = this.world;
     level.freeCam = null;
     this.shotCam = null; this.autopilot = null; this.shotDrive = null;
+    this.forceVortex = 0; this.forceContrail = 0;
+    for (const v of this.list) v._holdForShot = false;
     this.engine.ui.telemetry?.(null);
     this._t0 = this.time = this.engine.time;
+    const site = spot?.site || w.sites[0];
+    const sdir = (spot?.dir || site?.dir || w.focus.clone()).clone().normalize();
+
     if (name === 'bike') {
       const bike = this.list.find((v) => v.type === 'bike');
-      const site = spot?.site || w.sites[0];
-      const sdir = spot?.dir || site?.dir || w.focus.clone().normalize();
-      const target = spot?.lookAt || site?.position || sdir.clone().multiplyScalar(w.radius);
-      // start ~140 m back along the line to the settlement so it lies ahead
-      const toS = _v.copy(target).sub(sdir.clone().multiplyScalar(target.length())).addScaledVector(sdir, 0);
-      toS.copy(target).sub(sdir.clone().multiplyScalar(w.radius + w.heightAt(sdir)));
-      toS.addScaledVector(sdir, -toS.dot(sdir)).normalize();
-      const start = sdir.clone().addScaledVector(toS, -140 / w.radius).normalize();
-      bike.place(start, toS);
+      w.setTimeOfDay(0.3, sdir);
+      // race past the settlement on the flat, dry ground where the player spawns (not off a crest)
+      const ss = this._playerSpawnSpot();
+      const sd = ss.dir.clone().normalize();
+      const center = site?.dir || sdir;
+      const radial = this._tangentTo(sd, center.clone().multiplyScalar(w.radius)).negate();
+      const head = radial.clone().cross(sd).normalize().applyAxisAngle(sd, -0.25); // tangent to the town ring
+      const start = sd.clone().addScaledVector(head, -60 / w.radius).normalize();
+      bike.place(start, head);
       this._boardForShot(bike);
       const inp = this.shotInput = new ScriptInput();
-      inp.move.y = 1; inp.move.x = 0.32; inp.held.add('sprint');
+      inp.move.y = 1; inp.move.x = 0.2; if (!this.shotParams?.noboost) inp.held.add('sprint');
       this.shotDrive = bike;
-      bike.velocity.copy(toS).multiplyScalar(70);
-      bike._s = 70;
-      this._simulate(150);
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-2.6, 1.05, -5.4), target: new THREE.Vector3(0.4, 1.0, 7), fov: 68, minClear: 0.5, roll: 0.06 };
+      bike.velocity.copy(head).multiplyScalar(55);
+      bike._s = 55;
+      this._simulate(70);
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(this.shotParams?.bx ?? 2.3), this.shotParams?.by ?? 0.95, -(this.shotParams?.bz ?? 5.0)), target: new THREE.Vector3(0.9, 0.55, 6), fov: 56, minClear: 0.25, bankRoll: 0.3 };
       this._updateShotCam();
       return true;
     }
     if (name === 'ship') {
       const ship = this.hero;
-      const site = spot?.site || w.sites[0];
-      const sdir = (spot?.dir || site?.dir || w.focus.clone()).clone().normalize();
-      // head roughly toward the low sun so the hull is rim-lit and the land rakes gold
+      w.setTimeOfDay(this.shotParams?.tod ?? 0.743, sdir);
       const sun = w.sunDir.clone();
       const sunT = sun.addScaledVector(sdir, -sun.dot(sdir)).normalize();
-      const head = sunT.clone().applyAxisAngle(sdir, 0.55);
-      const start = sdir.clone().addScaledVector(head, -1600 / w.radius).normalize();
-      const g = w.surfaceRadius(start);
-      const pos = start.clone().multiplyScalar(g + 85);
+      // fly across the low sun so the hull is side-lit gold; the camera rides ahead on the sun side
+      const head = sunT.clone().applyAxisAngle(sdir, this.shotParams?.head ?? 2.2);
+      const start = sdir.clone().addScaledVector(head, -1400 / w.radius).normalize();
+      const pos = start.clone().multiplyScalar(w.surfaceRadius(start) + 80);
       this._boardForShot(ship);
-      ship.fly(pos, pos.clone().add(head.clone().multiplyScalar(100)), 190, start);
-      this.autopilot = ship; this.apParams = { alt: 85, throttle: 0.8, yaw: -0.22 };
-      this.forceVortex = 0.55; this.forceContrail = 0;
-      this._simulate(150);
-      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(-7.5, 2.4, -17), target: new THREE.Vector3(1.0, 0.5, 30), fov: 58, minClear: 2 };
+      ship.fly(pos, pos.clone().addScaledVector(head, 100), 170, start);
+      this.autopilot = ship; this.apParams = { alt: 75, throttle: 0.75, yaw: -0.2 };
+      this.forceVortex = 0.3;
+      this._simulate(160);
+      const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
+      const lft = _v2.crossVectors(upS, fw).normalize();
+      const sideSign = Math.sign(lft.dot(w.sunDir)) || 1;
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(12.5 * sideSign, 2.6, 8.5), target: new THREE.Vector3(-0.5 * sideSign, 0.4, -3.5), fov: 50, minClear: 2 };
       this._updateShotCam();
       return true;
     }
     if (name === 'orbit') {
       const ship = this.hero;
-      const sdir = (w.sites[0]?.dir || w.focus.clone()).clone().normalize();
+      w.setTimeOfDay(0.66, sdir);
+      // low orbit above the afternoon side; nose toward the limb, sun off to the side
       const side = new THREE.Vector3(0, 1, 0).cross(sdir).normalize();
-      const p = sdir.clone().multiplyScalar(1).addScaledVector(side, 0.9).normalize();
-      const pos = p.clone().multiplyScalar(w.radius * 2.3);
-      // look toward the limb: rotate the nadir by ~the limb angle toward the sun side
-      const nadir = p.clone().negate();
+      const p = sdir.clone().addScaledVector(side, 0.35).normalize();
+      const rOrb = w.radius * (this.shotParams?.orbitR ?? 1.7);
+      const pos = p.clone().multiplyScalar(rOrb);
       const sunT = w.sunDir.clone().addScaledVector(p, -w.sunDir.dot(p)).normalize();
-      const T = sunT.clone().applyAxisAngle(p, 1.25);
-      const limb = Math.asin(1 / 2.3);
-      const look = nadir.clone().multiplyScalar(Math.cos(limb * 0.92)).addScaledVector(T, Math.sin(limb * 0.92)).normalize();
+      const T = sunT.clone().applyAxisAngle(p, this.shotParams?.orbitAz ?? 1.15);
+      const dep = Math.acos(w.radius / rOrb) - 0.2; // nose just above the limb: the curved horizon sweeps across the lower frame
+      const look = T.clone().multiplyScalar(Math.cos(dep)).addScaledVector(p, -Math.sin(dep)).normalize();
       this._boardForShot(ship);
-      ship.fly(pos, pos.clone().add(look), 900, T);
-      ship.thrSet = 0.6;
-      this.autopilot = null;
-      this._simulate(30);
-      this.shotCam = null;
-      // free camera: behind, above and to the side of the ship
-      const f = _v.copy(Z).applyQuaternion(ship.quaternion);
-      const u = _v2.copy(Y).applyQuaternion(ship.quaternion);
-      const l = _v3.copy(X).applyQuaternion(ship.quaternion);
-      const cpos = ship.position.clone().addScaledVector(f, -24).addScaledVector(u, 5.5).addScaledVector(l, -7);
-      const tgt = ship.position.clone().addScaledVector(f, 60).addScaledVector(u, 4);
-      level.freeCam = { position: cpos, target: tgt, up: u.clone(), _shot: true };
-      this.shotCam = { vehicle: ship, orbit: true, cposL: null };
-      this._orbitShot = { f: f.clone(), u: u.clone(), l: l.clone() };
-      this.shotCam = null;
-      // keep the ship where it is during the capture frames
-      ship.velocity.multiplyScalar(0); ship.thrSet = 0.5; ship._holdForShot = true;
-      level.camera.fov = 55; level.camera.updateProjectionMatrix();
+      ship.fly(pos, pos.clone().add(look), 0, p);
+      ship.thrSet = 0.7; ship.throttle = 0.8; ship.boost = 0; ship.gearT = 0;
+      this._simulate(2);
+      ship.position.copy(pos); ship.velocity.set(0, 0, 0);
+      ship._holdForShot = true;
+      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(-6.5, 3.4, -19), target: new THREE.Vector3(2.5, -1.5, 40), fov: 55 };
+      this._updateShotCam();
       return true;
     }
     return false;

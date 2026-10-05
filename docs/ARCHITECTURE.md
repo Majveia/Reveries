@@ -155,6 +155,28 @@ directions. Main thread and workers must produce identical heights.
   `down/pressed/released(action)`, `click`, `doubleClick`, `setMode('orbit'|'game')`,
   `isTouch`, `lastDevice`, `pointerLocked`, `requestPointerLock()`.
   Actions: `forward back left right jump sprint crouch interact toggleView map escape travel rollLeft rollRight photo timeFaster timeSlower light help primary secondary brake`.
+- UI additions (additive, all optional):
+  - `ui.label(id, x, y, text, {sub, hover, kind, color, align:'left'|'right'|'center', persist})` —
+    world-space name tag at CSS pixel (x, y); call every frame while visible (labels not
+    refreshed for 2 frames fade out unless `persist`). `ui.labelWorld(id, vec3, camera, text, opts)`
+    projects for you (hides behind camera / off screen). `ui.unlabel(id)`, `ui.clearLabels()`
+    (labels are cleared automatically on level change). Use for hover names in galaxy/system.
+  - `ui.toast(title, text, ms, {kind:'lore'|'note', kicker})` — short text → discovery note under
+    the breadcrumb; long text (>70 chars) or `kind:'lore'` → cinematic serif myth reveal (upper third).
+  - `ui.arrival({kicker, title, text, ms})` — place-name reveal (queued, one at a time).
+  - `ui.hint(text|[[action, label], …], ms)` — `"Key label · Key label"` segments render key
+    tokens (WASD, Shift, Space, E, V, Esc, Drag, Scroll, Click…) as keycaps that switch to gamepad
+    glyphs automatically; or pass `[[action, label]]` pairs. `ui.prompt(keyOrAction, text)` likewise.
+  - `ui.glyph(action)` → HTML glyph for the current device; `ui.toggleHelp()` (help action `/`,
+    d-pad up on a gamepad) shows the controls for the current mode; `ui.settings` (persisted in
+    localStorage `reveries.settings.v1`: quality, mouse/touch/pad sensitivity, invertY, volume, muted, haptics).
+  - `ui.setMode('map'|'onfoot'|'bike'|'ship')` (`'vehicle'` = bike) switches touch layouts and help.
+  - Title screen in shot mode: `?shot=1&title=1` (harness `--extra "title=1"`).
+- Input additions: `input.setSensitivity({mouse, touch, pad})` (multipliers), `input.invertY`,
+  `input.rumble(intensity, ms)` (gamepad rumble / phone vibration, respects the haptics setting),
+  `input.gamepadId`. Gamepad: radial dead zones, look-stick turn acceleration; d-pad zooms in map
+  levels, d-pad up/down = help/light and left/right = time slower/faster in game modes. Touch look
+  has a flick-acceleration curve. Esc while the pointer is locked only releases the cursor.
 - `engine.audio`: `setScene(name, music)`, `setTimeOfDay`, `setFlight`, `setEngine`, `sfx(name)`.
 
 ## Screenshots (the harness)

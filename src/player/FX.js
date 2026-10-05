@@ -122,3 +122,91 @@ export class ContactShadow {
   }
   dispose() { this.object.geometry.dispose(); this.material.dispose(); }
 }
+
+/**
+ * Character shadow catcher: a small terrain-conforming grid around the feet that
+ * receives the explorer's own high-resolution shadow (CharShadow's depth map), so
+ * the hero always casts a crisp, grounded shadow even where the planet-scale sun
+ * shadow map is far too coarse. The penumbra widens with distance from the
+ * occluder (contact-hardening), and the whole thing fades at the grid edge.
+ */
+export class ShadowCatcher {
+  constructor(shadowUniforms, n = 9, half = 2.6) {
+    this.n = n; this.half = half;
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(n * n * 3), gv = new Float32Array(n * n * 2);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      gv[k * 2] = (i / (n - 1)) * 2 - 1; gv[k * 2 + 1] = (j / (n - 1)) * 2 - 1;
+    }
+    const idx = [];
+    for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) {
+      const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aGrid', new THREE.BufferAttribute(gv, 2));
+    g.setIndex(idx);
+    this.material = new THREE.ShaderMaterial({
+      uniforms: { ...shadowUniforms, uStrength: { value: 0.5 } },
+      vertexShader: /* glsl */`
+        attribute vec2 aGrid; varying vec2 vG; varying vec3 vView;
+        void main() { vG = aGrid; vec4 mv = modelViewMatrix * vec4(position, 1.0); vView = mv.xyz; gl_Position = projectionMatrix * mv; }`,
+      fragmentShader: /* glsl */`
+        uniform sampler2D uCSMap; uniform mat4 uCSMat; uniform float uCSHalf; uniform float uCSOn; uniform float uCSTexel; uniform float uStrength;
+        varying vec2 vG; varying vec3 vView;
+        void main() {
+          if (uCSOn < 0.5) discard;
+          vec4 sp = uCSMat * vec4(vView, 1.0);
+          vec2 uv = sp.xy / uCSHalf * 0.5 + 0.5;
+          float edge = smoothstep(0.0, 0.06, uv.x) * smoothstep(1.0, 0.94, uv.x) * smoothstep(0.0, 0.06, uv.y) * smoothstep(1.0, 0.94, uv.y);
+          if (edge <= 0.0) discard;
+          float d = -sp.z;
+          // blocker distance → penumbra width (contact hardening)
+          float blk = texture2D(uCSMap, uv).r;
+          float pen = clamp((d - blk) * 0.02, 0.0035, 0.03) / (2.0 * uCSHalf);
+          float s = 0.0;
+          for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) {
+            vec2 o = vec2(float(i), float(j)) * pen * 0.5;
+            float st = texture2D(uCSMap, uv + o).r;
+            s += smoothstep(st + 0.02, st + 0.06, d);
+          }
+          s /= 25.0;
+          float fade = 1.0 - smoothstep(0.65, 1.0, max(abs(vG.x), abs(vG.y)));
+          float a = s * edge * fade * uStrength;
+          if (a < 0.003) discard;
+          gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+        }`,
+      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    });
+    this.object = new THREE.Mesh(g, this.material);
+    this.object.renderOrder = 2;
+    this.object.frustumCulled = false;
+    this.object.visible = false;
+    this._g = {};
+    this._c = new THREE.Vector3(9e9, 0, 0);
+  }
+
+  /** center: world point on the ground (shadow centre); up/right/fwd: tangent basis. */
+  update(world, center, up, right, fwd) {
+    const o = this.object;
+    o.position.copy(center);
+    if (this._c.distanceToSquared(center) < 0.0004) return;
+    this._c.copy(center);
+    const n = this.n, h = this.half, pos = o.geometry.attributes.position.array;
+    const p = this._p || (this._p = new THREE.Vector3());
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      const x = ((i / (n - 1)) * 2 - 1) * h, z = ((j / (n - 1)) * 2 - 1) * h;
+      p.copy(center).addScaledVector(right, x).addScaledVector(fwd, z).addScaledVector(up, 0.6);
+      const gq = world.groundAt(p, this._g);
+      let r = gq.radius;
+      if (gq.water && gq.waterRadius > r) r = gq.waterRadius;
+      p.setLength(r + 0.012).sub(center);
+      pos[k * 3] = p.x; pos[k * 3 + 1] = p.y; pos[k * 3 + 2] = p.z;
+    }
+    o.geometry.attributes.position.needsUpdate = true;
+  }
+
+  dispose() { this.object.geometry.dispose(); this.material.dispose(); }
+}

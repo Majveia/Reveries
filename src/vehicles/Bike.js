@@ -17,7 +17,7 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Qua
 const _g = {};
 const _e = new THREE.Euler();
 
-const HOVER = 1.05;       // m, chassis origin above the surface
+const HOVER = 0.62;       // m, chassis origin above the surface (belly ≈ 0.55 m clear)
 const MAX_SPEED = 62;     // m/s cruise (~220 km/h)
 const BOOST_SPEED = 105;  // m/s boost (~380 km/h)
 
@@ -49,12 +49,12 @@ export class Bike {
     this.overWater = false; this.groundH = 0;
     this.sleeping = false;
     // VFX
-    this.flame = new Flame({ radius: 0.16, length: 1.4, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0] });
+    this.flame = new Flame({ radius: 0.15, length: 1.3, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0] });
     this.flame.mesh.position.copy(model.nozzles[0].pos);
     this.body.add(this.flame.mesh);
     this.glow = new GroundGlow([0.3, 0.8, 1.0]);
     this.glow.mesh.scale.set(2.6, 1, 5.2);
-    this.lightTrail = new Trail(40, { width: 0.06, color: [1.0, 0.18, 0.1], minStep: 1.2 });
+    this.lightTrail = new Trail(28, { width: 0.025, color: [1.0, 0.12, 0.06], minStep: 1.0 });
     this._emitAcc = 0;
   }
 
@@ -149,7 +149,11 @@ export class Bike {
       const sink = HOVER - hAvg;
       aUp += g0 * clamp(1 + sink * 1.2, 0, 3) + k * sink * 0.25 - c * this.vUp * (hAvg < HOVER * 1.8 ? 1 : 0.3);
     }
-    if (hop && hAvg < HOVER * 1.6) this.vUp += 7.5;
+    // arcade downforce: at speed the repulsors pull the bike back onto the terrain over crests
+    const spd = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z);
+    if (hAvg > HOVER) aUp -= g0 * 1.6 * clamp(spd / 45, 0, 1) * clamp((hAvg - HOVER) / 1.5, 0, 1) * (this._hopT > 0 ? 0.2 : 1);
+    this._hopT = Math.max(0, (this._hopT || 0) - dt);
+    if (hop && hAvg < HOVER * 1.6) { this.vUp += 7.5; this._hopT = 0.8; }
     this.vUp += aUp * dt;
     this.vUp *= Math.exp(-0.4 * dt);
 
@@ -247,7 +251,7 @@ export class Bike {
     this.body.updateMatrixWorld();
     _p.applyMatrix4(this.body.matrixWorld);
     this.lightTrail.push(_p, clamp((sp - 12) / 40, 0, 1) * (0.6 + this.boost));
-    this.lightTrail.uniforms.uLight.value.setScalar(4 + this.boost * 6);
+    this.lightTrail.uniforms.uLight.value.setScalar(1.6 + this.boost * 1.6);
     // dust / spray
     if (sp > 6 && hgt < 4) {
       const P = this.overWater ? sys.spray : sys.dust;

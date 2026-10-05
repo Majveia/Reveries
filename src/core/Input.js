@@ -33,6 +33,7 @@ const BINDINGS = {
   timeSlower: ['Comma'],
   light: ['KeyL'],
   help: ['Slash'],
+  brake: ['KeyX'],
 };
 
 // Standard gamepad mapping → actions
@@ -40,10 +41,23 @@ const PAD_BUTTONS = {
   0: 'jump', 1: 'crouch', 2: 'interact', 3: 'toggleView',
   4: 'rollLeft', 5: 'rollRight', 6: 'brake', 7: 'sprint',
   8: 'map', 9: 'escape', 10: 'sprint', 11: 'photo',
+  14: 'timeSlower', 15: 'timeFaster',
 };
+// D-pad up/down zoom in map levels; in game modes they are help / light.
+const PAD_DPAD_GAME = { 12: 'help', 13: 'light' };
 
-const DEADZONE = 0.16;
-const dz = (v) => (Math.abs(v) < DEADZONE ? 0 : (v - Math.sign(v) * DEADZONE) / (1 - DEADZONE));
+// Radial dead zone with a smooth response curve (no axis snapping, no
+// "square gate" diagonals). Returns [x, y] in the unit disc.
+const RADIAL_INNER = 0.14, RADIAL_OUTER = 0.94;
+function radial(x, y, expo) {
+  const l = Math.hypot(x, y);
+  if (l < RADIAL_INNER) return [0, 0];
+  const n = Math.min(1, (l - RADIAL_INNER) / (RADIAL_OUTER - RADIAL_INNER));
+  const c = expo ? n * (0.35 + 0.65 * n) : n; // blend linear → quadratic for fine aim
+  const k = c / l;
+  return [x * k, y * k];
+}
+export { BINDINGS, PAD_BUTTONS };
 
 export class Input {
   constructor(canvas) {
@@ -52,7 +66,12 @@ export class Input {
     this.isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     this.lastDevice = this.isTouch ? 'touch' : 'keyboard'; // 'keyboard' | 'touch' | 'gamepad'
     this.sensitivity = { mouse: 0.0022, touch: 0.0058, pad: 2.8 };
+    this.baseSensitivity = { ...this.sensitivity };
     this.invertY = false;
+    this.touchAccel = 0.9; // extra gain for fast flicks on the look pad
+    this._padHold = 0; // seconds the look stick has been pinned (turn acceleration)
+    this._lockReleasedAt = -1e9;
+    this.gamepadId = '';
 
     this.move = { x: 0, y: 0 };
     this.look = { x: 0, y: 0 };
@@ -114,6 +133,23 @@ export class Input {
     try { const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true }); p?.catch?.(() => this.canvas.requestPointerLock?.()); } catch { /* ignore */ }
   }
   exitPointerLock() { if (this.pointerLocked) document.exitPointerLock?.(); }
+  /** Sensitivity multipliers (1 = default) — settings menu. */
+  setSensitivity({ mouse, touch, pad } = {}) {
+    const b = this.baseSensitivity;
+    if (mouse != null) this.sensitivity.mouse = b.mouse * mouse;
+    if (touch != null) this.sensitivity.touch = b.touch * touch;
+    if (pad != null) this.sensitivity.pad = b.pad * pad;
+  }
+  /** Haptics: phone vibration or gamepad rumble. intensity 0..1, ms duration. */
+  rumble(intensity = 0.5, ms = 40) {
+    if (this.hapticsOff) return;
+    try {
+      if (this.lastDevice === 'gamepad') {
+        const gp = [...(navigator.getGamepads?.() || [])].find((p) => p && p.connected);
+        gp?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: intensity, weakMagnitude: Math.min(1, intensity * 1.4) })?.catch?.(() => {});
+      } else if (this.lastDevice === 'touch' && navigator.vibrate) navigator.vibrate(Math.max(8, Math.round(ms * (0.4 + intensity * 0.6))));
+    } catch { /* haptics are best effort */ }
+  }
 
   /** Call once per frame before game logic. */
   update(dt) {
@@ -195,6 +231,9 @@ export class Input {
       this.lastDevice = 'keyboard';
       if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
       if (e.repeat || this._keys.has(e.code)) return;
+      // Esc while the mouse is captured only releases the pointer — it must not
+      // also leave the planet.
+      if (e.code === 'Escape' && (this.pointerLocked || performance.now() - this._lockReleasedAt < 300)) return;
       this._keys.add(e.code);
       const acts = this._keyToActions.get(e.code);
       if (acts) for (const a of acts) this._actionDown(a);
@@ -211,7 +250,9 @@ export class Input {
     });
 
     document.addEventListener('pointerlockchange', () => {
+      const was = this.pointerLocked;
       this.pointerLocked = document.pointerLockElement === this.canvas;
+      if (was && !this.pointerLocked) this._lockReleasedAt = performance.now();
     });
 
     // ---- mouse ----
@@ -310,7 +351,11 @@ export class Input {
         const vx = t.stick.x - t.stick.ox, vy = t.stick.y - t.stick.oy, l = Math.hypot(vx, vy), R = t.stick.radius * 1.35;
         if (l > R) { t.stick.ox += (vx / l) * (l - R); t.stick.oy += (vy / l) * (l - R); }
       } else if (!t.pinch && (this.mode === 'orbit' || tc.identifier === t.lookId)) {
-        this._lookAcc.x += dx * s; this._lookAcc.y -= dy * s;
+        // Acceleration curve: slow drags stay precise, fast flicks turn far.
+        const now = performance.now(), dtm = Math.max(4, now - (p.tm || now - 16)); p.tm = now;
+        const speed = Math.hypot(dx, dy) / dtm; // px per ms
+        const g = this.mode === 'game' ? 1 + this.touchAccel * Math.min(1, Math.max(0, (speed - 0.25) / 1.6)) ** 1.5 : 1;
+        this._lookAcc.x += dx * s * g; this._lookAcc.y -= dy * s * g;
       }
     }
     if (t.pinch) {
@@ -347,19 +392,29 @@ export class Input {
     const now = new Set();
     if (gp) {
       const ax = gp.axes;
-      const mx = dz(ax[0] || 0), my = -dz(ax[1] || 0), lx = dz(ax[2] || 0), ly = -dz(ax[3] || 0);
+      this.gamepadId = gp.id || '';
+      const [mx, my0] = radial(ax[0] || 0, ax[1] || 0, false);
+      const [lx, ly0] = radial(ax[2] || 0, ax[3] || 0, true);
+      const my = -my0, ly = -ly0;
       if (mx || my || lx || ly) this.lastDevice = 'gamepad';
       this._padMove = { x: mx, y: my };
-      const curve = (v) => Math.sign(v) * v * v;
-      this._padLook = { x: curve(lx) * this.sensitivity.pad * dt, y: curve(ly) * this.sensitivity.pad * dt };
+      // Turn acceleration: holding the look stick at the rim ramps up yaw speed.
+      const ll = Math.hypot(lx, ly);
+      this._padHold = ll > 0.92 ? Math.min(0.6, this._padHold + dt) : Math.max(0, this._padHold - dt * 3);
+      const boost = 1 + Math.max(0, this._padHold - 0.2) * 1.6;
+      this._padLook = { x: lx * this.sensitivity.pad * boost * dt, y: ly * this.sensitivity.pad * 0.8 * dt };
       gp.buttons.forEach((b, i) => {
         const a = PAD_BUTTONS[i];
         if (a && (b.pressed || b.value > 0.5)) now.add(a);
         if (b.pressed) this.lastDevice = 'gamepad';
       });
       this.throttle = (gp.buttons[7]?.value || 0) - (gp.buttons[6]?.value || 0);
-      if (gp.buttons[12]?.pressed) this._padZoom -= 4 * dt;
-      if (gp.buttons[13]?.pressed) this._padZoom += 4 * dt;
+      if (this.mode === 'orbit') {
+        if (gp.buttons[12]?.pressed) this._padZoom -= 4 * dt;
+        if (gp.buttons[13]?.pressed) this._padZoom += 4 * dt;
+      } else {
+        for (const i in PAD_DPAD_GAME) if (gp.buttons[i]?.pressed) now.add(PAD_DPAD_GAME[i]);
+      }
       if (gp.buttons[0]?.pressed && !this._padPrev.has('__a')) {
         // A also acts as "select" in map levels: click at screen center.
         if (this.mode === 'orbit') this._emitClick(window.innerWidth / 2, window.innerHeight / 2);

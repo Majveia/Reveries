@@ -19,12 +19,12 @@ import { Controller, SPEED } from './Controller.js';
 import { CameraRig } from './CameraRig.js';
 import { VisorFX } from './VisorFX.js';
 import { CharShadow } from './CharShadow.js';
-import { Dust, ContactShadow } from './FX.js';
+import { Dust, ContactShadow, ShadowCatcher } from './FX.js';
 
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
-const _c = new THREE.Color();
+const _c = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
 
 function buildData(quality) {
   return new Promise((resolve) => {
@@ -88,6 +88,8 @@ export default class Player {
     this.rig = createExplorer(data, { body: this.mats.body, hard: this.mats.hard, visor: this.mats.visor, collar: this.mats.collar });
     for (const m of Object.values(this.rig.meshes)) { m.castShadow = true; m.receiveShadow = true; }
     this.group = this.rig.group;
+    // heroic proportions: a slightly smaller helmet (≈7 heads tall) reads less toy-like
+    this.rig.bones[B.head].scale.setScalar(0.9);
     level.scene.add(this.group);
     this.anim = new Animator(this.rig);
     this.scarf = new Scarf(this.mats.scarf, q);
@@ -98,6 +100,8 @@ export default class Player {
     level.scene.add(this.dust.object);
     this.contact = new ContactShadow();
     level.scene.add(this.contact.object);
+    this.catcher = new ShadowCatcher(this.charShadow.uniforms, q >= 2 ? 9 : 7);
+    level.scene.add(this.catcher.object);
     this.ctl = new Controller(this.world);
     this.cam = new CameraRig(level.camera, this.world);
     // bind-space attachment points
@@ -352,8 +356,12 @@ export default class Player {
     }
     if (level.mode !== 'onfoot') { this.group.visible = false; this.scarf.object.visible = false; return; }
     const ctl = this.ctl;
+    const fpView = this.cam.view === 'first' && !level.freeCam;
     this.group.visible = true;
-    this.scarf.object.visible = true;
+    this.scarf.object.visible = !fpView;
+    this.rig.meshes.visor.visible = !fpView;
+    this.rig.meshes.collar.visible = !fpView;
+    this.mats.uniforms.uFPHide.value = fpView ? 1 : 0;
 
     // ---- visual root (smoothed step-ups) ------------------------------------------------
     const r = ctl.pos.length();
@@ -416,7 +424,8 @@ export default class Player {
 
   _renderShadow() {
     const sun = this.level.sun;
-    if (!sun || !this.group.visible) { this.charShadow.uniforms.uCSOn.value = 0; return; }
+    if (this.catcher) this.catcher.object.visible = false;
+    if (!sun || !this.group.visible || this.mats.uniforms.uFPHide.value > 0.5) { this.charShadow.uniforms.uCSOn.value = 0; return; }
     const L = _v.copy(sun.position).sub(sun.target.position);
     if (L.lengthSq() < 1e-8) { this.charShadow.uniforms.uCSOn.value = 0; return; }
     L.normalize();
@@ -424,6 +433,22 @@ export default class Player {
     for (const f of this.flames) f.userData.v = f.visible, f.visible = false;
     this.charShadow.render([this.group, this.scarf.object], _v2.copy(this.group.position).addScaledVector(this.up, 0.95), L, this.up, this.level.camera, on);
     for (const f of this.flames) f.visible = f.userData.v;
+    // ground shadow catcher (on foot only): centred between the feet and the shadow tip
+    const cat = this.catcher;
+    const onFoot = on && !this.vehicle && this.level.mode === 'onfoot' && this.ctl.state !== 'swim';
+    const alt = this.ctl.pos.length() - this.ctl.groundRadius;
+    cat.object.visible = onFoot && alt < 4;
+    if (cat.object.visible) {
+      const up = this.ctl.up;
+      const elev = clamp(L.dot(up), 0.05, 1);
+      const sd = _v3.copy(L).negate().addScaledVector(up, elev);
+      if (sd.lengthSq() < 1e-6) sd.copy(this.ctl.facing); else sd.normalize();
+      const off = Math.min(1.5, 0.9 * Math.sqrt(1 - elev * elev) / elev);
+      const ctr = _v2.copy(this.ctl.pos).addScaledVector(sd, off);
+      const right = _v.crossVectors(sd, up).normalize();
+      cat.update(this.world, ctr, up, right, sd);
+      cat.material.uniforms.uStrength.value = 0.62 * THREE.MathUtils.smoothstep(elev, 0.05, 0.2) * clamp(this.world.daylight * 1.4, 0, 1) * clamp(1 - alt / 4, 0, 1);
+    }
   }
 
   _fx(dt, r) {
@@ -457,7 +482,7 @@ export default class Player {
       cs.object.scale.set(s, 1, s);
       const fl = anim.P[B.footL], fr = anim.P[B.footR];
       cs.material.uniforms.uFeet.value.set(fl.x / (0.5 * s), -fl.z / (0.5 * s), fr.x / (0.5 * s), -fr.z / (0.5 * s));
-      cs.material.uniforms.uStrength.value = 0.6 * k;
+      cs.material.uniforms.uStrength.value = 0.8 * k;
     }
   }
 
@@ -478,12 +503,20 @@ export default class Player {
     const S = this.scarf;
     S.up.copy(ctl.up);
     S.gravity = w.gravity;
-    const ws = 1.5 + w.windStrength * 5.5;
-    S.wind.copy(w.wind).addScaledVector(ctl.up, -w.wind.dot(ctl.up)).normalize().multiplyScalar(ws);
-    S.gust = 0.55;
+    const ws = 1.0 + w.windStrength * 3.0;
+    S.wind.copy(w.wind).addScaledVector(ctl.up, -w.wind.dot(ctl.up));
+    if (S.wind.lengthSq() > 1e-8) S.wind.normalize().multiplyScalar(ws); else S.wind.set(0, 0, 0);
+    S.gust = 0.45;
     S.groundR = ctl.state === 'swim' ? 0 : ctl.groundRadius;
-    if (this.shotPose) S.airOffset.copy(ctl.facing).multiplyScalar(-this.shotPose.speed * 0.95);
-    else S.airOffset.set(0, 0, 0);
+    if (this.shotPose) {
+      // posed "running": the air streams from the front; ambient wind only adds a sideways lift
+      const sp = this.shotPose.speed;
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.15);
+      const along = S.wind.dot(ctl.facing);
+      S.wind.addScaledVector(ctl.facing, -along);
+      const cap = 0.3 * Math.max(sp, 1.5);
+      if (S.wind.length() > cap) S.wind.setLength(cap);
+    } else S.airOffset.set(0, 0, 0);
     if (!S.ready || this._scarfTeleport()) {
       S.reset(this.anchorsWorld, _v.copy(ctl.facing).negate(), ctl.up);
       this._scarfRef = this.anchorsWorld[0][0].clone();
@@ -506,6 +539,8 @@ export default class Player {
     obj.updateMatrixWorld();
     this.group.visible = true;
     this.scarf.object.visible = true;
+    this.rig.meshes.visor.visible = true; this.rig.meshes.collar.visible = true;
+    this.mats.uniforms.uFPHide.value = 0;
     this.group.position.copy(v.seat).applyMatrix4(obj.matrixWorld);
     this.group.quaternion.copy(obj.getWorldQuaternion(_q));
     this.group.updateMatrixWorld(true);
@@ -534,17 +569,29 @@ export default class Player {
     const jet = st === 'jet' ? 1 : st === 'glide' ? 0.12 : 0;
     this._jet += (jet - this._jet) * (1 - Math.exp(-10 * dt));
     U.uJet.value = this._jet;
-    for (const f of this.flames) f.visible = this._jet > 0.02;
+    for (const f of this.flames) f.visible = this._jet > 0.02 && !fp;
     const night = 1 - w.daylight;
     const glow = st === 'glide' ? 1 : st === 'jet' ? 0.5 : 0.08 + night * 0.35;
     this._glow += (glow - this._glow) * (1 - Math.exp(-4 * dt));
     U.uGlow.value = this._glow;
     // rim: sun-tinted by day, a cool sliver of sky light at night
     const sun = this.level.sun;
-    U.uRim.value.copy(sun.color).multiplyScalar(0.12 * w.daylight).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    const L = this.level.lighting;
+    const key = L?.keyColor ? _c2.copy(L.keyColor) : _c2.copy(sun.color).multiplyScalar(sun.intensity);
+    const skyC = L?.skyColor || _c3.setRGB(0.3, 0.45, 0.7).multiplyScalar(w.daylight);
+    // rim: key-tinted by day, sky-fed under overcast, a cool sliver of sky light at night
+    U.uRim.value.copy(key).multiplyScalar(0.22).addScaledVector(skyC, 0.9).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    // character kicker: behind-side, on the sun's side of the frame (view space)
+    const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
+    const side = sv.x >= 0 ? 1 : -1;
+    U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
+    U.uKick.value.copy(key).multiplyScalar(0.28).addScaledVector(skyC, 1.1).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
-    U.uAccent.value.copy(this.mats.accentBase || (this.mats.accentBase = U.uAccent.value.clone())).multiplyScalar(0.8 + night * 0.6);
+    // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
+    const spr = this.vehicle ? 0 : clamp((this.ctl.speed - SPEED.run) / (SPEED.sprint - SPEED.run), 0, 1);
+    const breathe = 1 + 0.14 * Math.sin(U.uTime.value * Math.PI * 0.5) + 0.35 * spr + 0.5 * this._jet;
+    U.uAccent.value.copy(this.mats.accentBase || (this.mats.accentBase = U.uAccent.value.clone())).multiplyScalar((0.8 + night * 0.6) * breathe);
     // Image-based light: prefer the level's sky-derived environment (physically
     // consistent with the atmosphere); fall back to our small gradient sky.
     const ext = this.level.lighting?.envMap || null;
@@ -571,7 +618,12 @@ export default class Player {
     this._ensureEffects();
     const level = this.level, w = this.world;
     level.freeCam = null;
-    if (this.vehicle) { this.vehicle = null; }
+    if (this.vehicle) {
+      const v = this.vehicle;
+      this.vehicle = null;
+      try { v.exit?.(); } catch { /* ignore */ }
+      this.engine.ui.telemetry?.(null);
+    }
     const target = (spot.site?.position || spot.lookAt).clone();
     const toSite = target.clone().sub(spot.position);
     this.ctl.place(spot.position, toSite);
@@ -584,12 +636,16 @@ export default class Player {
     cam.initialized = false;
     if (name === 'character') {
       // mid-stride jog toward the settlement, seen over the right shoulder
-      this.shotPose = { state: 'ground', speed: 4.4, look: [0.25, 0.05] };
-      this.ctl.setFacing(turn(siteDir, 0.42));
-      this.anim.phase = 0.08;
+      // 3/4 hero framing: the camera trails behind-left, the explorer sits on the left
+      // third striding across the frame toward the settlement on the right third, visor
+      // edge and scarf streaming back toward the lens.
+      this.shotPose = { state: 'ground', speed: 4.4, look: [0.32, 0.04] };
+      const camH = turn(siteDir, 0.3);
+      this.ctl.setFacing(turn(camH, -1.05));
+      this.anim.phase = 0.27;
       this.anim.freezePhase = true;
-      cam.view = 'third'; cam.distance = 3.0; cam.shoulder = 0.42;
-      cam.snap(this.ctl.pos, up, turn(siteDir, -0.12), -0.05);
+      cam.view = 'third'; cam.distance = 3.3; cam.shoulder = 1.05;
+      cam.snap(this.ctl.pos, up, camH, -0.1);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, -0.05] };
       this.ctl.setFacing(siteDir);
@@ -612,7 +668,7 @@ export default class Player {
     // converge the animation (smoothed params), the cloth and the environment
     const a = this.anim;
     a.speed = this.shotPose.speed; a.gait = THREE.MathUtils.smoothstep(a.speed, 2.6, 4.6); a.sprint = 0;
-    a.lean = clamp(a.speed * 0.018, -0.25, 0.42); a.bank = 0;
+    a.lean = clamp(a.speed * 0.05, -0.25, 0.42); a.bank = 0;
     a.lookYaw = this.shotPose.look[0]; a.lookPitch = this.shotPose.look[1];
     for (const k in a.w) a.w[k] = k === 'loco' ? 1 : 0;
     this.scarf.ready = false;
@@ -627,7 +683,8 @@ export default class Player {
     this.scarf?.dispose();
     this.mats?.env.dispose();
     this.charShadow?.dispose();
-    this.dust?.dispose(); this.contact?.dispose();
+    this.dust?.dispose(); this.contact?.dispose(); this.catcher?.dispose();
+    if (this.catcher) this.level.scene.remove(this.catcher.object);
     if (this.dust) this.level.scene.remove(this.dust.object);
     if (this.contact) this.level.scene.remove(this.contact.object);
     this.visorFX.dispose();

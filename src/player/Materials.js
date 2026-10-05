@@ -16,6 +16,8 @@ import { CHAR_SHADOW_GLSL, CHAR_SHADOW_APPLY } from './CharShadow.js';
 const COMMON_GLSL = /* glsl */`
 uniform vec3 uRim;
 uniform vec3 uSunView;
+uniform vec3 uKick;
+uniform vec3 uKickDir;
 uniform float uTime;
 uniform float uGlow;
 uniform vec3 uDust;
@@ -42,10 +44,17 @@ float rvAA(float period, float px) { return 1.0 - smoothstep(period * 0.22, peri
 const RIM_GLSL = /* glsl */`
   {
     vec3 V = normalize(vViewPosition);
-    float fres = pow(1.0 - saturate(dot(normal, V)), 4.0);
+    float nv = saturate(dot(normal, V));
+    float fres = pow(1.0 - nv, 3.5);
     // stronger when the sun is behind the character (back/edge light)
     float back = 0.35 + 0.65 * saturate(dot(uSunView, -V) * 0.5 + 0.5);
-    outgoingLight += uRim * fres * back * rvAO;
+    outgoingLight += uRim * fres * back * mix(0.4, 1.0, rvAO);
+    // character-only kicker (cinematic edge light from behind-side, like a film set)
+    float kd = saturate(dot(normal, uKickDir));
+    float edge = smoothstep(0.05, 0.75, 1.0 - nv);
+    vec3 kh = normalize(uKickDir + V);
+    float ks = pow(saturate(dot(normal, kh)), 24.0);
+    outgoingLight += uKick * (diffuseColor.rgb * kd * edge * 0.9 + ks * 0.25 * edge) * mix(0.5, 1.0, rvAO);
   }
 `;
 
@@ -78,12 +87,23 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
     uGlyph: { value: new THREE.Color(PALETTE.glyph).multiplyScalar(3.0) },
     uVisorGlow: { value: 1 },
     uJet: { value: 0 },
+    uKick: { value: new THREE.Color(0, 0, 0) },
+    uKickDir: { value: new THREE.Vector3(0.7, 0.45, -0.5).normalize() },
+    uFPHide: { value: 0 },
   };
   const env = new CharacterEnv(renderer);
   const SU = shadowUniforms || { uCSMap: { value: null }, uCSMat: { value: new THREE.Matrix4() }, uCSHalf: { value: 1 }, uCSOn: { value: 0 }, uCSTexel: { value: 1 } };
   const bind = (sh, extra = {}) => {
-    for (const k of ['uRim', 'uSunView', 'uTime', 'uGlow', 'uDust']) sh.uniforms[k] = U[k];
+    for (const k of ['uRim', 'uSunView', 'uTime', 'uGlow', 'uDust', 'uKick', 'uKickDir', 'uFPHide']) sh.uniforms[k] = U[k];
     Object.assign(sh.uniforms, SU, extra);
+    // first person: cut away the head, neck, shoulders-top and pack (bind space) so the
+    // eye never sits inside the helmet shell; arms, hands, legs and boots stay visible
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uFPHide;\nvarying float vFPHide;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFPHide = uFPHide * max(step(1.47, position.y), step(position.z, -0.105) * step(0.86, position.y) * step(abs(position.x), 0.26));');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vFPHide;')
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vFPHide > 0.5) discard;');
     // character self-shadow on every explorer material
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + CHAR_SHADOW_GLSL)

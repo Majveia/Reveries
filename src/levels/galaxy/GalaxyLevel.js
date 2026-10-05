@@ -16,6 +16,7 @@ import { GalaxyVolume } from './GalaxyVolume.js';
 import { Stars, OverlayPass } from './Stars.js';
 import { Nebulae } from './Nebulae.js';
 import { BlackHole } from './BlackHole.js';
+import { DeepSky } from './Sky.js';
 
 const TYPE_LABEL = { spiral: 'Spiral galaxy', barred: 'Barred spiral galaxy', elliptical: 'Elliptical galaxy', irregular: 'Irregular galaxy', lenticular: 'Lenticular galaxy', ring: 'Ring galaxy' };
 const _v = new THREE.Vector3();
@@ -51,7 +52,7 @@ export default class GalaxyLevel {
     // shared galaxy uniforms (same objects in every material)
     this.gu = {
       uMap: { value: this.mapRT.texture }, uExtent: { value: P.extent }, uHOld: { value: P.hOld }, uHYoung: { value: P.hYoung },
-      uHDust: { value: P.hDust }, uKappa: { value: 2.4 }, uMapTexel: { value: mapTexel },
+      uHDust: { value: P.hDust }, uKappa: { value: 5.0 }, uMapTexel: { value: mapTexel },
     };
 
     this.volume = new GalaxyVolume(E, P, this.mapRT, this.noise3D);
@@ -71,7 +72,16 @@ export default class GalaxyLevel {
     this.blackHole.setNoise(this.noise3D);
     if (this.nebulaList.length) this.stars.addPoints(this.nebulae.clusterGeo, 0.02);
 
+    this.deepSky = new DeepSky(E, g);
+    this.scene.add(this.deepSky.points);
+
     this.effects = [this.volume, this.overlayPass, this.nebulae, this.blackHole];
+    // debug: ?gdbg=volume,overlay,nebulae,bh disables those effects
+    const dbg = (E.params.get('gdbg') || '').split(',');
+    if (dbg.includes('volume')) this.volume.enabled = false;
+    if (dbg.includes('overlay')) this.overlayPass.enabled = false;
+    if (dbg.includes('sky')) this.deepSky.points.visible = false;
+    this._noBH = dbg.includes('bh'); this._noNeb = dbg.includes('nebulae');
 
     this.rig = new OrbitRig(this.camera, {
       distance: P.R * 2.5, minDistance: this.blackHole.rs * 3.2, maxDistance: P.R * 8, pitch: 0.75, yaw: 0.4,
@@ -79,7 +89,7 @@ export default class GalaxyLevel {
     });
 
     this.grade = {
-      exposure: 1.0, agxPunch: 0.45, contrast: 1.08, saturation: 1.12, blackPoint: 0.006,
+      exposure: 1.0, agxPunch: 0.55, contrast: 1.14, saturation: 1.2, blackPoint: 0.006,
       vignette: 0.32, grain: 0.012, bloomStrength: 0.085, bloomRadius: 0.8, chroma: 0.0015, temperature: 0.0,
     };
     this.crumbs = U.crumbs(this.addr);
@@ -190,8 +200,15 @@ export default class GalaxyLevel {
     if (Math.abs(near - this.camera.near) / this.camera.near > 0.05) { this.camera.near = near; this.camera.far = Math.max(this.P.R * 20, near * 1e7); this.camera.updateProjectionMatrix(); }
     this.camera.updateMatrixWorld();
     this.stars.update(this.camera, E.height || innerHeight);
+    this.deepSky.update(this.camera, E.height || innerHeight);
     this.nebulae.update(this.camera, t);
     this.blackHole.update(this.camera, t);
+    if (this._noBH) this.blackHole.enabled = false;
+    if (this._noNeb) this.nebulae.enabled = false;
+    // inside the bulge the diffuse light resolves into the point-star layers
+    const coreD = this.camera.position.length();
+    this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.clamp(this.rig.distance * 4, 0.12, 0.7);
+    this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3));
 
     // markers: visible within ~a kpc of the camera
     const mu = this.stars.markMat.uniforms;
@@ -217,8 +234,17 @@ export default class GalaxyLevel {
       }
     }
 
-    // labels
-    if (this.hoverEl.style.display !== 'none') {
+    // labels (engine UI name tags when available, own DOM tags otherwise)
+    const ui = E.ui;
+    if (ui.labelWorld && this.hoverEl.style.display !== 'none') {
+      this.hoverEl.style.opacity = '0'; this.homeEl.style.opacity = '0';
+      const hi = this.hover >= 0 ? this.hover : this.selected;
+      if (hi > 0) {
+        const s = this.stars.systems[hi];
+        ui.labelWorld('gal-hover', s.pos, this.camera, s.star.name, { sub: s.star.cls, hover: true, kind: 'star' });
+      }
+      if (this.g.id === 0) ui.labelWorld('gal-home', this.stars.systems[0].pos, this.camera, 'Aurelia', { sub: 'home', kind: 'home' });
+    } else if (this.hoverEl.style.display !== 'none') {
       const hi = this.hover >= 0 ? this.hover : this.selected;
       if (hi >= 0 && hi !== 0) {
         const s = this.stars.systems[hi];
@@ -246,7 +272,7 @@ export default class GalaxyLevel {
 
   dispose() {
     this.hoverEl?.remove(); this.homeEl?.remove();
-    this.stars?.dispose(); this.volume?.dispose(); this.overlayPass?.dispose(); this.nebulae?.dispose(); this.blackHole?.dispose();
+    this.stars?.dispose(); this.deepSky?.dispose(); this.volume?.dispose(); this.overlayPass?.dispose(); this.nebulae?.dispose(); this.blackHole?.dispose();
     this.mapRT?.dispose(); this.noise3D?.dispose();
   }
 
@@ -264,16 +290,17 @@ export default class GalaxyLevel {
     const P = this.P;
     return {
       hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 2.35, 0.55, 0.78); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 2.1, 1.1, 0.035); },
+      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.5, 1.1, 0.045); },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];
         if (!n) { this._pose(new THREE.Vector3(), P.R * 0.6, 0.3, 0.3); return; }
-        this._pose(n.pos, n.radius * 2.1, n.rot + 0.6, 0.12);
+        // inside the nebula, at the foot of the dust cliffs, looking across the cavity
+        this._pose(n.pos.clone().add(new THREE.Vector3(0, n.radius * 0.05, 0)), n.radius * 0.88, n.rot + 0.6, 0.2);
       },
       stars: async () => {
         const s = this.stars.systems[0];
-        this._pose(s.pos, 0.09, 0.9, 0.22);
+        this._pose(s.pos, 0.3, 0.9, 0.55);
         this.select(0);
         this.hover = 0;
       },

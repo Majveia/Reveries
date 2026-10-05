@@ -139,12 +139,17 @@ export function vehicleMaterials(engine) {
     color: 0x0b1820, metalness: 0.0, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.03,
     envMapIntensity: 2.4, specularIntensity: 1.0, ior: 1.5,
   });
+  // canopy: tinted, semi-transparent so the pilot reads through it; strong clear-coat reflections
+  const canopy = new THREE.MeshPhysicalMaterial({
+    color: 0x16303c, metalness: 0.0, roughness: 0.04, clearcoat: 1.0, clearcoatRoughness: 0.02,
+    envMapIntensity: 2.2, transparent: true, opacity: 0.62, depthWrite: false, side: THREE.FrontSide,
+  });
   const glows = new Map();
   const glow = (hex, k = 1) => {
     const key = hex + ':' + k;
     if (!glows.has(key)) glows.set(key, new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(k), fog: false }));
     return glows.get(key);
   };
-  _cache = { engine, paint, metal, glass, glow, textures: [map, roughnessMap, bumpMap] };
+  _cache = { engine, paint, metal, glass, canopy, glow, textures: [map, roughnessMap, bumpMap] };
   return _cache;
 }

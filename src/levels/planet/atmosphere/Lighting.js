@@ -227,6 +227,12 @@ export class PlanetLighting {
     this.night = 1 - THREE.MathUtils.smoothstep(sunElev, -0.14, 0.02);
     // airglow: faint green/blue emission so moonless nights keep a horizon line
     m.uniforms.uNightGlow.value.set(0.0009, 0.0016, 0.0024).multiplyScalar(this.night * (m.present ? 1 : 0));
+    // bioluminescent worlds: the glowing forest lights the low haze (emissive → medium)
+    if (this._bio === undefined) {
+      const A = L.aesthetic, g = A?.palette?.glow?.[0];
+      this._bio = A && g && (/pandora|eywa/i.test(A.name || '') || (A.kinds || []).includes('jungle')) ? new THREE.Color(g) : null;
+    }
+    if (this._bio && m.present) m.uniforms.uNightGlow.value.addScaledVector(_bioV.set(this._bio.r, this._bio.g, this._bio.b), 0.006 * this.night);
 
     // ---- key light ------------------------------------------------------------
     const sun = this.sun;
@@ -322,4 +328,5 @@ export class PlanetLighting {
 
 const _c3 = new THREE.Vector3(), _c4 = new THREE.Vector3(), _c5 = new THREE.Vector3(), _c6 = new THREE.Vector3(), _c7 = new THREE.Vector3(), _c8 = new THREE.Vector3();
 const _m4i = new THREE.Matrix4();
+const _bioV = new THREE.Vector3();
 const _acc = new THREE.Vector3(), _tmp = new THREE.Vector3(), _probe = new THREE.Vector3();

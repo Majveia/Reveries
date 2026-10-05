@@ -23,6 +23,8 @@ class Ribbon {
     this.seg = length / (rows - 1);
     this.dx = width / (cols - 1);
     this.anchorCount = anchorCount;
+    // tapered: full width at the knot, ~60% at the tip
+    this.dxAt = (r) => this.dx * (1 - 0.4 * Math.pow(r / (rows - 1), 1.3));
     const c = [];
     const add = (a, b, k) => c.push(a, b, 0, k);
     for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
@@ -38,7 +40,8 @@ class Ribbon {
     for (let k = 0; k < this.con.length; k += 4) {
       const a = this.con[k], b = this.con[k + 1];
       const ra = Math.floor(a / cols), qa = a % cols, rb = Math.floor(b / cols), qb = b % cols;
-      this.con[k + 2] = Math.hypot((ra - rb) * this.seg, (qa - qb) * this.dx);
+      const xa = (qa - (cols - 1) / 2) * this.dxAt(ra), xb = (qb - (cols - 1) / 2) * this.dxAt(rb);
+      this.con[k + 2] = Math.hypot((ra - rb) * this.seg, xa - xb);
     }
   }
 }

@@ -22,7 +22,7 @@ float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
 // ------------------------------------------------------------------------------------------
 export class Flame {
   constructor({ radius = 0.4, length = 3, core = [1.0, 0.85, 0.7], edge = [1.0, 0.35, 0.08], boost = [0.45, 0.6, 1.0] } = {}) {
-    const g = new THREE.CylinderGeometry(radius * 0.18, radius, 1, 24, 12, true);
+    const g = new THREE.CylinderGeometry(radius * 0.08, radius, 1, 24, 12, true);
     g.translate(0, 0.5, 0);
     g.rotateX(-Math.PI / 2); // tip toward -Z
     this.uniforms = {
@@ -50,16 +50,19 @@ export class Flame {
         uniform float uTime, uThrottle, uBoost, uSeed;
         uniform vec3 uCore, uEdge, uBoostCol;
         void main(){
-          float a = vA;
-          float body = pow(1.0 - a, 1.6);
-          float core = pow(vF, 3.0);
-          float diamonds = 0.65 + 0.35*smoothstep(0.55, 1.0, sin(a*38.0 - uTime*4.0));
-          float n = vnoise(vec3(vL.xy*6.0, vL.z*3.0 + uTime*30.0 + uSeed));
-          float I = body * (0.25 + 1.2*core) * diamonds * (0.6 + 0.6*n);
-          vec3 c = mix(uEdge, uCore, core*(1.0-a));
-          c = mix(c, uBoostCol*1.4 + core*0.6, uBoost*0.65);
-          float e = (0.15 + uThrottle*1.0 + uBoost*1.6);
-          gl_FragColor = vec4(c * I * e * 9.0 * smoothstep(0.0, 0.08, a + 0.02), 1.0);
+          float a = vA;                              // 0 at the nozzle → 1 at the tip
+          float facing = vF;                         // 1 = looking through the plume's core
+          float core = pow(facing, 7.0);
+          float sheath = pow(facing, 1.5);
+          float body = pow(1.0 - a, 2.6);
+          // Mach diamonds: bright knots along the hot core, fading downstream
+          float dia = 0.55 + 0.45*pow(max(0.0, sin(a*30.0 - uTime*3.0)), 6.0) * (1.0 - a);
+          float n = vnoise(vec3(vL.xy*7.0, vL.z*4.0 - uTime*36.0 + uSeed));
+          float I = body * (sheath*0.12 + core*dia) * (0.6 + 0.6*n);
+          vec3 c = mix(uEdge, uCore, clamp(core*(1.3 - a), 0.0, 1.0));
+          c = mix(c, uBoostCol + vec3(0.12)*core, uBoost*0.7);
+          float e = 0.12 + uThrottle*0.9 + uBoost*1.1;
+          gl_FragColor = vec4(c * I * e * 1.1 * smoothstep(0.0, 0.06, a + 0.01), 1.0);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);

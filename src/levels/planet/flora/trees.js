@@ -173,6 +173,7 @@ export class Trees {
     const ig = new THREE.InstancedBufferGeometry();
     ig.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3));
     ig.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+    ig.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
     ig.setIndex([0, 1, 2, 0, 2, 3]);
     this.impGeo = ig; this._impCap = 0; this._growImp(4096);
     this.IU = { ...U, uCam: fl.uniforms.uCam, uTiles: { value: this.tiles } };
@@ -214,6 +215,7 @@ export class Trees {
     const g = this.impGeo;
     const mk = (n, s) => { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * s), s); a.setUsage(THREE.DynamicDrawUsage); return a; };
     g.setAttribute('iPos', mk(cap, 3)); g.setAttribute('iDat', mk(cap, 4)); g.setAttribute('iCol', mk(cap, 3));
+    g._maxInstanceCount = undefined; // re-derive the instance cap from the new buffers
     this._impCap = cap;
   }
 
@@ -280,7 +282,7 @@ export class Trees {
       case 7: p = T.wet ?? 0.45; break;
       default: p = 0;
     }
-    p *= 1 - THREE.MathUtils.smoothstep(s.cliff || 0, 0.35, 0.6);
+    p *= 1 - THREE.MathUtils.smoothstep(s.cliff || 0, 0.35, 0.6) * (1 - (T.cliffTrees ?? 0) * THREE.MathUtils.smoothstep(s.moisture, 0.35, 0.7));
     p *= 1 - THREE.MathUtils.smoothstep(s.snow, T.snowLine ?? 0.45, (T.snowLine ?? 0.45) + 0.25);
     return p;
   }
@@ -292,6 +294,7 @@ export class Trees {
       const sp = this.species[k];
       let wgt = sp.w;
       if (sp.cold) wgt *= 1 + sp.cold * THREE.MathUtils.clamp((0.5 - s.temp) * 3, -0.9, 2);
+      if (sp.rock) wgt *= 1 + sp.rock * Math.max(s.rock, s.cliff || 0) * 3;
       if (sp.wet) wgt *= 1 + sp.wet * THREE.MathUtils.clamp((s.moisture - 0.5) * 3, -0.9, 2);
       if (sp.shore && this.sea > -1e8) wgt *= 1 + sp.shore * (1 - THREE.MathUtils.smoothstep(s.h - this.sea, 2, 30)) * 4;
       ws[k] = Math.max(0, wgt); tot += ws[k];
@@ -305,7 +308,7 @@ export class Trees {
     const { face, i, j, N } = c;
     const T = this.T, R = this.R, sea = this.sea;
     const cellM = (Math.PI * 0.5 * R) / N;
-    const kmax = Math.round(cellM * cellM * T.density);
+    const kmax = Math.round(cellM * cellM * T.density * 1.6); // dense groves, open meadows between
     const frac = tier === 0 ? 1 : tier === 1 ? 0.3 : 0.1;
     const gen = Math.ceil(kmax * frac);
     const rng = cellRng(this.flora.seed, 31, face, i, j);
@@ -321,7 +324,10 @@ export class Trees {
       const rr = R + s.h;
       const x = _dir[0] * rr, y = _dir[1] * rr, z = _dir[2] * rr;
       const fm = valueFbm3(x * fz, y * fz, z * fz, 3);
-      p *= THREE.MathUtils.smoothstep(fm + (s.biome === 2 ? 0.35 : 0.05) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.4, 0.0, 0.32);
+      // forests (large scale) made of groves (small scale) with glades between
+      const gv = valueNoise3(x * 0.016, y * 0.016, z * 0.016, 11);
+      p *= THREE.MathUtils.smoothstep(fm + (s.biome === 2 ? 0.18 : -0.05) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.4, 0.0, 0.22);
+      p *= THREE.MathUtils.smoothstep(gv + 0.25 + (fm > 0.25 ? 0.4 : 0), -0.1, 0.35) * 0.85 + 0.15;
       p *= this.flora.siteClear(x, y, z, 1.0);
       if (r1 > p) continue;
       const sp = this._pickSpecies(s, r2);
@@ -411,7 +417,7 @@ export class Trees {
   update(focus, cam, player, budget, force) {
     if (!this.layer) return;
     this.layer.update(focus, budget, force);
-    if (this.layer.dirty || this.flora.reanchored || cam.distanceToSquared(this._lastPack) > 64) {
+    if (this.layer.dirty || this.flora.reanchored || cam.distanceToSquared(this._lastPack) > 196) {
       this.layer.dirty = false;
       this._lastPack.copy(cam);
       this._pack(focus, cam, player);

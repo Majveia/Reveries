@@ -28,7 +28,7 @@ const KINDS = {
   storm: { clouds: 'storm', fog: 0.0004, fogH: 300, dust: 0.0, overcast: 0.8, particles: 'rain', wet: 1 },
   fog: { clouds: 'fog', fog: 0.0014, fogH: 110, dust: 0.0, overcast: 0.2, particles: null, wet: 0.3 },
   snow: { clouds: 'snow', fog: 0.0003, fogH: 220, dust: 0.0, overcast: 0.3, particles: 'snow' },
-  dust: { clouds: 'dust', fog: 0.00018, fogH: 240, dust: 0.55, particles: 'dust' },
+  dust: { clouds: 'dust', fog: 0.00018, fogH: 240, dust: 0.3, particles: 'dust' },
   ash: { clouds: 'ash', fog: 0.0003, fogH: 320, dust: 0.45, particles: 'ash' },
   spores: { clouds: 'spores', fog: 0.0002, fogH: 160, dust: 0.0, particles: 'spores' },
   aurora: { clouds: 'aurora', fog: 0.0, fogH: 120, dust: 0.0, particles: 'snowlight', aurora: 1 },
@@ -65,7 +65,7 @@ void main(){
   float size = uSize * (0.6 + 0.8 * fract(aSeed.w * 7.31));
   vec3 pos = world + side * (uv.x - 0.5) * size + along * (uv.y - 0.5) * size * max(uStretch, 1.0);
   float d = length(p);
-  vFade = smoothstep(0.5 * uBox, 0.32 * uBox, d) * smoothstep(0.25, 1.2, length(cameraPosition - world));
+  vFade = smoothstep(0.5 * uBox, 0.32 * uBox, d) * smoothstep(0.6, 3.0, length(cameraPosition - world));
   vec4 mv = viewMatrix * vec4(pos, 1.0);
   vViewZ = -mv.z;
   gl_Position = projectionMatrix * mv;
@@ -111,7 +111,7 @@ const LOOKS = {
   rain: { n: 1.0, box: 34, size: 0.012, stretch: 55, fall: 9.5, swirl: 0.05, shape: 0, alpha: 0.32, color: [0.62, 0.68, 0.75], glow: 0 },
   snow: { n: 0.7, box: 28, size: 0.035, stretch: 0, fall: 1.1, swirl: 0.6, shape: 2, alpha: 0.85, color: [0.95, 0.97, 1.0], glow: 0 },
   snowlight: { n: 0.18, box: 30, size: 0.03, stretch: 0, fall: 0.7, swirl: 0.5, shape: 2, alpha: 0.75, color: [0.95, 0.97, 1.0], glow: 0 },
-  dust: { n: 0.45, box: 36, size: 0.06, stretch: 4, fall: 0.25, swirl: 1.4, shape: 1, alpha: 0.32, color: [0.86, 0.68, 0.48], glow: 0 },
+  dust: { n: 0.6, box: 30, size: 0.014, stretch: 14, fall: 0.25, swirl: 1.4, shape: 0, alpha: 0.12, color: [0.62, 0.46, 0.3], glow: 0 },
   ash: { n: 0.5, box: 32, size: 0.05, stretch: 0, fall: 0.7, swirl: 0.9, shape: 2, alpha: 0.7, color: [0.22, 0.2, 0.19], glow: 0.07 },
   spores: { n: 0.14, box: 30, size: 0.06, stretch: 0, fall: -0.12, swirl: 0.9, shape: 1, alpha: 0.9, color: [0.7, 0.9, 0.8], glow: 0.55 },
 };

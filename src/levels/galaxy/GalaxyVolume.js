@@ -23,7 +23,7 @@ ${GAL_GLSL}
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
-uniform float uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail;
+uniform float uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail;
 uniform vec3 uColYoung, uColOld, uColHII, uColBulge, uColDustGlow;
 uniform vec2 uRes;
 varying vec2 vUv;
@@ -79,7 +79,7 @@ void main(){
       vec3 pm = 0.5 * (pa + pb);
       float seg = tb - ta;
       float tm = 0.5 * (ta + tb);
-      float lod = log2(max(tm * uPixAngle * 2.0, seg * 0.35) / uMapTexel);
+      float lod = log2(max(tm * uPixAngle * 0.8, seg * 0.25) / uMapTexel);
       vec4 m = galMap(pm, max(lod, 0.0));
       // close-range volumetric detail (3D noise) so the structure never looks like a decal
       float det = 1.0;
@@ -90,7 +90,8 @@ void main(){
       }
       float pY = galSeg(pa.y, pb.y, uHYoung), pO = galSeg(pa.y, pb.y, uHOld), pD = galSeg(pa.y, pb.y, uHDust);
       float tau = m.b * pD * seg * uKappa * det;
-      vec3 j = (m.r * uColYoung * pY + m.g * uColOld * pO + m.a * uColHII * pD * 1.6 * det) * uEmit;
+      vec3 cOld = mix(uColOld, vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
+      vec3 j = (m.r * uColYoung * pY + m.g * cOld * pO + m.a * uColHII * pD * 1.6 * det * smoothstep(0.08, 0.9, tm)) * uEmit;
       // faint reddish scattered light from the dust itself
       j += m.b * pD * uColDustGlow * uEmit;
       float near = smoothstep(0.0, uNearFade, tm);
@@ -115,8 +116,9 @@ void main(){
   // resolved-star fade near the camera (inside the bulge the light breaks into stars)
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   b *= mix(1.0, smoothstep(0.0, uNearFade * 1.5, tClose), smoothstep(s * 1.5, s * 0.2, camR) * 0.7);
-  col += b * uBulgeAmp * uColBulge * uEmit * Tclose;
-  gl_FragColor = vec4(col, T);
+  col += b * uBulgeAmp * uColBulge * uEmit * Tclose * uBulgeDim;
+  if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
+  gl_FragColor = vec4(max(col, 0.0), T);
 }`;
 
 const COMP_FRAG = /* glsl */ `
@@ -137,7 +139,7 @@ export class GalaxyVolume {
     this.enabled = true;
     this.P = P;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.5 : q.pick(0.33, 0.4, 0.5, 0.6);
+    this.scale = engine.shotMode ? 0.7 : q.pick(0.33, 0.4, 0.5, 0.6);
     this.steps = q.pick(32, 44, 60, 80);
     const mapSize = mapRT.width;
     this.march = new THREE.ShaderMaterial({
@@ -148,7 +150,7 @@ export class GalaxyVolume {
         uKappa: { value: 2.4 }, uMapTexel: { value: (2 * P.extent) / mapSize },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
-        uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
+        uBulgeDim: { value: 1 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
         uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() },
         uColYoung: { value: new THREE.Color(0.55, 0.72, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },

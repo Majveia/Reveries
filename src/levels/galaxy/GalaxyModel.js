@@ -28,7 +28,7 @@ export function galaxyParams(g) {
     R, type: t, k, arms: g.arms, r0: R * 0.12, bar: g.bar, sf: g.starFormation, dust: g.dust,
     extent: R * 1.3,
     // vertical scale heights (kpc)
-    hOld: Math.max(0.18, thick * 0.9), hYoung: Math.max(0.08, thick * 0.35), hDust: Math.max(0.05, thick * 0.22),
+    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.07, thick * 0.2),
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
     bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12),
@@ -56,17 +56,30 @@ float galSeg(float ya, float yb, float h){
   if (abs(dy) < 1e-3 * h) { float c = cosh(clamp(0.5 * (ya + yb) / h, -12.0, 12.0)); return 0.5 / (h * c * c); }
   return (galCum(yb, h) - galCum(ya, h)) / dy;
 }
-// Dust optical depth along the straight segment a→b (N samples of the face-on map,
-// exact vertical integration per sub-segment).
+// Dust optical depth along the straight segment a→b. The thin dust layer is
+// importance-sampled: the N map taps sit at equal steps of the cumulative sech²
+// profile, i.e. exactly where the segment crosses the dust (a lane can never be
+// missed). Segments running inside the layer fall back to uniform taps.
 float galTau(vec3 a, vec3 b, int N, float lod){
-  float tau = 0.0;
   float L = length(b - a);
-  vec3 d = (b - a) / float(N);
-  for (int i = 0; i < 8; i++) {
-    if (i >= N) break;
-    vec3 pa = a + d * float(i), pb = pa + d;
-    float col = galMap(0.5 * (pa + pb), lod).b;
-    tau += col * galSeg(pa.y, pb.y, uHDust) * (L / float(N));
+  float dy = b.y - a.y;
+  float ca = galCum(a.y, uHDust), cb = galCum(b.y, uHDust);
+  float tau = 0.0;
+  if (abs(cb - ca) > 0.03 && abs(dy) > 1e-5) {
+    for (int i = 0; i < 8; i++) {
+      if (i >= N) break;
+      float c = mix(ca, cb, (float(i) + 0.5) / float(N));
+      float y = uHDust * atanh(clamp(2.0 * c, -0.99999, 0.99999));
+      tau += galMap(mix(a, b, clamp((y - a.y) / dy, 0.0, 1.0)), lod).b;
+    }
+    tau *= (cb - ca) / float(N) * L / dy;
+  } else {
+    vec3 d = (b - a) / float(N);
+    for (int i = 0; i < 8; i++) {
+      if (i >= N) break;
+      vec3 pa = a + d * float(i), pb = pa + d;
+      tau += galMap(0.5 * (pa + pb), lod).b * galSeg(pa.y, pb.y, uHDust) * (L / float(N));
+    }
   }
   return tau * uKappa;
 }
@@ -92,7 +105,12 @@ void main(){
   vec2 w = vec2(fbm2(p * 0.11, 3), fbm2(p * 0.11 + 31.7, 3));
   vec2 q = p + w * uR * 0.045;
   float rq = length(q), tq = atan(q.y, q.x);
-  float disk = exp(-r / (0.27 * uR)) ;
+  float disk = exp(-r / (0.2 * uR));
+  // spiral-sheared frame: noise in this frame winds up along the arms (flocculent texture)
+  float shA = -uK * log(max(rq, 0.3) / uR0) * 0.92;
+  vec2 qs = mat2(cos(shA), -sin(shA), sin(shA), cos(shA)) * q;
+  float flocY = max(0.0, fbm2(qs * vec2(0.22, 0.9) + 5.0, 5) + 0.05);
+  float flocD = ridge2(qs * vec2(0.5, 2.2) + 9.0, 5);
   float edge = 1.0 - smoothstep(0.85 * uR, 1.25 * uR, r);
   vec4 o = vec4(0.0);
 
@@ -113,6 +131,11 @@ void main(){
     float clump = 0.45 + 1.1 * max(0.0, fbm2(q * 0.9, 5) + 0.25);
     young = arm * (0.25 + 0.75 * frag) * clump * exp(-r / (0.36 * uR)) * inner * edge * 2.2;
     young += 0.07 * disk * edge * (0.6 + 0.6 * fbm2(q * 0.6, 3));
+    // secondary branches / spurs and flocculent arm fragments between the main arms
+    float ph2 = (tq - uK * 1.18 * lr + 1.1) * (uArms * 2.0) / TAU;
+    float phi2 = (ph2 - floor(ph2 + 0.5)) * TAU / (uArms * 2.0);
+    float spur = exp(-phi2 * phi2 / (2.0 * 0.07 * 0.07)) * smoothstep(0.25 * uR, 0.5 * uR, r);
+    young += (spur * 0.35 * frag + flocY * flocY * 0.9) * exp(-r / (0.38 * uR)) * inner * edge * uSF;
     // dust: lane on the inner (concave) side of each arm, filamentary + feathered spurs
     float dOff = 0.17 + 0.05 * fbm2(vec2(lr * 3.0, armId * 5.0), 2);
     float dSig = 0.055 + 0.03 * max(0.0, fbm2(q * 0.5 + 3.0, 3));
@@ -123,8 +146,10 @@ void main(){
     float sp = ridge2(vec2(lr * 30.0 + phi * 7.5, armId * 3.0 + across * 0.2), 3);
     float feather = pow(sp, 6.0) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.22 * 0.22));
     float floc = max(0.0, fbm2(q * 1.4 + 7.0, 5) + 0.15);
-    dust = (laneD * 1.6 + feather * 1.4 + floc * 0.45 * arm) * exp(-r / (0.42 * uR)) * inner * edge;
+    dust = (laneD * 2.2 + feather * 1.6 + floc * 0.45 * arm) * exp(-r / (0.5 * uR)) * inner * edge;
     dust += 0.18 * floc * disk * edge;
+    // a web of thin filaments over the whole inner disk (M101 / M51 look)
+    dust += pow(flocD, 4.0) * 0.9 * exp(-r / (0.35 * uR)) * inner * edge;
     // HII knots strung along the arm, just outside the dust lane
     vec2 wc = worley(q * 3.2 + vec2(uSeed));
     float cell = hash12(floor(q * 3.2 + vec2(uSeed)) + 3.0);
@@ -132,7 +157,7 @@ void main(){
     float hiiBand = exp(-pow(phi + 0.02, 2.0) / (2.0 * 0.12 * 0.12));
     hii = knot * hiiBand * (0.4 + clump) * inner * edge * exp(-r / (0.45 * uR)) * 3.0 * uSF;
     // old disk is mildly enhanced in the arms (density wave)
-    old = disk * (0.8 + 0.35 * exp(-phi * phi / (2.0 * 0.45 * 0.45)));
+    old = disk * (0.45 + 0.75 * exp(-phi * phi / (2.0 * 0.4 * 0.4)));
   } else if (uType == 3.0) {
     // irregular: clumpy, offset star-forming complexes
     vec2 c = p + vec2(0.15, -0.1) * uR;
@@ -185,6 +210,13 @@ void main(){
     hii += exp(-dot(d, d) / (2.0 * s * s)) * 2.5;
     young += exp(-dot(d, d) / (2.0 * 4.0 * s * s)) * 0.8;
   }
+  // screen extinction inside the column: lanes silhouette the arm light face-on
+  float dd = dust * uDust;
+  young *= exp(-dd * 1.1);
+  old *= exp(-dd * 0.3);
+  hii *= exp(-dd * 0.6);
+  // diffuse dust disk with a longer scale length than the starlight (edge-on lanes span the disk)
+  if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0);
   o = vec4(young, old, dust * uDust, hii);
   gl_FragColor = max(o, 0.0);
 }`;
