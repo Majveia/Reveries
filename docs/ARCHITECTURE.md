@@ -183,6 +183,12 @@ p5 Saturnine (gas giant, rings), p6 Isolde (ice/glacier).
 
 ## Harness etiquette (parallel agents share one software renderer)
 
+- Use ONLY `tools/shoot.mjs` from the repo — never a private copy. It is the
+  single queue for the software renderer (4 CPUs); copies that skip the lock
+  make every render slower for everyone. It already stubs Vite's HMR client
+  so other agents' edits can't reload a render mid-flight.
+- At most 3 shots per invocation while iterating (`--w 960 --h 540 --frames 6`);
+  long multi-shot batches hold the queue for everyone else.
 - Run the harness with a long Bash timeout (`timeout: 600000`) — renders queue
   behind a global lock and SwiftShader is slow. Never kill the Vite dev server
   or other agents' processes; the harness starts the server if it is down.
