@@ -92,7 +92,28 @@ let holding = false;
 function release() { if (!holding) return; holding = false; try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* ignore */ } }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { release(); process.exit(130); });
 // Hard stop so a hung render can never hold the shared lock forever.
-setTimeout(() => { console.error('[shoot] global timeout (15 min) — aborting'); release(); process.exit(2); }, 15 * 60 * 1000).unref();
+// Hard stop so a hung render can never hold the shared lock forever. Armed
+// only once we hold the lock, so time spent queueing never counts against it.
+function armRenderTimeout() {
+  setTimeout(() => { console.error('[shoot] render timeout (15 min) — aborting'); release(); process.exit(2); }, 15 * 60 * 1000).unref();
+}
+
+// Stand-in for /@vite/client: no HMR websocket, so edits by other agents can't
+// reload the page mid-render (a planet load takes ~25 s under SwiftShader).
+const VITE_CLIENT_STUB = `
+const sheets = new Map();
+export function updateStyle(id, content) {
+  let s = sheets.get(id);
+  if (!s) { s = document.createElement('style'); s.setAttribute('data-vite-dev-id', id); document.head.appendChild(s); sheets.set(id, s); }
+  s.textContent = content;
+}
+export function removeStyle(id) { const s = sheets.get(id); if (s) { s.remove(); sheets.delete(id); } }
+export function createHotContext() {
+  return { data: {}, accept() {}, acceptExports() {}, dispose() {}, prune() {}, decline() {}, invalidate() {}, on() {}, off() {}, send() {} };
+}
+export function injectQuery(url) { return url; }
+export const ErrorOverlay = class {};
+`;
 
 async function main() {
   await ensureServer();
@@ -112,6 +133,7 @@ async function main() {
   else fs.mkdirSync(path.dirname(path.resolve(ROOT, out)), { recursive: true });
 
   await acquire();
+  armRenderTimeout();
   const t0 = Date.now();
   const logs = [];
   let browser;
@@ -119,6 +141,7 @@ async function main() {
     browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-gpu-sandbox', '--autoplay-policy=no-user-gesture-required'] });
     const ctx = await browser.newContext({ viewport: { width: W, height: H }, ignoreHTTPSErrors: true, deviceScaleFactor: 1, isMobile: !!args.mobile, hasTouch: !!args.mobile });
     const page = await ctx.newPage();
+    await page.route(/\/@vite\/client(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: VITE_CLIENT_STUB }));
     page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(`[${m.type()}] ${m.text()}`.slice(0, 600)); });
     page.on('pageerror', (e) => logs.push(`[pageerror] ${String(e.stack || e).slice(0, 1200)}`));
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
