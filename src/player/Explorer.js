@@ -27,7 +27,7 @@ export const BONES = [
   'thighR', 'shinR', 'footR', 'toeR',
 ];
 export const B = Object.fromEntries(BONES.map((n, i) => [n, i]));
-const PARENT = {
+export const PARENT = {
   hips: null, spine: 'hips', chest: 'spine', neck: 'chest', head: 'neck',
   clavL: 'chest', upperArmL: 'clavL', foreArmL: 'upperArmL', handL: 'foreArmL',
   clavR: 'chest', upperArmR: 'clavR', foreArmR: 'upperArmR', handR: 'foreArmR',
@@ -48,15 +48,15 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 // ---- palette (sRGB hex → linear) ---------------------------------------------------
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
 export const PALETTE = {
-  ivory: lin('#e6e0d2'),
+  ivory: lin('#e4ddcc'),
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#2b3038'),
-  suitDark: lin('#1d2026'),
+  suit: lin('#3b414b'),
+  suitDark: lin('#262a31'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
-  scarf: lin('#b8262a'),
+  scarf: lin('#a3202a'),
   accent: new THREE.Color('#62f0ff'),
   glyph: new THREE.Color('#ffc865'),
 };
@@ -187,8 +187,8 @@ function makeBody(spec) {
     const pn = dot(nAx, palmN) < 0 ? mul(nAx, -1) : nAx;
     const deltC = add(sh, [s * 0.012, 0.014, 0.0]);
     const delt = P('upperArm' + S, (x, y, z) => sdEllipsoid(x, y, z, deltC[0], deltC[1], deltC[2], 0.071, 0.068, 0.074));
-    const uarm = P('upperArm' + S, (x, y, z) => sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.057, 0.043));
-    const farm = P('foreArm' + S, (x, y, z) => sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.044, 0.031));
+    const uarm = P('upperArm' + S, (x, y, z) => sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.061, 0.046));
+    const farm = P('foreArm' + S, (x, y, z) => sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.046, 0.033));
     const fbul = add(add(el, mul(dA, 0.075)), mul(wAx, -0.004));
     const fbulge = P('foreArm' + S, (x, y, z) => sdEllipsoid(x, y, z, fbul[0], fbul[1], fbul[2], 0.047, 0.047, 0.047));
     const palmC = add(add(wr, mul(dA, 0.052)), mul(pn, -0.002));
@@ -209,10 +209,10 @@ function makeBody(spec) {
     });
 
     const hp = J['thigh' + S], kn = J['shin' + S], an = J['foot' + S];
-    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.086, 0.056));
+    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.09, 0.058));
     const qc = add(lerp3(hp, kn, 0.4), [s * 0.004, 0, 0.02]);
     const quad = P('thigh' + S, (x, y, z) => sdEllipsoid(x, y, z, qc[0], qc[1], qc[2], 0.07, 0.135, 0.068));
-    const knee = P('shin' + S, (x, y, z) => sdSphere(x, y, z, kn[0], kn[1], kn[2] + 0.006, 0.054), { bone2: B['thigh' + S] });
+    const knee = P('shin' + S, (x, y, z) => sdSphere(x, y, z, kn[0], kn[1], kn[2] + 0.002, 0.046), { bone2: B['thigh' + S] });
     const shin = P('shin' + S, (x, y, z) => sdRoundCone(x, y, z, kn[0], kn[1], kn[2], an[0], an[1], an[2], 0.051, 0.038));
     const cc = add(kn, [0, -0.135, -0.03]);
     const calf = P('shin' + S, (x, y, z) => sdEllipsoid(x, y, z, cc[0], cc[1], cc[2], 0.05, 0.105, 0.054));
@@ -250,7 +250,10 @@ function makeBody(spec) {
 //               line(p)→signed distance to accent line, seam(p)→signed distance to seam }
 const FAR = 1;
 
-function shell(d, offset, thick) { return Math.abs(d - offset - thick * 0.5) - thick * 0.5; }
+// Armour plate: a solid band from 12 mm *inside* the supporting body field out to
+// offset+thick. The buried inner face is hidden by the suit (and culled at build
+// time) so only the outer skin and a clean, chunky rim are visible.
+function shell(d, offset, thick) { const o = offset * 0.6 + thick * 0.8; return Math.max(d - o, -(d + 0.012)); }
 
 function makePieces(spec, body) {
   const { J } = spec;
@@ -279,8 +282,7 @@ function makePieces(spec, body) {
     };
     pieces.push({
       name: 'chestPlate', bone: B.chest, f, bounds: [-0.2, 1.12, -0.08, 0.2, 1.48, 0.14], h: 0.0065,
-      color: (x, y, z) => (y < 1.19 ? graphite : ivory),
-      mat: (x, y, z) => (y < 1.19 ? [0.42, 0.35] : [0.3, 0.0]),
+      color: () => ivory, mat: () => [0.34, 0.0], split: (x, y) => y - 1.19,
       line: (x, y, z) => (y < 1.205 ? y - 1.171 : FAR),
       seam: (x, y, z) => (y > 1.2 ? (Math.abs(x) < 0.09 ? x : (Math.abs(x) - 0.135)) : FAR),
     });
@@ -310,8 +312,7 @@ function makePieces(spec, body) {
     };
     pieces.push({
       name: 'belt', bone: B.hips, f, bounds: [-0.18, 0.95, -0.15, 0.18, 1.05, 0.15], h: 0.007,
-      color: (x, y, z) => (z > 0.1 && Math.abs(x) < 0.04 ? ivory : graphite),
-      mat: (x, y, z) => (z > 0.1 && Math.abs(x) < 0.04 ? [0.3, 0] : [0.5, 0.4]),
+      color: () => ivory, mat: () => [0.32, 0], split: (x, y, z) => Math.min(z - 0.1, 0.04 - Math.abs(x)),
       line: (x, y, z) => (z > 0.1 ? Math.hypot(x, y - 0.999) - 0.008 : FAR),
       seam: () => FAR,
     });
@@ -339,7 +340,7 @@ function makePieces(spec, body) {
       const out = norm([s * 1, 0.25, 0]);
       const f = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.074, 0.07, 0.078), 0.012, 0.012);
+        const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.068, 0.062, 0.072), 0.012, 0.012);
         const rel = sub(p, sh);
         let region = dot(rel, dA) - 0.062; // only the cap near the joint
         region = Math.max(region, -dot(rel, out) - 0.012); // open toward the neck
@@ -358,8 +359,7 @@ function makePieces(spec, body) {
       const lo = [Math.min(sh[0], el[0]) - 0.12, sh[1] - 0.17, -0.13], hi = [Math.max(sh[0], el[0]) + 0.12, sh[1] + 0.12, 0.1];
       pieces.push({
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
-        color: (x, y, z) => (dot(sub([x, y, z], sh), dA) > 0.05 ? graphite : ivory),
-        mat: (x, y, z) => (dot(sub([x, y, z], sh), dA) > 0.05 ? [0.42, 0.35] : [0.28, 0]),
+        color: () => ivory, mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
         line: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return t < 0.05 ? t - 0.03 : FAR; },
         seam: () => FAR,
       });
@@ -375,7 +375,7 @@ function makePieces(spec, body) {
         // open slit on the inner (palm) side
         const rel = sub(sub(p, el), mul(dA, t));
         const side = dot(norm(rel), out);
-        region = Math.max(region, -side - 0.55);
+        region = Math.max(region, (-side - 0.55) * 0.05);
         let dd = smax(d, region, 0.006);
         if (s > 0) { // wrist computer on the left forearm
           const cc = add(add(el, mul(dA, 0.17)), mul(out, 0.043));
@@ -389,8 +389,7 @@ function makePieces(spec, body) {
       const lo = [Math.min(el[0], wr[0]) - 0.07, Math.min(el[1], wr[1]) - 0.07, -0.08], hi = [Math.max(el[0], wr[0]) + 0.07, Math.max(el[1], wr[1]) + 0.07, 0.08];
       pieces.push({
         name: 'bracer' + S, bone: B['foreArm' + S], f, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0058,
-        color: (x, y, z) => { const t = dot(sub([x, y, z], el), dA); return t > 0.22 ? graphite : ivory; },
-        mat: (x, y, z) => { const t = dot(sub([x, y, z], el), dA); return t > 0.22 ? [0.4, 0.4] : [0.3, 0]; },
+        color: () => ivory, mat: () => [0.33, 0], split: (x, y, z) => 0.22 - dot(sub([x, y, z], el), dA),
         line: (x, y, z) => {
           const p = [x, y, z], t = dot(sub(p, el), dA);
           if (s > 0) { // wrist screen glows
@@ -439,7 +438,7 @@ function makePieces(spec, body) {
       const ax = norm(sub(an, kn));
       const f = (x, y, z) => {
         const p = [x, y, z];
-        let cap = shell(sdSphere(x, y, z, kn[0], kn[1] - 0.004, kn[2] + 0.012, 0.056), 0.008, 0.012);
+        let cap = shell(sdEllipsoid(x, y, z, kn[0], kn[1] - 0.004, kn[2] + 0.014, 0.05, 0.058, 0.042), 0.006, 0.01);
         cap = smax(cap, Math.max(kn[2] - 0.008 - z, Math.abs(y - kn[1] + 0.004) - 0.064), 0.008);
         const sh = shell(sdRoundCone(x, y, z, kn[0], kn[1], kn[2], an[0], an[1], an[2], 0.051, 0.038), 0.012, 0.011);
         const t = dot(sub(p, kn), ax);
@@ -452,8 +451,7 @@ function makePieces(spec, body) {
       };
       pieces.push({
         name: 'shin' + S, bone: B['shin' + S], f, bounds: [kn[0] - 0.1, an[1], -0.1, kn[0] + 0.1, kn[1] + 0.08, 0.11], h: 0.0062,
-        color: (x, y, z) => (y > kn[1] - 0.075 ? graphite : ivory),
-        mat: (x, y, z) => (y > kn[1] - 0.075 ? [0.4, 0.45] : [0.3, 0]),
+        color: () => ivory, mat: () => [0.33, 0], split: (x, y) => (kn[1] - 0.075) - y,
         line: (x, y, z) => {
           const p = [x, y, z], t = dot(sub(p, kn), ax);
           if (t < 0.1 || t > 0.32) return FAR;
@@ -479,7 +477,7 @@ function makePieces(spec, body) {
       };
       pieces.push({
         name: 'boot' + S, bone: B['foot' + S], f, bounds: [fx - 0.08, 0.0, -0.11, fx + 0.08, 0.17, 0.13], h: 0.0062,
-        color: (x, y) => (y < 0.05 ? graphite : ivory), mat: (x, y) => (y < 0.05 ? [0.5, 0.2] : [0.32, 0]),
+        color: () => ivory, mat: () => [0.36, 0], split: (x, y) => y - 0.05,
         line: (x, y, z) => (z < -0.06 ? y - 0.075 : FAR), seam: (x, y, z) => z - 0.02,
       });
       const toeF = (x, y, z) => {
@@ -494,51 +492,47 @@ function makePieces(spec, body) {
   }
 
   // ---- helmet ---------------------------------------------------------------------------
-  const HC = [0, 1.672, 0.012];
+  const HC = [0, 1.668, 0.014];
   const helmetOuter = (x, y, z) => {
-    let d = sdEllipsoid(x, y, z, HC[0], HC[1], HC[2], 0.13, 0.15, 0.143);
-    d = smin(d, sdEllipsoid(x, y, z, 0, 1.592, 0.058, 0.102, 0.072, 0.092), 0.045); // jaw/chin
-    d = smin(d, sdEllipsoid(x, y, z, 0, 1.6, -0.06, 0.112, 0.07, 0.09), 0.04); // back of neck
+    let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.006, 0.116, 0.134, 0.13);
+    d = smin(d, sdEllipsoid(x, y, z, 0, 1.596, 0.052, 0.09, 0.07, 0.092), 0.04); // faceplate / jaw
+    d = smin(d, sdEllipsoid(x, y, z, 0, 1.6, -0.058, 0.1, 0.066, 0.084), 0.04); // back of neck
+    // cheek guards: subtle planes that break the egg silhouette
+    for (const s of [1, -1]) d = smin(d, sdRoundBox(x, y, z, [s * 0.078, 1.6, 0.06], norm([s, 0, 0.45]), [0, 1, 0], norm([-s * 0.45, 0, 1]), 0.012, 0.05, 0.045, 0.01), 0.022);
     return d;
   };
   const visorShape = (x, y) => {
     // rounded, slightly wider at the top (2D outline on the front face)
     const yy = y - 1.666;
-    const hw = 0.104 - Math.max(0, -yy) * 0.35;
-    return Math.max(Math.abs(x) - hw, Math.abs(yy + (x * x) * 0.9) - 0.054) ;
+    const hw = 0.098 - Math.max(0, -yy) * 0.4;
+    return Math.max(Math.abs(x) - hw, Math.abs(yy + (x * x) * 1.1) - 0.046);
   };
   {
     const f = (x, y, z) => {
       const o = helmetOuter(x, y, z);
-      let d = Math.max(o, -(o + 0.011)); // shell 11 mm
-      d = smax(d, 1.528 - y, 0.01); // neck opening
-      const vis = Math.max(visorShape(x, y), 0.02 - z);
-      d = smax(d, -vis, 0.006);
+      // solid shell; the visor glass and its gasket are clean parametric meshes on top
+      let d = smax(o, 1.528 - y, 0.01); // neck opening
       // crest ridge
-      const crest = smax(sdBox(x, y, z, 0, 1.79, -0.01, 0.011, 0.06, 0.13, 0.006), o - 0.004, 0.004);
+      const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
       // side pods
       for (const s of [1, -1]) {
-        d = smin(d, sdCylinder(x, y, z, s * 0.112, 1.664, -0.004, s * 0.148, 1.664, -0.004, 0.04, 0.008), 0.008);
+        d = smin(d, sdCylinder(x, y, z, s * 0.1, 1.662, -0.004, s * 0.134, 1.662, -0.004, 0.034, 0.007), 0.008);
       }
       return d;
     };
     pieces.push({
       name: 'helmet', bone: B.head, f, bounds: [-0.17, 1.5, -0.17, 0.17, 1.84, 0.18], h: 0.006,
-      color: (x, y, z) => {
-        if (Math.abs(x) > 0.135) return Math.hypot(y - 1.664, z + 0.004) < 0.026 ? graphite : ivory;
-        if (Math.abs(x) < 0.013 && y > 1.74) return graphite;
-        if (y < 1.57) return graphite;
-        return ivory;
-      },
-      mat: (x, y, z) => {
-        if (Math.abs(x) > 0.135 && Math.hypot(y - 1.664, z + 0.004) < 0.026) return [0.35, 0.5];
-        if (Math.abs(x) < 0.013 && y > 1.74) return [0.4, 0.4];
-        if (y < 1.57) return [0.42, 0.35];
-        return [0.24, 0.0];
+      color: () => ivory, mat: () => [0.28, 0.0],
+      split: (x, y, z) => {
+        const ax = Math.abs(x);
+        const pod = Math.min(ax - 0.118, 0.022 - Math.hypot(y - 1.662, z + 0.004));
+        const crest = Math.min(0.0105 - ax, y - 1.73);
+        const chin = 1.57 - y;
+        return -Math.max(pod, crest, chin);
       },
       line: (x, y, z) => {
-        if (Math.abs(x) > 0.142) return Math.hypot(y - 1.664, z + 0.004) - 0.03; // pod rings
+        if (Math.abs(x) > 0.128) return Math.hypot(y - 1.662, z + 0.004) - 0.025; // pod rings
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
         return FAR;
       },
@@ -557,9 +551,9 @@ function makePieces(spec, body) {
     // antenna on the left pod
     pieces.push({
       name: 'antenna', bone: B.head,
-      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.15, 1.69, -0.02, 0.158, 1.81, -0.075, 0.004), sdSphere(x, y, z, 0.158, 1.81, -0.075, 0.007)),
-      bounds: [0.13, 1.66, -0.1, 0.18, 1.83, 0.0], h: 0.0035,
-      color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.158, y - 1.81, z + 0.075) - 0.0072, seam: () => FAR,
+      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.134, 1.685, -0.02, 0.142, 1.8, -0.075, 0.0035), sdSphere(x, y, z, 0.142, 1.8, -0.075, 0.0065)),
+      bounds: [0.12, 1.66, -0.1, 0.16, 1.82, 0.0], h: 0.0035,
+      color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.142, y - 1.8, z + 0.075) - 0.0068, seam: () => FAR,
     });
   }
 
@@ -599,26 +593,22 @@ function makePieces(spec, body) {
     };
     pieces.push({
       name: 'jetpack', bone: B.chest, f, bounds: [-0.2, 1.02, -0.3, 0.2, 1.5, 0.13], h: 0.0068,
-      color: (x, y, z) => {
-        if (z > -0.15) return graphite; // straps
-        if (Math.abs(x) < 0.032 && z < -0.25) return graphite;
-        if (y < 1.12) return graphite;
-        if (Math.abs(x) > 0.105) return Math.abs(y - 1.26) < 0.1 ? ivory : PALETTE.ivoryWarm;
-        return ivory;
-      },
-      mat: (x, y, z) => {
-        if (z > -0.15) return [0.55, 0.15];
-        if (Math.abs(x) < 0.032 && z < -0.25) return [0.38, 0.5];
-        if (y < 1.12) return [0.35, 0.65];
-        return [0.27, 0.0];
-      },
+      color: () => ivory, mat: () => [0.31, 0.0],
+      split: (x, y, z) => -Math.max(z + 0.15, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.12 - y, Math.min(Math.abs(x) - 0.1, y - 1.385)),
       line: (x, y, z) => {
         if (Math.abs(x) < 0.032 && z < -0.26 && y > 1.18 && y < 1.42) return Math.abs(x) - 0.006; // spine light
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth
-        if (Math.abs(x) > 0.1 && z < -0.24) return y - 1.17; // pod vent band
+        if (Math.abs(x) > 0.1 && z < -0.24 && y < 1.19) return y - 1.17; // pod vent band
+        if (Math.abs(x) > 0.1 && y > 1.2 && y < 1.355) { // outer-back light strip on each pod
+          const dx = Math.abs(x) - 0.128, dz = z + 0.21;
+          if (dx * dx + dz * dz > 0.03 * 0.03) return (Math.atan2(-dz, dx) - 0.75) * 0.043;
+        }
         return FAR;
       },
-      seam: (x, y, z) => (z < -0.15 && Math.abs(x) < 0.11 ? y - 1.215 : FAR),
+      seam: (x, y, z) => {
+        if (Math.abs(x) > 0.1) return Math.min(Math.abs(y - 1.36), Math.abs(y - 1.195));
+        return z < -0.15 ? Math.min(Math.abs(y - 1.215), Math.abs(y - 1.39)) : FAR;
+      },
     });
   }
 
@@ -728,6 +718,7 @@ export function buildExplorerData(quality = 2) {
     const ao = sdfAO(unionAO, x, y, z, nx, ny, nz, 0.012, 5, 1.0);
     mat[v * 4] = rough; mat[v * 4 + 1] = sheen; mat[v * 4 + 2] = pattern; mat[v * 4 + 3] = ao;
   }
+  smoothAttr(mat, 4, 3, bodyMesh.indices, 0, nv, 3);
   const bodyData = { ...bodyMesh, skinIndex, skinWeight, colors, mat };
 
   // ---- hard pieces (rigid) -------------------------------------------------------------
@@ -746,13 +737,35 @@ export function buildExplorerData(quality = 2) {
       const rm = pc.mat(x, y, z);
       merged.mat.push(rm[0], rm[1], clamp(pc.line(x, y, z), -1, 1), clamp(pc.seam(x, y, z), -1, 1));
       merged.ao.push(sdfAO(unionAO, x, y, z, nx, ny, nz, 0.01, 5, 0.9));
+      // mean curvature (SDF laplacian): convex edges > 0, creases < 0 — drives edge wear / grime
+      const ce = 0.0035, f0 = pc.f(x, y, z);
+      const lap = (pc.f(x + ce, y, z) + pc.f(x - ce, y, z) + pc.f(x, y + ce, z) + pc.f(x, y - ce, z) + pc.f(x, y, z + ce) + pc.f(x, y, z - ce) - 6 * f0) / (ce * ce);
+      merged.ao.push(clamp(lap * 0.0045, -1, 1));
+      merged.ao.push(clamp(pc.split ? pc.split(x, y, z) : FAR, -1, 1));
     }
     for (let i = 0; i < m.indices.length; i++) merged.indices.push(m.indices[i] + base);
   };
   for (const pc of P.pieces) {
     const b = pc.bounds;
     const m = meshSDF(pc.f, b, pc.h * hs, { project: 3 });
+    cullBuried(m, body.field, -0.0025);
     appendPiece(pc, m);
+    smoothAttr(merged.ao, 3, 0, m.indices, merged.positions.length / 3 - m.positions.length / 3, m.positions.length / 3, 3);
+  }
+  {
+    const g = buildGasket(P, quality);
+    const base = merged.positions.length / 3;
+    const n = g.positions.length / 3;
+    const gc = PALETTE.graphite;
+    for (let v = 0; v < n; v++) {
+      merged.positions.push(g.positions[v * 3], g.positions[v * 3 + 1], g.positions[v * 3 + 2]);
+      merged.normals.push(g.normals[v * 3], g.normals[v * 3 + 1], g.normals[v * 3 + 2]);
+      merged.skinIndex.push(B.head);
+      merged.colors.push(gc[0], gc[1], gc[2]);
+      merged.mat.push(0.45, 0.2, FAR, FAR);
+      merged.ao.push(0.9, 0.2, FAR);
+    }
+    for (const i of g.indices) merged.indices.push(i + base);
   }
   const hard = {
     positions: new Float32Array(merged.positions), normals: new Float32Array(merged.normals),
@@ -760,21 +773,8 @@ export function buildExplorerData(quality = 2) {
     colors: new Float32Array(merged.colors), mat: new Float32Array(merged.mat), ao: new Float32Array(merged.ao),
   };
 
-  // ---- visor glass (head) -------------------------------------------------------------------
-  const visorF = (x, y, z) => {
-    const o = P.helmetOuter(x, y, z);
-    let d = Math.abs(o + 0.0065) - 0.0025;
-    const vis = Math.max(P.visorShape(x, y) - 0.006, 0.01 - z);
-    return smax(d, vis, 0.003);
-  };
-  const vm = meshSDF(visorF, [-0.13, 1.58, 0.0, 0.13, 1.76, 0.18], 0.0045 * hs, { project: 3 });
-  const vn = vm.positions.length / 3;
-  const vuv = new Float32Array(vn * 2);
-  for (let v = 0; v < vn; v++) {
-    vuv[v * 2] = vm.positions[v * 3] / 0.104;
-    vuv[v * 2 + 1] = (vm.positions[v * 3 + 1] - 1.666) / 0.054;
-  }
-  const visor = { ...vm, uv: vuv, bone: B.head };
+  // ---- visor glass (head): a clean parametric surface projected onto the helmet front ----
+  const visor = buildVisor(P, quality);
 
   // ---- scarf collar (cloth material, rigid on chest) ---------------------------------------
   const cm = meshSDF(P.collar.f, P.collar.bounds, P.collar.h * hs, { project: 2 });
@@ -790,8 +790,8 @@ export function buildExplorerData(quality = 2) {
 
   // Scarf anchor points (chest-space, character bind pose) for the two tails.
   const anchors = {
-    long: [[0.05, 1.47, -0.115], [0.0, 1.475, -0.122], [-0.05, 1.47, -0.115]],
-    short: [[0.07, 1.445, -0.1], [0.035, 1.43, -0.118], [0.0, 1.425, -0.12]],
+    long: [[0.065, 1.468, -0.11], [0.0, 1.476, -0.124], [-0.065, 1.468, -0.11]],
+    short: [[0.085, 1.44, -0.095], [0.045, 1.428, -0.118], [0.005, 1.42, -0.122]],
   };
 
   // Simple collision proxies (bone-local in bind space → converted later).
@@ -824,9 +824,116 @@ export function buildExplorerData(quality = 2) {
 }
 function J0(spec, n) { return spec.J[n].slice(); }
 
-// =====================================================================================
-// three.js objects
-// =====================================================================================
+/** Laplacian-smooth one channel of an interleaved per-vertex array over mesh edges. */
+function smoothAttr(arr, stride, ch, indices, base, count, iters) {
+  const sum = new Float64Array(count), cnt = new Uint16Array(count);
+  for (let it = 0; it < iters; it++) {
+    sum.fill(0); cnt.fill(0);
+    for (let t = 0; t < indices.length; t += 3) {
+      for (let e = 0; e < 3; e++) {
+        const a = indices[t + e], b = indices[t + (e + 1) % 3];
+        sum[a] += arr[(base + b) * stride + ch]; cnt[a]++;
+        sum[b] += arr[(base + a) * stride + ch]; cnt[b]++;
+      }
+    }
+    for (let v = 0; v < count; v++) if (cnt[v]) { const k = (base + v) * stride + ch; arr[k] = arr[k] * 0.4 + (sum[v] / cnt[v]) * 0.6; }
+  }
+}
+
+/** Drop triangles whose three vertices are all buried inside the suit (never visible). */
+function cullBuried(m, field, thresh) {
+  const P = m.positions, I = m.indices;
+  const nv = P.length / 3;
+  const inside = new Uint8Array(nv);
+  for (let v = 0; v < nv; v++) inside[v] = field(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]) < thresh ? 1 : 0;
+  const out = [];
+  for (let t = 0; t < I.length; t += 3) {
+    if (inside[I[t]] && inside[I[t + 1]] && inside[I[t + 2]]) continue;
+    out.push(I[t], I[t + 1], I[t + 2]);
+  }
+  m.indices = new Uint32Array(out);
+}
+
+// Visor outline in (u, v) ∈ [-1, 1]²: a superellipse ("squircle") mapped onto the
+// helmet front. x = u·hw(v), y = 1.664 − 1.1·x² + v·0.046.
+const VISOR_N = 7;
+function visorUV(theta, rho) {
+  const c = Math.cos(theta), s = Math.sin(theta);
+  const u = Math.sign(c) * Math.pow(Math.abs(c), 2 / VISOR_N) * rho;
+  const v = Math.sign(s) * Math.pow(Math.abs(s), 2 / VISOR_N) * rho;
+  return [u, v];
+}
+function visorPoint(f, u, v, out) {
+  const x = u * 0.104 * (1 - Math.max(0, -v) * 0.14);
+  const y = 1.668 - 0.9 * x * x + v * 0.044;
+  let z0 = 0.0, z1 = 0.26;
+  for (let k = 0; k < 40; k++) { const zm = (z0 + z1) * 0.5; if (f(x, y, zm) < 0) z0 = zm; else z1 = zm; }
+  const z = (z0 + z1) * 0.5, e = 0.0008;
+  let nx = f(x + e, y, z) - f(x - e, y, z), ny = f(x, y + e, z) - f(x, y - e, z), nz = f(x, y, z + e) - f(x, y, z - e);
+  const nl = Math.hypot(nx, ny, nz) || 1;
+  out[0] = x; out[1] = y; out[2] = z; out[3] = nx / nl; out[4] = ny / nl; out[5] = nz / nl;
+  return out;
+}
+
+/** Visor glass: a radial grid over the squircle outline, lifted 2.5 mm off the helmet. */
+function buildVisor(P, quality) {
+  const NT = [48, 64, 88, 104][quality] ?? 88, NR = [6, 8, 10, 12][quality] ?? 10;
+  const positions = [], normals = [], uvs = [], indices = [];
+  const f = P.helmetOuter, q = new Float64Array(6);
+  // centre vertex + rings
+  visorPoint(f, 0, 0, q);
+  positions.push(q[0] + q[3] * 0.0025, q[1] + q[4] * 0.0025, q[2] + q[5] * 0.0025); normals.push(q[3], q[4], q[5]); uvs.push(0, 0);
+  for (let r = 1; r <= NR; r++) {
+    const rho = r / NR;
+    for (let t = 0; t < NT; t++) {
+      const [u, v] = visorUV((t / NT) * Math.PI * 2, rho);
+      visorPoint(f, u, v, q);
+      positions.push(q[0] + q[3] * 0.0025, q[1] + q[4] * 0.0025, q[2] + q[5] * 0.0025);
+      normals.push(q[3], q[4], q[5]); uvs.push(u, v);
+    }
+  }
+  const ring = (r, t) => 1 + (r - 1) * NT + (t % NT);
+  for (let t = 0; t < NT; t++) indices.push(0, ring(1, t), ring(1, t + 1));
+  for (let r = 1; r < NR; r++) for (let t = 0; t < NT; t++) {
+    const a = ring(r, t), b = ring(r, t + 1), c = ring(r + 1, t), d = ring(r + 1, t + 1);
+    indices.push(a, c, b, b, c, d);
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uv: new Float32Array(uvs), indices: new Uint32Array(indices), bone: B.head };
+}
+
+/** Gasket: a smooth tube framing the visor (hard-surface material data included). */
+function buildGasket(P, quality) {
+  const NT = [64, 96, 128, 160][quality] ?? 128, NS = 10, R = 0.0062;
+  const f = P.helmetOuter, q = new Float64Array(6), q2 = new Float64Array(6);
+  const pos = [], nrm = [], idx = [];
+  const pts = [];
+  for (let t = 0; t < NT; t++) {
+    const [u, v] = visorUV((t / NT) * Math.PI * 2, 1.0);
+    visorPoint(f, u, v, q);
+    pts.push(Array.from(q));
+  }
+  for (let t = 0; t < NT; t++) {
+    const p = pts[t], pn = pts[(t + 1) % NT], pp = pts[(t + NT - 1) % NT];
+    let tx = pn[0] - pp[0], ty = pn[1] - pp[1], tz = pn[2] - pp[2];
+    const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+    const nx = p[3], ny = p[4], nz = p[5];
+    // binormal = T × N
+    let bx = ty * nz - tz * ny, by = tz * nx - tx * nz, bz = tx * ny - ty * nx;
+    const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
+    const cx = p[0] + nx * 0.0015, cy = p[1] + ny * 0.0015, cz = p[2] + nz * 0.0015;
+    for (let k = 0; k < NS; k++) {
+      const a = (k / NS) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+      const ox = nx * ca + bx * sa, oy = ny * ca + by * sa, oz = nz * ca + bz * sa;
+      pos.push(cx + ox * R, cy + oy * R * 1.0, cz + oz * R);
+      nrm.push(ox, oy, oz);
+    }
+  }
+  for (let t = 0; t < NT; t++) for (let k = 0; k < NS; k++) {
+    const a = t * NS + k, b = t * NS + (k + 1) % NS, c = ((t + 1) % NT) * NS + k, d = ((t + 1) % NT) * NS + (k + 1) % NS;
+    idx.push(a, b, c, b, d, c);
+  }
+  return { positions: pos, normals: nrm, indices: idx };
+}
 
 /**
  * Create the explorer rig: { group, bones, skeleton, meshes{body,hard,visor,collar}, data }.
@@ -868,7 +975,7 @@ export function createExplorer(data, materials) {
   hg.setAttribute('normal', new THREE.BufferAttribute(data.hard.normals, 3));
   hg.setAttribute('color', new THREE.BufferAttribute(data.hard.colors, 3));
   hg.setAttribute('aMat', new THREE.BufferAttribute(data.hard.mat, 4));
-  hg.setAttribute('aAO', new THREE.BufferAttribute(data.hard.ao, 1));
+  hg.setAttribute('aAO', new THREE.BufferAttribute(data.hard.ao, 3));
   hg.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
   hg.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
   hg.setIndex(new THREE.BufferAttribute(data.hard.indices, 1));

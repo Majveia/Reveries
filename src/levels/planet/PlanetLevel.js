@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { World } from './World.js';
 import { OrbitRig } from '../../core/OrbitRig.js';
 import { AESTHETICS } from '../../universe/Aesthetics.js';
+import { PlanetLighting } from './atmosphere/Lighting.js';
 
 export const SUBSYSTEMS = [
   ['terrain', () => import('./terrain/Terrain.js')],
@@ -67,6 +68,7 @@ export default class PlanetLevel {
     const A = this.aesthetic;
     this.grade = {
       exposure: 1.0, contrast: 1.04, saturation: 1.04, bloomStrength: 0.05, vignette: 0.26, grain: 0.03, chroma: 0.0018, temperature: 0, tint: 0,
+      look: this.planet.aesthetic || 'filmic', ao: 1.0, aoRadius: 2.2, aoDistance: 450, // PostFX: per-aesthetic film look + GTAO
       ...(A?.grade || {}),
     };
   }
@@ -117,40 +119,21 @@ export default class PlanetLevel {
   }
 
   _setupLights() {
-    const sunColor = new THREE.Color().setRGB(...this.star.color);
-    this.sunColor = sunColor;
-    const sun = new THREE.DirectionalLight(sunColor, 3.2);
-    sun.castShadow = true;
-    const sm = this.engine.quality.shadowMapSize;
-    sun.shadow.mapSize.set(sm, sm);
-    const s = 70;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 1200 });
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.6;
-    this.scene.add(sun, sun.target);
-    this.sun = sun;
-    const P = this.aesthetic?.palette;
-    this.hemi = new THREE.HemisphereLight(new THREE.Color(P?.sky || '#9fc4ff'), new THREE.Color(P?.ground?.[0] || '#55503a'), 0.55);
-    this.scene.add(this.hemi);
+    // Owned by the atmosphere sub-project: physically coupled sun/moon key light,
+    // sky-derived IBL (PMREM) and camera-fitted shadows — see atmosphere/Lighting.js.
+    this.sunColor = new THREE.Color().setRGB(...this.star.color);
+    this.lighting = new PlanetLighting(this);
+    this.lighting.attach(this.scene);
+    this.sun = this.lighting.sun;
+    this.hemi = this.lighting.hemi;
   }
 
   _updateLights() {
-    const w = this.world;
-    const focus = this.player?.position || this.camera.position;
-    const up = _v.copy(focus).normalize();
-    // Shadow frustum follows the focus point.
-    this.sun.target.position.copy(focus);
-    this.sun.position.copy(focus).addScaledVector(w.sunDir, 600);
-    this.sun.target.updateMatrixWorld();
-    const elev = up.dot(w.sunDir);
-    const d = w.daylight;
-    // Warm low sun, white high sun.
-    const warm = THREE.MathUtils.smoothstep(elev, -0.05, 0.35);
-    this.sun.color.copy(this.sunColor).lerp(_tmpC.setRGB(1.0, 0.55, 0.32), 1 - warm);
-    this.sun.intensity = 3.4 * d;
-    this.sun.castShadow = d > 0.02 && w.altitude(focus) < 3000;
-    this.hemi.intensity = 0.06 + 0.5 * d;
-    this.hemi.position.copy(up);
+    try {
+      if (this.engine.shotMode && (this._lt = (this._lt || 0) + 1) <= 8) { const gl = this.engine.renderer.getContext(); gl.finish(); const t0 = performance.now(); this.lighting.update(); gl.finish(); console.warn('[atmo] lights ms', Math.round(performance.now() - t0)); }
+      else this.lighting.update();
+    }
+    catch (e) { if (!this._lightErr) { this._lightErr = true; console.error('[planet] lighting:', e); } }
   }
 
   setMode(mode) {

@@ -486,6 +486,137 @@ export class MeshBuilder {
     }
   }
 
+  /**
+   * Curved East-Asian hip roof over [x0,x1]×[z0,z1]: concave slopes (shallow at
+   * the eave, steep at the ridge) and upturned, outswept corners.
+   * o: { over, curve (exponent), flare (corner lift m), sweep (corner out m),
+   *      segS, segR, thick, roofMat, roofColor, trimMat, trimColor, ridge, ridgeMat, ridgeColor, ornaments }
+   * Returns the ridge height.
+   */
+  curvedRoof(x0, z0, x1, z1, yE, rise, o = {}) {
+    const over = o.over ?? 1.2, k = o.curve ?? 1.7, flare = o.flare ?? 0.9, sweep = o.sweep ?? flare * 0.6;
+    const segS = o.segS ?? 8, segR = o.segR ?? 6, thick = o.thick ?? 0.25;
+    const X0 = x0 - over, X1 = x1 + over, Z0 = z0 - over, Z1 = z1 + over;
+    const w = X1 - X0, d = Z1 - Z0;
+    const alongX = w >= d;
+    const h = (alongX ? d : w) / 2 * (o.hipK ?? 0.92);
+    const cx = (X0 + X1) / 2, cz = (Z0 + Z1) / 2;
+    const r0 = alongX ? [X0 + h, cz] : [cx, Z0 + h];
+    const r1 = alongX ? [X1 - h, cz] : [cx, Z1 - h];
+    const yEo = yE - over * 0.35;
+    const R = rise + over * 0.35;
+    const yR = yEo + R;
+    const corners = [[X0, Z1], [X1, Z1], [X1, Z0], [X0, Z0]];
+    const cdir = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([a, b]) => [a * 0.7071, b * 0.7071]);
+    const ridgeFor = (i) => {
+      if (alongX) { if (i === 0) return [r0, r1]; if (i === 1) return [r1, r1]; if (i === 2) return [r1, r0]; return [r0, r0]; }
+      if (i === 0) return [r1, r1]; if (i === 1) return [r1, r0]; if (i === 2) return [r0, r0]; return [r0, r1];
+    };
+    const sa = this.a.slice(), sc = this.c.slice(), se = this.e.slice();
+    const fS = (s) => { const q = Math.max(0, Math.abs(2 * s - 1) - 0.35) / 0.65; return q * q; };
+    const evalP = (i, s, r, out) => {
+      const A = corners[i], B = corners[(i + 1) % 4];
+      const [RL, RR] = ridgeFor(i);
+      const ex = A[0] + (B[0] - A[0]) * s, ez = A[1] + (B[1] - A[1]) * s;
+      const rx = RL[0] + (RR[0] - RL[0]) * s, rz = RL[1] + (RR[1] - RL[1]) * s;
+      let x = ex + (rx - ex) * r, z = ez + (rz - ez) * r;
+      const f = fS(s), fall = Math.pow(1 - r, 2.2);
+      const cd = s < 0.5 ? cdir[i] : cdir[(i + 1) % 4];
+      x += cd[0] * sweep * f * fall; z += cd[1] * sweep * f * fall;
+      const y = yEo + R * Math.pow(r, k) + flare * f * fall;
+      return out.set(x, y, z);
+    };
+    const P = new THREE.Vector3(), Pa = new THREE.Vector3(), Pb = new THREE.Vector3(), Pc = new THREE.Vector3(), Pd = new THREE.Vector3(), N = new THREE.Vector3();
+    const slopeL = Math.hypot(h, R);
+    for (const layer of thick > 0 ? [0, 1] : [0]) {
+      // layer 0: tiled top; layer 1: soffit (underside, rafters)
+      if (layer === 0) { if (o.roofMat) this.mat(...o.roofMat); if (o.roofColor) this.color(o.roofColor); this.e[0] = 1; }
+      else { this.mat(...(o.trimMat || [3, 0.3, 0, 3])); if (o.trimColor) this.color(o.trimColor); this.e[0] = 0.4; }
+      for (let i = 0; i < 4; i++) {
+        const A = corners[i], B = corners[(i + 1) % 4];
+        const W = Math.hypot(B[0] - A[0], B[1] - A[1]);
+        this.e[1] = W; this.e[3] = slopeL; this.e[2] = 0;
+        const start = this.n;
+        for (let j = 0; j <= segR; j++) for (let q = 0; q <= segS; q++) {
+          const s = q / segS, r = j / segR;
+          evalP(i, s, r, P);
+          const es = 1e-3;
+          evalP(i, Math.min(1, s + es), r, Pa); evalP(i, Math.max(0, s - es), r, Pb);
+          evalP(i, s, Math.min(1, r + es), Pc); evalP(i, s, Math.max(0, r - es), Pd);
+          Pa.sub(Pb); Pc.sub(Pd);
+          N.copy(Pa).cross(Pc).normalize();
+          if (N.y < 0) N.negate();
+          if (!Number.isFinite(N.x) || N.lengthSq() < 0.5) N.set(0, 1, 0);
+          if (layer === 1) { P.y -= thick; N.negate(); }
+          this.v(P.x, P.y, P.z, N.x, N.y, N.z, (s - 0.5) * W, r * slopeL);
+        }
+        for (let j = 0; j < segR; j++) for (let q = 0; q < segS; q++) {
+          const a = start + j * (segS + 1) + q, b = a + 1, c = a + segS + 2, dd = a + segS + 1;
+          // degenerate ridge-end triangles collapse harmlessly
+          if (layer === 0) this.quad(a, b, c, dd); else this.quad(a, dd, c, b);
+        }
+      }
+    }
+    // eave fascia
+    if (thick > 0) {
+      this.mat(...(o.trimMat || [3, 0.3, 0, 3])); if (o.trimColor) this.color(o.trimColor); this.e[0] = 0.8; this.e[3] = 0;
+      for (let i = 0; i < 4; i++) {
+        for (let q = 0; q < segS; q++) {
+          evalP(i, q / segS, 0, Pa); evalP(i, (q + 1) / segS, 0, Pb);
+          const out = new THREE.Vector3((Pa.x + Pb.x) / 2 - cx, 0, (Pa.z + Pb.z) / 2 - cz);
+          this.quadP(Pa.clone().setY(Pa.y - thick), Pb.clone().setY(Pb.y - thick), Pb.clone(), Pa.clone(), [0, 0], [1, 0], [1, thick], [0, thick], out);
+        }
+      }
+    }
+    // ridge with end ornaments
+    if (o.ridge !== false) {
+      if (o.ridgeMat) this.mat(...o.ridgeMat); else if (o.roofMat) this.mat(...o.roofMat);
+      this.color(o.ridgeColor || o.roofColor || this.c);
+      this.e[0] = 1; this.e[3] = 0;
+      const rw = o.ridgeW ?? 0.45, rh = o.ridgeH ?? 0.7;
+      const a0 = alongX ? r0[0] : r0[1], a1 = alongX ? r1[0] : r1[1];
+      if (Math.abs(a1 - a0) > 0.2) {
+        if (alongX) this.box(a0 - rw, yR - 0.1, cz - rw / 2, a1 + rw, yR + rh, cz + rw / 2, { base: yR });
+        else this.box(cx - rw / 2, yR - 0.1, a0 - rw, cx + rw / 2, yR + rh, a1 + rw, { base: yR });
+      } else {
+        this.boxC(cx, yR - 0.1, cz, rw * 1.5, rh * 1.2, rw * 1.5);
+      }
+      if (o.ornaments !== false) {
+        for (const [px, pz, sgn] of [[r0[0], r0[1], -1], [r1[0], r1[1], 1]]) {
+          const dx = alongX ? sgn : 0, dz = alongX ? 0 : sgn;
+          const pts = [new THREE.Vector3(px, yR + rh * 0.5, pz), new THREE.Vector3(px + dx * 0.4, yR + rh * 1.6, pz + dz * 0.4), new THREE.Vector3(px - dx * 0.15, yR + rh * 2.4, pz - dz * 0.15)];
+          this.tube(pts, rw * 0.32, 5);
+        }
+      }
+    }
+    this.a = sa; this.c = sc; this.e = se;
+    return yR + (o.ridgeH ?? 0.7);
+  }
+
+  /** Box with battered (inward-leaning) walls: top inset by `inset` on every side. */
+  frustumBox(x0, z0, x1, z1, y0, y1, inset, o = {}) {
+    const base = o.base ?? y0;
+    const t = [[x0 + inset, z1 - inset], [x1 - inset, z1 - inset], [x1 - inset, z0 + inset], [x0 + inset, z0 + inset]];
+    const b = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
+    const flags = [o.front ?? 0, o.right ?? 0, o.back ?? 0, o.left ?? 0];
+    const se = this.e.slice();
+    for (let i = 0; i < 4; i++) {
+      const A = b[i], B = b[(i + 1) % 4], C = t[(i + 1) % 4], D = t[i];
+      const W = Math.hypot(B[0] - A[0], B[1] - A[1]), Wt = Math.hypot(C[0] - D[0], C[1] - D[1]);
+      const H = Math.hypot(y1 - y0, inset);
+      this.e[1] = W; this.e[2] = flags[i]; this.e[3] = o.wallH ?? (y1 - base);
+      const out = new THREE.Vector3((A[0] + B[0]) / 2 - (x0 + x1) / 2, 0, (A[1] + B[1]) / 2 - (z0 + z1) / 2);
+      this.quadP(_p(A[0], y0, A[1]), _p(B[0], y0, B[1]), _p(C[0], y1, C[1]), _p(D[0], y1, D[1]), [-W / 2, y0 - base], [W / 2, y0 - base], [Wt / 2, y0 - base + H], [-Wt / 2, y0 - base + H], out);
+    }
+    this.e = se;
+    if (o.top !== false) {
+      const sa = this.a.slice();
+      if (o.topMat) this.mat(...o.topMat);
+      this.quadP(_p(t[0][0], y1, t[0][1]), _p(t[1][0], y1, t[1][1]), _p(t[2][0], y1, t[2][1]), _p(t[3][0], y1, t[3][1]), [t[0][0], t[0][1]], [t[1][0], t[1][1]], [t[2][0], t[2][1]], [t[3][0], t[3][1]], new THREE.Vector3(0, 1, 0));
+      this.a = sa;
+    }
+  }
+
   get vertexCount() { return this.n; }
   get triangleCount() { return this.ni / 3; }
 

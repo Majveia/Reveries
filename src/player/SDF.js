@@ -244,7 +244,37 @@ export function meshSDF(f, bounds, h, opts = {}) {
     positions[v * 3] = px; positions[v * 3 + 1] = py; positions[v * 3 + 2] = pz;
     normals[v * 3] = gx; normals[v * 3 + 1] = gy; normals[v * 3 + 2] = gz;
   }
-  return { positions, normals, indices: new Uint32Array(idx) };
+  const indices = new Uint32Array(idx);
+  // Sharp features are under-resolved by the grid: vertices projected onto
+  // alternating faces get alternating gradient normals (speckled rims). Where the
+  // gradient disagrees with the local surface (area-weighted face normals), trust
+  // the mesh.
+  if (opts.fixNormals !== false && nv) {
+    const fn = new Float32Array(nv * 3);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+      const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+      const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      for (const k of [a, b, c]) { fn[k] += nx; fn[k + 1] += ny; fn[k + 2] += nz; }
+    }
+    const cosT = Math.cos((opts.sharpAngle ?? 32) * Math.PI / 180);
+    for (let v = 0; v < nv; v++) {
+      const k = v * 3;
+      const l = Math.hypot(fn[k], fn[k + 1], fn[k + 2]);
+      if (l < 1e-12) continue;
+      const fx = fn[k] / l, fy = fn[k + 1] / l, fz = fn[k + 2] / l;
+      const d = fx * normals[k] + fy * normals[k + 1] + fz * normals[k + 2];
+      if (d < cosT) {
+        // blend toward the mesh normal (fully when they strongly disagree)
+        const w = d < 0 ? 1 : Math.min(1, (cosT - d) / (cosT * 0.5));
+        let nx = normals[k] * (1 - w) + fx * w, ny = normals[k + 1] * (1 - w) + fy * w, nz = normals[k + 2] * (1 - w) + fz * w;
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        normals[k] = nx / nl; normals[k + 1] = ny / nl; normals[k + 2] = nz / nl;
+      }
+    }
+  }
+  return { positions, normals, indices };
 }
 
 /** Cheap SDF ambient occlusion along the normal (iq). Returns 0..1 (1 = open). */

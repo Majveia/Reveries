@@ -44,6 +44,7 @@ export class World {
     // Sea level: choose the height percentile matching the aesthetic's ocean fraction.
     const frac = planet.world.seaLevel ?? 0.2;
     if (frac <= 0.001) this.seaLevel = -Infinity;
+    else if (Number.isFinite(this.terrain.seaLevel)) this.seaLevel = this.terrain.seaLevel; // the height field designs its coasts (beaches, sea cliffs, estuaries) at this height
     else {
       const rng = new Random(seedFrom(planet.seed, 'sea'));
       const hs = [];

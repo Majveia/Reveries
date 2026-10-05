@@ -19,7 +19,7 @@ export const CIV_COMMON_GLSL = /* glsl */`
 uniform float uCivTime, uCivNight, uCivDay, uCivLitP, uCivWinI;
 uniform vec3 uCivSkyZ, uCivSkyH, uCivUpV, uCivLamp, uCivSunL, uCivMoss, uCivSand, uCivAccent;
 uniform sampler2D uCivShadow; uniform mat4 uCivShadowM; uniform vec4 uCivShadowP; uniform float uCivShadowOn;
-uniform float uCivNearFade;
+uniform float uCivNearFade; uniform float uCivSnow;
 varying vec2 vFac; varying vec4 vMat; varying vec4 vExt; varying vec3 vLoc; varying vec3 vLocN; varying float vCivDist;
 
 float civH12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -182,6 +182,38 @@ void civWindows(inout CivS s, vec2 uv, vec2 fw, float fwm, vec3 wall){
     s.rough = mix(s.rough, 0.12, glass * (1.0 - far));
     s.h += (frm * 0.035 - win * 0.07 + sill * 0.06 + lint * 0.03 + shut * 0.02 + fbox * 0.08) * (1.0 - far);
     s.ao *= 1.0 - 0.3 * win * (1.0 - far) * (1.0 - closed);
+  } else if (st == 9) {
+    // ---- East-Asian screens: dark timber frames with lattice over warm paper, double doors
+    float B = 2.6 + 0.8 * fract(seed * 5.7);
+    float nb = max(1.0, floor(W / B)); float Bw = W / nb;
+    float xu = uv.x + W * 0.5;
+    float bi = clamp(floor(xu / Bw), 0.0, nb - 1.0), fi = clamp(floor(uv.y / Fh), 0.0, nf - 1.0);
+    vec2 c = vec2(xu - (bi + 0.5) * Bw, uv.y - fi * Fh);
+    float r1 = civH13(vec3(bi, fi, seed * 71.0 + W));
+    bool door = front && fi < 0.5 && abs(bi - floor(nb * 0.5)) < 0.5;
+    float has = door ? 1.0 : step(r1, 0.78);
+    float ww = door ? 0.75 : min(Bw * 0.24 + 0.15, 0.7), wh = door ? 1.2 : min(Fh * 0.22, 0.62);
+    vec2 wc = vec2(0.0, door ? 1.22 : Fh * 0.58);
+    vec2 p = c - wc;
+    float far = smoothstep(ww * 0.3, ww * 1.1, fwm);
+    float win = civBox(p, vec2(ww, wh), fw) * has;
+    float frm = (civBox(p, vec2(ww + 0.1, wh + 0.1), fw) - civBox(p, vec2(ww, wh), fw)) * has;
+    vec2 lp = p * (door ? 1.0 : 1.0);
+    float lat = max(civLines(lp.x + 0.5, 0.14, 0.025, fw.x), civLines(lp.y + 0.5, 0.14, 0.025, fw.y));
+    if (door) lat = max(civBox(vec2(p.x, 0.0), vec2(0.03, 1e3), fw), civLines(p.y + 2.0, 0.6, 0.05, fw.y));
+    vec3 woodC = vec3(0.10, 0.065, 0.04);
+    vec3 paper = door ? vec3(0.16, 0.09, 0.05) : vec3(0.78, 0.7, 0.55);
+    float lit = step(fract(r1 * 13.1), litP * 1.15) * (door ? 0.0 : 1.0);
+    vec3 a = wall;
+    a = mix(a, woodC, frm);
+    a = mix(a, mix(paper, woodC, lat), win);
+    float lintel = civBox(p - vec2(0.0, wh + 0.2), vec2(ww + 0.3, 0.08), fw) * has;
+    a = mix(a, woodC * 1.4, lintel);
+    float cov = clamp((4.0 * ww * wh) / (Bw * Fh), 0.0, 0.5) * 0.78;
+    s.alb = mix(a, mix(wall, woodC, cov * 0.7), far);
+    s.emit += mix(vec3(1.0, 0.6, 0.28) * win * (1.0 - lat) * lit * 0.7 * civInterior(p, vec2(ww, wh), r1), vec3(1.0, 0.6, 0.28) * cov * litP * 0.35, far) * uCivWinI;
+    s.h += (frm * 0.03 - win * 0.04 + lintel * 0.04) * (1.0 - far);
+    s.ao *= 1.0 - 0.25 * win * (1.0 - far);
   } else if (st == 2) {
     // ---- Gothic lancets with tracery and stained glass
     float B = 3.0 + 1.0 * fract(seed * 5.1);
@@ -604,7 +636,11 @@ CivS civSurface(){
   }
 
   if (wallLike) civWindows(s, uv, fw, fwm, s.alb);
-  // gentle overall weathering at the very bottom of every wall (contact grime)
+  // snow settles on up-facing surfaces (ice worlds)
+  if (uCivSnow > 0.0 && id != 14 && id != 9 && id != 26 && id != 23) {
+    float sn = smoothstep(0.3, 0.7, up + (civF2(vLoc.xz * 0.35) - 0.5) * 0.5) * uCivSnow;
+    s.alb = mix(s.alb, vec3(0.86, 0.9, 0.96), sn); s.rough = mix(s.rough, 0.7, sn); s.metal *= 1.0 - sn; s.glass *= 1.0 - sn;
+  }
   return s;
 }
 `;
@@ -668,7 +704,7 @@ CivS civSurface(){
       s.h = furrow * 0.05 * (1.0 - smoothstep(0.08, 0.3, fwm));
     }
     float rut = smoothstep(0.35, 0.0, abs(abs(edge * 2.0 - 1.0) - 0.45)) * 0.18;
-    s.alb *= 1.0 - rut * step(id, 2.5);
+    s.alb *= 1.0 - rut * step(float(id), 2.5);
     s.h += n * 0.03;
     s.rough = 0.97;
   } else if (id == 3) {
@@ -707,9 +743,13 @@ CivS civSurface(){
   // wear, dirt and wet edges
   float dn = civF2(p * 0.05 + seed * 2.0);
   s.alb *= 0.86 + 0.22 * dn;
-  float curb = smoothstep(0.84, 0.9, edge) * (1.0 - smoothstep(0.98, 1.0, edge)) * step(id, 1.5);
+  float curb = smoothstep(0.84, 0.9, edge) * (1.0 - smoothstep(0.98, 1.0, edge)) * step(float(id), 1.5);
   s.alb = mix(s.alb, s.alb * 1.18 + 0.03, curb * 0.8);
   s.h += curb * 0.06;
+  if (uCivSnow > 0.0) {
+    float sn = smoothstep(0.35, 0.75, civF2(p * 0.12 + seed) + (1.0 - abs(edge * 2.0 - 1.0)) * -0.25 + 0.2) * uCivSnow;
+    s.alb = mix(s.alb, vec3(0.85, 0.89, 0.95), sn); s.rough = mix(s.rough, 0.75, sn); s.h += sn * 0.02;
+  }
   // lantern light pools (albedo-modulated, warm)
   s.emit += s.alb * uCivLamp * vMat.w * uCivNight * 3.0;
   return s;
@@ -773,6 +813,7 @@ export function createCivUniforms(world, palette = {}) {
     uCivShadowP: { value: new THREE.Vector4(1, 0.001, 1 / 2048, 0) },
     uCivShadowOn: { value: 0 },
     uCivNearFade: { value: 70 },
+    uCivSnow: { value: 0 },
     uCivPull: { value: 0 },
   };
 }
@@ -786,6 +827,7 @@ export function makeCivMaterial(uniforms, kind = 'building', opts = {}) {
   const pull = opts.pull ?? 0;
   const ground = kind === 'ground';
   const shadowNear = ground; // ground: city shadow only in the near field (the catcher does far)
+  const dynamic = !!opts.dynamic; // moving objects: no city shadow lookup (their local space moves)
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms, { uCivPull: { value: pull } });
     sh.vertexShader = sh.vertexShader
@@ -793,7 +835,7 @@ export function makeCivMaterial(uniforms, kind = 'building', opts = {}) {
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_MAIN}`)
       .replace('#include <project_vertex>', VERT_PROJECT);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\n${CIV_COMMON_GLSL}\n${ground ? GROUND_FRAG : BUILDING_FRAG}
+      .replace('#include <clipping_planes_pars_fragment>', `#include <clipping_planes_pars_fragment>\n${CIV_COMMON_GLSL}\n${ground ? GROUND_FRAG : BUILDING_FRAG}
 vec3 civPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir){
   vec3 sx = dFdx(surf_pos), sy = dFdy(surf_pos);
   vec3 R1 = cross(sy, surf_norm), R2 = cross(surf_norm, sx);
@@ -818,7 +860,7 @@ if (civS.glass > 0.001) {
 }`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
 {
-  float civSh = civShadowAt(vLoc, normalize(vLocN));
+  float civSh = ${dynamic ? '1.0' : 'civShadowAt(vLoc, normalize(vLocN))'};
   ${shadowNear ? 'civSh = mix(civSh, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}
   reflectedLight.directDiffuse *= civSh; reflectedLight.directSpecular *= civSh;
 }`)
@@ -826,7 +868,7 @@ if (civS.glass > 0.001) {
 { float civAo = civS.ao; ${ground ? 'civAo = mix(civAo, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}
   reflectedLight.indirectDiffuse *= civAo; reflectedLight.indirectSpecular *= civAo; reflectedLight.directDiffuse *= mix(1.0, civAo, 0.35); }`);
   };
-  m.customProgramCacheKey = () => `civ-${kind}-${pull > 0 ? 1 : 0}`;
+  m.customProgramCacheKey = () => `civ-${kind}-${pull > 0 ? 1 : 0}-${dynamic ? 1 : 0}`;
   if (pull > 0) { m.polygonOffset = true; m.polygonOffsetFactor = -1; m.polygonOffsetUnits = 0; }
   return m;
 }

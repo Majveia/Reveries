@@ -9,7 +9,7 @@ export const M = {
 };
 
 /** Window styles (aMat.z). */
-export const W = { NONE: 0, HOUSE: 1, LANCET: 2, LATTICE: 3, SLIT: 4, GRID: 5, PORTHOLE: 6, STRIP: 7, ARCADE: 8 };
+export const W = { NONE: 0, HOUSE: 1, LANCET: 2, LATTICE: 3, SLIT: 4, GRID: 5, PORTHOLE: 6, STRIP: 7, ARCADE: 8, SCREEN: 9 };
 
 /** Face flags (aExt.z, bit field). */
 export const F = { FRONT: 1, GABLE: 2, NOWIN: 4, SHOP: 8, CLOTH: 16, ROOF: 32, LIT: 64 };

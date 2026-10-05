@@ -27,7 +27,7 @@ export const AP_SLICES = 32, AP_RES = 32; // froxel volume: 32×32 screen tiles 
 
 // Tunables (visual optical depths, vertical, at density 1).
 const TAU_R = 0.46; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
-const TAU_O = 0.11; // ozone (green), scaled by the planet's life
+const TAU_O = 0.035; // ozone (green), scaled by the planet's life
 export const SUN_E0 = 4.6; // sun illuminance at the top of the atmosphere
 
 // ---------------------------------------------------------------------------------
@@ -62,7 +62,12 @@ uniform sampler2D tMultiScat;
 
 /** Media, phase functions, LUT parameterisations, integration. Requires ATMO_PARS. */
 export const ATMO_FUNCS = /* glsl */ `
+#ifdef ATMO_SUN_SHADOW
+float atmoSunShadow(vec3 P);
+#endif
 float atmoSafeSqrt(float x){ return sqrt(max(x, 0.0)); }
+// Per-pixel sample offset (0..1) for the in-scattering march; < 0 = fixed (smooth).
+float gAtmoJitter = -1.0;
 
 // Distance from radius r along cos-zenith mu to the sphere of radius R (exit when outside->inside not handled).
 float distToTopR(float r, float mu){
@@ -150,7 +155,11 @@ vec3 atmoSource(vec3 P, float r, vec3 sR, vec3 sM, float pRs, float pMs, float p
   vec3 sT = sR + sM;
   if (uSunE.r + uSunE.g + uSunE.b > 0.0) {
     float mu = dot(up, uSunDir);
-    S += uSunE * (transmittanceToLight(r, mu) * (sR * pRs + sM * pMs) + atmoMultiScat(r, mu) * sT);
+    vec3 direct = transmittanceToLight(r, mu) * (sR * pRs + sM * pMs);
+#ifdef ATMO_SUN_SHADOW
+    direct *= atmoSunShadow(P);
+#endif
+    S += uSunE * (direct + atmoMultiScat(r, mu) * sT);
   }
   if (uMoonE.r + uMoonE.g + uMoonE.b > 0.0) {
     float mu = dot(up, uMoonDir);
@@ -176,7 +185,7 @@ void atmoIntegrate(vec3 ro, vec3 rd, float t0, float t1, int N, int mode, out ve
     float f = mode == 0 ? a * a : (mode == 1 ? 1.0 - (1.0 - a) * (1.0 - a) : a);
     float next = seg * f;
     float dt = next - prev;
-    float t = t0 + prev + dt * (mode == 0 ? 0.3 : 0.5);
+    float t = t0 + prev + dt * (gAtmoJitter >= 0.0 ? gAtmoJitter : (mode == 0 ? 0.3 : 0.5));
     prev = next;
     vec3 P = ro + rd * t;
     float r = length(P);
@@ -324,7 +333,7 @@ const mat = (frag, uniforms, extra = {}) => new THREE.ShaderMaterial({
   depthTest: false, depthWrite: false, blending: THREE.NoBlending, toneMapped: false, ...extra,
 });
 
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
 
 export class AtmosphereModel {
   /** One model per level, created by whichever atmosphere subsystem constructs first. */
@@ -346,7 +355,7 @@ export class AtmosphereModel {
     this.params = A;
     this.ready = false;
     this.lutDirty = true;
-    this.weather = { fog: 0, fogHeight: 120, fogColor: new THREE.Color(1, 1, 1), dust: 0, overcast: 0 };
+    this.weather = { fog: 0, fogHeight: 120, fogBase: 0, fogColor: new THREE.Color(1, 1, 1), dust: 0, overcast: 0 };
 
     // Light state (updated by Sky / Lighting each frame).
     this.sunDir = w.sunDir;
@@ -415,12 +424,12 @@ export class AtmosphereModel {
     u.uProfile.value.set(1 / HR, 1 / HM, topR, topM);
     u.uProfile2.value.set(normR, normM, oc, 1 / ow);
     // Weather fog layer.
-    u.uFog.value.set(w.fog, 1 / Math.max(10, w.fogHeight), 0, 0.92);
+    u.uFog.value.set(w.fog, 1 / Math.max(10, w.fogHeight), w.fogBase, 0.92);
     u.uFogColor.value.set(w.fogColor.r, w.fogColor.g, w.fogColor.b);
     // CPU copies for the light colour.
     this._cpu = {
       betaR: u.uBetaR.value.clone(), betaMe: ms, betaO: u.uBetaO.value.clone(), oc, ow,
-      fog: w.fog, fogH: Math.max(10, w.fogHeight),
+      fog: w.fog, fogH: Math.max(10, w.fogHeight), fogBase: w.fogBase,
     };
   }
 
@@ -428,8 +437,8 @@ export class AtmosphereModel {
   setWeather(state) {
     const w = this.weather;
     const changed = Math.abs((state.fog ?? 0) - w.fog) > w.fog * 0.04 + 1e-6 || Math.abs((state.dust ?? 0) - w.dust) > 0.01 || Math.abs((state.overcast ?? 0) - w.overcast) > 0.02
-      || Math.abs((state.fogHeight ?? w.fogHeight) - w.fogHeight) > 2;
-    w.fog = state.fog ?? 0; w.dust = state.dust ?? 0; w.overcast = state.overcast ?? 0; w.fogHeight = state.fogHeight ?? w.fogHeight;
+      || Math.abs((state.fogHeight ?? w.fogHeight) - w.fogHeight) > 2 || (w.fog > 0 && Math.abs((state.fogBase ?? w.fogBase) - w.fogBase) > 25);
+    w.fog = state.fog ?? 0; w.dust = state.dust ?? 0; w.overcast = state.overcast ?? 0; w.fogHeight = state.fogHeight ?? w.fogHeight; w.fogBase = state.fogBase ?? w.fogBase;
     if (state.fogColor) w.fogColor.copy(state.fogColor);
     if (changed) { this._computeCoefficients(); this.lutDirty = true; }
   }
@@ -477,8 +486,8 @@ export class AtmosphereModel {
     u.uSkyR.value = rr;
     const up = _v.copy(camPos).normalize();
     const ref = Math.abs(up.y) < 0.98 ? _v2.set(0, 1, 0) : _v2.set(1, 0, 0);
-    const east = ref.clone().cross(up).normalize();
-    const north = up.clone().cross(east).normalize();
+    const east = _v3.copy(ref).cross(up).normalize();
+    const north = _v4.copy(up).cross(east).normalize();
     u.uSkyFrame.value.set(east.x, up.x, north.x, east.y, up.y, north.y, east.z, up.z, north.z);
     const prev = r.getRenderTarget();
     this._fs.render(r, this.skyMat, this.skyRT);
@@ -522,7 +531,7 @@ export class AtmosphereModel {
       odR += Math.max(0, (Math.exp(-h / pr.HR) - pr.topR) * pr.normR) * dt;
       odM += Math.max(0, (Math.exp(-h / pr.HM) - pr.topM) * pr.normM) * dt;
       odO += Math.max(0, 1 - Math.abs(h - cp.oc) / cp.ow) * dt;
-      if (cp.fog > 0) odF += cp.fog * Math.exp(-h / cp.fogH) * dt;
+      if (cp.fog > 0) odF += cp.fog * Math.exp(-Math.max(0, h - cp.fogBase) / cp.fogH) * dt;
     }
     const bR = cp.betaR, bO = cp.betaO;
     out.set(

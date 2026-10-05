@@ -120,7 +120,9 @@ export function buildChunk(T, job) {
 
   // ---- origin: chunk center on the base sphere ----
   faceDir(face, -1 + (2 * (ix * N + N / 2)) / total, -1 + (2 * (iy * N + N / 2)) / total, dir);
-  const ox = dir[0] * R, oy = dir[1] * R, oz = dir[2] * R;
+  // rounded to 1/16 m → exactly representable in float32 (mesh.position), so
+  // world-space shader coordinates derived from it carry no per-chunk jitter.
+  const ox = Math.round(dir[0] * R * 16) / 16, oy = Math.round(dir[1] * R * 16) / 16, oz = Math.round(dir[2] * R * 16) / 16;
 
   const VC = V * V + 4 * V;
   const position = new Float32Array(VC * 3);

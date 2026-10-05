@@ -147,11 +147,14 @@ function smin(a, b, k) { const h = clamp01(0.5 + 0.5 * (b - a) / k); return lerp
 /** smooth |x| (rounded crease of width k) */
 const sabs = (x, k) => Math.sqrt(x * x + k * k) - k;
 
-/** Smooth terraces: step height `s`, riser steepness `k` (0 = linear, 1 = hard). */
+/** Smooth terraces: step height `s`, riser steepness `k` (0 = linear, 1 = hard). TR.riser ∈ [0,1] on risers. */
+const TR = { riser: 0 };
 function terrace(h, s, k) {
   const q = h / s, f = Math.floor(q), t = q - f;
   // ease the step: flat treads, steep risers
-  const e = k <= 0 ? t : smoothstep(0.5 - 0.5 * (1 - k), 0.5 + 0.5 * (1 - k), t);
+  const a = 0.5 - 0.5 * (1 - k), b = 0.5 + 0.5 * (1 - k);
+  const e = k <= 0 ? t : smoothstep(a, b, t);
+  TR.riser = k <= 0 ? 0 : (t > a && t < b ? 1 - Math.abs((t - a) / (b - a) * 2 - 1) : 0);
   return (f + e) * s;
 }
 
@@ -381,20 +384,23 @@ export function createTerrain(p) {
     rock = S.rock; sand = S.sand; cliff = S.cliff; ice = S.ice;
 
     // ---- river valleys (meandering, carved toward sea level in lowlands) ----
-    if (style !== 'dunes' && style !== 'craters' && hasOcean && land > 0.01 && h > -2) {
-      const wq = fbm(nR, x * 9 + o[18], y * 9 + o[19], z * 9 + o[20], 2) * 0.6;
-      const rv = fbm(nR, x * 4.6 + wq, y * 4.6 - wq, z * 4.6 + wq * 0.5, 4, 2.1, 0.45);
+    if (style !== 'dunes' && style !== 'craters' && style !== 'glacial' && hasOcean && land > 0.01 && h > -2) {
+      const wq = fbm(nR, x * 6 + o[18], y * 6 + o[19], z * 6 + o[20], 2) * 0.35;
+      const wq2 = fbm(nR, x * 6 - o[19], y * 6 + o[20], z * 6 - o[18], 2) * 0.35;
+      const rv = fbm(nR, x * 3.1 + wq, y * 3.1 - wq2, z * 3.1 + wq * 0.5, 2, 2.0, 0.35);
       const ar = Math.abs(rv);
-      const valleyW = style === 'canyons' ? 0.05 : 0.07, chanW = 0.0045;
-      if (ar < valleyW) {
-        const floor = Math.min(h, -2.5 + Math.max(0, h) * (style === 'karst' || style === 'wetlands' ? 0.02 : 0.12));
+      const valleyW = style === 'canyons' ? 0.05 : style === 'karst' ? 0.05 : 0.06, chanW = 0.0055;
+      // rivers live in the lowlands; they fade out up in the high country
+      const lowland = 1 - smoothstep(rel * 0.08, rel * 0.3, h);
+      if (ar < valleyW && lowland > 0) {
+        const floor = Math.min(h, -2.5 + Math.max(0, h) * (style === 'karst' || style === 'wetlands' ? 0.02 : 0.1));
         const v = smootherstep(0, valleyW, ar);
-        const vShape = Math.pow(v, 0.75);
+        const vShape = Math.pow(v, 0.8);
         const carved = lerp(floor, h, vShape);
-        const t = land * (1 - smoothstep(0.75, 1.0, ar / valleyW));
+        const t = land * lowland * (1 - smoothstep(0.75, 1.0, ar / valleyW));
         h = lerp(h, carved, t);
         const ch = 1 - smoothstep(chanW * 0.4, chanW, ar);
-        if (ch > 0) h -= ch * 2.2 * t;
+        if (ch > 0) h -= ch * 2.5 * t;
         river = Math.max(river, (1 - smoothstep(0, chanW * 2.5, ar)) * t);
         wet = Math.max(wet, (1 - smoothstep(0, valleyW * 0.35, ar)) * t);
       }
@@ -463,28 +469,43 @@ export function createTerrain(p) {
   function styleRolling(x, y, z, X, Y, Z, e, h, land, mReg) {
     S.rock = 0; S.sand = 0; S.cliff = 0; S.ice = 0;
     if (land <= 0) {
-      S.sand = 0;
-      return h + fbm(nH, X / 900, Y / 900, Z / 900, 3) * 18 * (1 - smoothstep(0.0, 0.2, -e));
+      return h + fbm(nH, X / 1400, Y / 1400, Z / 1400, 3) * 14 * (1 - smoothstep(0.0, 0.25, -e));
     }
-    // rolling hills: soft, rounded, multi-scale
-    const wq = fbm(nW, X / 5200 + 3.1, Y / 5200, Z / 5200 - 2.2, 2) * 0.8;
-    const hl = fbm(nH, X / 2300 + wq, Y / 2300 - wq, Z / 2300 + wq, 4, 2.0, 0.48);
-    const hills = rel * 0.085 * (0.55 + 0.45 * hl) * (0.65 + 0.7 * mReg) * smoothstep(0.0, 0.12, e);
-    // highlands & distant blue mountains
-    const mm = smoothstep(0.42, 0.78, mReg + e * 0.35);
+    const k = smoothstep(0.0, 0.1, e);
+    // ---- eroded rolling hills (iq derivative fbm): soft crowns, gullied flanks ----
+    const wq = fbm(nW, X / 7000 + 3.1, Y / 7000, Z / 7000 - 2.2, 2) * 0.9;
+    const hl = erodedFbm(nH, X / 2600 + wq, Y / 2600 - wq, Z / 2600 + wq * 0.5, x, y, z, 6, 2.0, 0.5, 0.9);
+    const hillAmp = rel * 0.14 * (0.5 + 0.9 * mReg);
+    const hills = hillAmp * (0.5 + 0.5 * hl) * k;
+    // knolls & swales
+    const kn = fbm(nH, X / 420 + 5.5, Y / 420 - 1.1, Z / 420, 3, 2.0, 0.5) * rel * 0.008 * k;
+    // ---- escarpments: hill country stepped into pale rock benches ----
+    const em = smoothstep(0.48, 0.7, fbm(nS, X / 9000 + 1.7, Y / 9000 - 6.2, Z / 9000 + 2.4, 3) * 0.5 + 0.5);
+    let ter = hills;
+    let riser = 0;
+    if (em > 0) {
+      const step = rel * 0.028;
+      const tv = terrace(hills + fbm(nS, X / 900, Y / 900, Z / 900, 2) * step * 0.35, step, 0.82);
+      riser = TR.riser * em;
+      ter = lerp(hills, tv, em);
+    }
+    // ---- highlands & distant blue mountains ----
+    const mm = smoothstep(0.36, 0.76, mReg + e * 0.35);
     let mnt = 0;
     if (mm > 0) {
-      const r = mountains(x, y, z, X, Y, Z, 7800, 7, 1.6, 2.0);
-      mnt = rel * 0.95 * mm * Math.pow(r, 1.35);
+      const r = mountains(x, y, z, X, Y, Z, 8200, 8, 1.5, 2.0);
+      mnt = rel * 1.1 * mm * Math.pow(r, 1.3);
     }
-    // tors / crags on hilltops (exposed rock)
+    // ---- tors / crags on crowns ----
     const tn = fbm(nS, X / 380 + 2.2, Y / 380, Z / 380 - 1.3, 3);
-    const tor = smoothstep(0.42, 0.56, tn + hl * 0.25) * rel * 0.016 * smoothstep(0.03, 0.15, e);
-    // sea cliffs in some regions
-    const cm = smoothstep(0.52, 0.72, fbm(nS, x * 5 + 8.1, y * 5 - 2.4, z * 5 + 6.6, 2) * 0.5 + 0.5);
-    let out = h + hills + mnt + tor;
-    out = coastShape(e, out, cm, rel * 0.05);
-    S.rock = clamp01(smoothstep(0.35, 0.8, mnt / (rel * 0.6)) + (tor > 0 ? smoothstep(0.42, 0.56, tn + hl * 0.25) * 0.85 : 0));
+    const torM = smoothstep(0.45, 0.6, tn + hl * 0.3) * smoothstep(0.05, 0.2, e);
+    const tor = torM * rel * 0.012;
+    // ---- sea cliffs in some regions ----
+    const cm = smoothstep(0.5, 0.72, fbm(nS, x * 5 + 8.1, y * 5 - 2.4, z * 5 + 6.6, 2) * 0.5 + 0.5);
+    let out = h + ter + kn + mnt + tor;
+    out = coastShape(e, out, cm, rel * 0.045);
+    S.rock = clamp01(smoothstep(0.32, 0.75, mnt / (rel * 0.6)) + torM * 0.9 + riser * 0.9);
+    S.cliff = Math.max(S.cliff, riser);
     // beaches
     if (out < 3.5 && out > -2) S.sand = Math.max(S.sand, (1 - smoothstep(1.2, 3.5, out)) * (1 - cm));
     return lerp(h, out, land);
@@ -522,7 +543,9 @@ export function createTerrain(p) {
   function styleDunes(x, y, z, X, Y, Z, e, h, mReg) {
     S.rock = 0; S.sand = 1; S.cliff = 0; S.ice = 0;
     // large-scale relief: basins (ergs) vs rocky uplands
-    const up = smoothstep(0.08, 0.5, e * 0.8 + (mReg - 0.5) * 0.8);
+    // rocky shields / inselbergs: islands of rock in the sand sea (a few km across)
+    const isl = fbm(nM, X / 6500 + 3.3, Y / 6500 - 7.7, Z / 6500 + 1.9, 3) * 0.5 + 0.5;
+    const up = smoothstep(0.58, 0.72, isl + e * 0.15 + (mReg - 0.5) * 0.3);
     let base = rel * (0.06 + 0.2 * smoothstep(-0.4, 0.8, e));
     // rocky escarpments & wind-carved ridges (yardangs, elongated E-W)
     let rockH = -1e9;
@@ -534,23 +557,25 @@ export function createTerrain(p) {
     // ---- dunes ----
     const lat = Math.asin(clamp(y, -1, 1));
     const lon = Math.atan2(x, z);
-    const latFade = 1 - smoothstep(0.65, 0.95, Math.abs(lat));
+    const latFade = 1 - smoothstep(1.0, 1.3, Math.abs(lat));
     const wA = fbm(nS, X / 4200 + 1.3, Y / 4200 - 2.1, Z / 4200 + 0.7, 3);
     const wB = fbm(nS, X / 1300 - 3.3, Y / 1300 + 4.4, Z / 1300 - 1.1, 2);
     const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.35;
     const f1 = ph1 - Math.floor(ph1);
     // asymmetric profile: long windward ramp, steep slip face, flat interdune corridor
     const fc = 0.8;
-    let p1 = f1 < fc ? smoothstep(0.12, fc, f1) : 1 - smoothstep(fc, 1.0, f1) * 1.0;
-    p1 = f1 < fc ? Math.pow(p1, 1.25) : Math.pow(Math.max(0, p1), 0.75);
+    // convex stoss ramp up to a knife-edge brink, then a straight slip face at the angle of repose
+    let p1;
+    if (f1 < fc) { const t = clamp01((f1 - 0.08) / (fc - 0.08)); p1 = Math.pow(Math.sin(t * Math.PI * 0.5), 1.35); }
+    else p1 = 1 - (f1 - fc) / (1 - fc);
     const latM = lat * R;
     const ph2 = lon * dune2N / (2 * Math.PI) + latM / dune2Lambda * 0.9 + wA * 1.1 + wB * 0.9;
     const f2 = ph2 - Math.floor(ph2);
-    let p2 = f2 < 0.72 ? smoothstep(0.05, 0.72, f2) : 1 - smoothstep(0.72, 1.0, f2);
+    let p2 = f2 < 0.72 ? Math.sin(clamp01((f2 - 0.05) / 0.67) * Math.PI * 0.5) : 1 - (f2 - 0.72) / 0.28;
     p2 = p2 * p2;
     const ampN = fbm(nH, X / 6000 + 2.2, Y / 6000, Z / 6000 - 0.4, 3) * 0.5 + 0.5;
-    const A1 = rel * 0.085 * (0.25 + 0.95 * ampN) * latFade;
-    const A2 = rel * 0.026 * (0.4 + 0.8 * (1 - ampN)) * latFade;
+    const A1 = rel * 0.11 * (0.55 + 0.6 * ampN) * latFade;
+    const A2 = rel * 0.03 * (0.5 + 0.8 * (1 - ampN)) * latFade;
     // small transverse dunelets
     const sm = fbm(nD, X / 95, Y / 340, Z / 95, 2);
     const dunes = A1 * p1 + A2 * p2 * (0.45 + 0.55 * p1) + (sm * 0.5 + 0.5) * 3.2 * latFade;
@@ -569,47 +594,50 @@ export function createTerrain(p) {
     S.rock = 0; S.sand = 0; S.cliff = 0; S.ice = 0;
     if (land <= 0 && e < -0.12) return h;
     const k = smoothstep(-0.05, 0.08, e);
-    // alluvial plains (low, gently undulating, wet)
-    const plain = fbm(nH, X / 1800, Y / 1800, Z / 1800, 3) * 9 + 6;
-    let base = h * 0.35 + plain * k;
+    // alluvial plains: low, gently undulating, wet (rice terraces, oxbows)
+    const plain = fbm(nH, X / 1800, Y / 1800, Z / 1800, 3) * 7 + fbm(nH, X / 300, Y / 300, Z / 300, 2) * 1.5 + 6;
+    const base = h * 0.3 + plain * k;
     // distant ink-wash mountain ranges
-    const mm = smoothstep(0.5, 0.85, mReg + e * 0.3);
+    const mm = smoothstep(0.52, 0.86, mReg + e * 0.3);
     let mnt = 0;
-    if (mm > 0) mnt = rel * 0.9 * mm * Math.pow(mountains(x, y, z, X, Y, Z, 6800, 7, 1.3, 2.0), 1.25);
-    // tower density field: clustered forests of pillars + open plains
-    const dens = smoothstep(0.32, 0.62, fbm(nS, X / 7000 + 5.5, Y / 7000 - 2.2, Z / 7000 + 1.1, 3) * 0.5 + 0.5 + (mReg - 0.5) * 0.3);
+    if (mm > 0) mnt = rel * 0.85 * mm * Math.pow(mountains(x, y, z, X, Y, Z, 6800, 8, 1.3, 2.2), 1.2);
+    // tower density: clustered forests of pillars (fengcong) + open plains (fenglin)
+    const dn = fbm(nS, X / 6000 + 5.5, Y / 6000 - 2.2, Z / 6000 + 1.1, 3) * 0.5 + 0.5;
+    // open coastal plains (towns, paddies); the pillar forests rise inland
+    const dens = smoothstep(0.26, 0.5, dn + (mReg - 0.5) * 0.25) * (0.4 + 0.6 * smoothstep(0.03, 0.14, e)) * smoothstep(-0.02, 0.03, e);
     let towers = 0, towerRock = 0;
-    if (dens > 0.001 && e > -0.1) {
-      // irregular outlines
-      const wob = fbm(nD, X / 70, Y / 70, Z / 70, 2) * 0.09;
-      // big towers (fenglin)
-      const big = cells(nK, X, Y, Z, 430, 11, (d, ra, rb, rc, acc) => {
-        if (ra > 0.25 + 0.7 * dens) return acc; // empty cell
-        const rad = 0.2 + 0.24 * rb; // in cells (< 0.5)
-        const t = (d + wob * 0.6) / rad;
-        if (t >= 1.0) return acc;
-        const Ht = (150 + 330 * rc * rc) * (0.5 + 0.5 * dens);
-        // dome top, near-vertical bulging walls, small talus apron
-        const top = 1 - 0.32 * t * t;
-        const wall = 1 - smoothstep(0.74, 0.97, t);
-        const v = Ht * top * wall + Ht * 0.06 * (1 - smoothstep(0.85, 1.0, t));
-        return smax(acc, v, 18);
-      }, 0);
-      // small towers / needles
-      const small = cells(nK, X, Y, Z, 150, 23, (d, ra, rb, rc, acc) => {
-        if (ra > 0.15 + 0.75 * dens) return acc;
-        const rad = 0.16 + 0.26 * rb;
+    if (dens > 0.001) {
+      // irregular, fluted outlines
+      const wob = fbm(nD, X / 60, Y / 60, Z / 60, 2) * 0.07 + fbm(nD, X / 18, Y / 18, Z / 18, 1) * 0.02;
+      const big = cells(nK, X, Y, Z, 470, 11, (d, ra, rb, rc, acc) => {
+        if (ra > 0.25 + 0.75 * dens) return acc; // empty cell
+        const rad = 0.17 + 0.2 * rb; // in cells (< 0.5)
         const t = (d + wob) / rad;
         if (t >= 1.0) return acc;
-        const Ht = (35 + 120 * rc) * (0.4 + 0.6 * dens);
-        const v = Ht * (1 - 0.35 * t * t) * (1 - smoothstep(0.7, 0.96, t));
-        return smax(acc, v, 8);
+        const Ht = (190 + 420 * rc * rc) * (0.6 + 0.4 * dens);
+        // rounded crown, near-vertical walls, small talus apron
+        const top = 1 - 0.3 * t * t;
+        const wall = 1 - smoothstep(0.82, 0.99, t);
+        const v = Ht * top * wall + Ht * 0.04 * (1 - smoothstep(0.88, 1.0, t));
+        return smax(acc, v, 12);
       }, 0);
-      towers = smax(big, small, 10) * dens;
-      towerRock = smoothstep(4, 30, towers);
+      // slender needles / satellite pillars
+      const small = cells(nK, X, Y, Z, 190, 23, (d, ra, rb, rc, acc) => {
+        if (ra > 0.1 + 0.6 * dens) return acc;
+        const rad = 0.16 + 0.24 * rb;
+        const t = (d + wob * 1.3) / rad;
+        if (t >= 1.0) return acc;
+        const Ht = (60 + 200 * rc) * (0.4 + 0.6 * dens);
+        const v = Ht * (1 - 0.3 * t * t) * (1 - smoothstep(0.78, 0.98, t));
+        return smax(acc, v, 6);
+      }, 0);
+      towers = smax(big, small, 8) * dens;
+      // weathered horizontal bedding on the walls
+      towers = lerp(towers, terrace(towers, 7, 0.35), 0.35);
+      towerRock = smoothstep(6, 30, towers);
     }
-    let out = base + mnt + towers;
-    S.rock = clamp01(towerRock * 0.9 + smoothstep(0.4, 0.85, mnt / (rel * 0.6)));
+    const out = base + mnt + towers;
+    S.rock = clamp01(towerRock * 0.95 + smoothstep(0.4, 0.85, mnt / (rel * 0.6)));
     S.cliff = towerRock;
     if (out < 2.5 && out > -2) S.sand = (1 - smoothstep(0.8, 2.5, out)) * 0.6;
     return lerp(h, out, smoothstep(-0.12, 0.0, e));
@@ -619,30 +647,32 @@ export function createTerrain(p) {
     S.rock = 0; S.sand = 0; S.cliff = 0; S.ice = 0;
     if (land <= 0 && e < -0.15) return h;
     const k = smoothstep(-0.02, 0.1, e);
-    // sharp alpine relief: horns, arêtes
-    const mm = smoothstep(0.2, 0.6, mReg + e * 0.5);
-    const r = mountains(x, y, z, X, Y, Z, 6200, 8, 0.9, 2.6);
-    let mnt = rel * 1.05 * mm * Math.pow(r, 1.15) * k;
-    const hills = fbm(nH, X / 2000, Y / 2000, Z / 2000, 4) * rel * 0.05 * k;
-    // U-shaped glacial valleys (fjords where they reach the sea)
-    const wq = fbm(nW, X / 9000, Y / 9000, Z / 9000, 2) * 0.7;
-    const vn = Math.abs(fbm(nR, X / 7600 + wq, Y / 7600 - wq, Z / 7600 + wq, 3, 2.0, 0.45));
-    const U = smootherstep(0.02, 0.09, vn);
+    // sharp alpine relief: horns and arêtes (high sharpness ridged)
+    const mm = smoothstep(0.25, 0.65, mReg + e * 0.45);
+    const r = mountains(x, y, z, X, Y, Z, 6400, 8, 0.8, 2.8);
+    // glacial valleys: the low part of the ridged field is flattened into broad U-troughs
+    const rU = smax(r, 0.16, 0.08) - 0.16;
+    const mnt = rel * 1.15 * mm * Math.pow(rU / 0.84, 1.2) * k;
+    const hills = fbm(nH, X / 2200, Y / 2200, Z / 2200, 4) * rel * 0.035 * k;
     let out = h + hills + mnt;
-    const floorH = Math.min(out, h * 0.3 - 40 * (1 - k) - 12);
-    out = lerp(floorH, out, Math.pow(U, 0.9));
-    // ice sheets / plateau ice caps bury lower relief, nunataks poke through
+    // ice sheets bury the lowlands; nunataks and ranges poke through
     const lat = Math.abs(y);
-    const iceLevel = rel * (0.18 + 0.22 * (fbm(nS, x * 3 + 2, y * 3, z * 3 - 1, 3) * 0.5 + 0.5)) * smoothstep(0.35, 0.8, lat + mReg * 0.25);
+    const iceN = fbm(nS, x * 3 + 2, y * 3, z * 3 - 1, 3) * 0.5 + 0.5;
+    const iceLevel = rel * (0.06 + 0.2 * iceN) * smoothstep(0.1, 0.6, lat + mReg * 0.3 + iceN * 0.2) * k;
     if (iceLevel > 1) {
-      const capped = smax(out, iceLevel + fbm(nD, X / 800, Y / 800, Z / 800, 2) * 6, rel * 0.03);
-      S.ice = smoothstep(-4, 10, iceLevel - out + 6);
+      const sheet = iceLevel + fbm(nD, X / 1400, Y / 1400, Z / 1400, 3) * 9 + fbm(nD, X / 240, Y / 240, Z / 240, 2) * 1.5;
+      const capped = smax(out, sheet, rel * 0.02);
+      S.ice = smoothstep(-6, 8, sheet - out);
       out = capped;
     }
-    // glacier tongues in valley floors
-    S.ice = Math.max(S.ice, (1 - U) * smoothstep(-20, 60, out) * 0.9);
-    S.rock = clamp01(smoothstep(0.2, 0.6, mnt / (rel * 0.6)) * (1 - S.ice * 0.7));
-    S.cliff = clamp01((U - Math.pow(U, 3)) * 1.6 * (1 - S.ice));
+    // glacier tongues fill the U-trough floors
+    const trough = 1 - smoothstep(0.0, 0.12, rU);
+    S.ice = Math.max(S.ice, trough * mm * smoothstep(-20, 80, out) * 0.95);
+    if (S.ice > 0) out += S.ice * trough * 12;
+    // sea ice cliffs: the ice sheet ends in a wall at the coast
+    if (e < 0.03 && e > -0.05 && S.ice > 0.3) out = lerp(out, Math.max(out, 22), smoothstep(-0.05, -0.01, e) * S.ice);
+    S.rock = clamp01(smoothstep(0.18, 0.55, mnt / (rel * 0.6)) * (1 - S.ice * 0.8));
+    S.cliff = clamp01(smoothstep(0.35, 0.75, r) * mm * (1 - S.ice));
     return lerp(h, out, smoothstep(-0.15, 0.0, e));
   }
 
@@ -651,8 +681,8 @@ export function createTerrain(p) {
     if (land <= 0) return h;
     const k = smoothstep(0.0, 0.08, e);
     const wq = fbm(nW, X / 3000, Y / 3000, Z / 3000, 3) * 0.55;
-    const m = fbm(nS, X / 4200 + wq, Y / 4200 - wq, Z / 4200 + wq, 5, 2.0, 0.55) * 0.5 + 0.5 + (mReg - 0.5) * 0.35;
-    const tiers = [0.5, 0.62, 0.74];
+    const m = fbm(nS, X / 5200 + wq, Y / 5200 - wq, Z / 5200 + wq, 4, 2.0, 0.5) * 0.5 + 0.5 + (mReg - 0.5) * 0.35;
+    const tiers = [0.56, 0.66, 0.76];
     let mesa = 0, edge = 0;
     for (let i = 0; i < 3; i++) {
       const s = smoothstep(tiers[i], tiers[i] + 0.012, m);
@@ -675,8 +705,8 @@ export function createTerrain(p) {
     const k = smoothstep(0.0, 0.1, e);
     const plateau = rel * 0.45 * k * (0.7 + 0.3 * mReg) + fbm(nH, X / 2500, Y / 2500, Z / 2500, 3) * rel * 0.03;
     const wq = fbm(nW, X / 6000, Y / 6000, Z / 6000, 2) * 0.9;
-    const c1 = Math.abs(fbm(nS, X / 9000 + wq, Y / 9000 - wq, Z / 9000 + wq, 4, 2.0, 0.5));
-    const c2 = Math.abs(fbm(nS, X / 2600 - wq, Y / 2600 + wq, Z / 2600, 3, 2.0, 0.5));
+    const c1 = Math.abs(fbm(nS, X / 9000 + wq, Y / 9000 - wq, Z / 9000 + wq, 2, 2.0, 0.4));
+    const c2 = Math.abs(fbm(nS, X / 2600 - wq, Y / 2600 + wq, Z / 2600, 2, 2.0, 0.4));
     const deep = 1 - smoothstep(0.0, 0.07, c1);
     const side = (1 - smoothstep(0.0, 0.05, c2)) * smoothstep(0.02, 0.2, c1) * 0.55;
     const cut = Math.max(deep, side);
