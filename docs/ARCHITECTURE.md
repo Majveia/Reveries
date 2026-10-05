@@ -1,0 +1,182 @@
+# Reveries — Architecture & Contracts
+
+Reveries is a playable, procedurally generated universe in **Three.js (WebGL2)**:
+an evolving cosmic web → galaxies → star systems → seamless planets you can
+walk, ride and fly across. Everything is procedural and deterministic from seeds:
+**no external assets** (no model/texture files). Textures come from shaders or
+canvas, geometry from code.
+
+Run it: `npm install && npm run dev` → http://localhost:5173
+
+## Scales (levels)
+
+| Level | Module | Units | What it is |
+|---|---|---|---|
+| `cosmos` | `src/levels/cosmos/CosmosLevel.js` | Mpc (comoving) | GPU N-body cosmic web in an expanding ΛCDM universe; the title screen lives here |
+| `galaxy` | `src/levels/galaxy/GalaxyLevel.js` | kpc | A galaxy: stars, dust lanes, nebulae, central black hole |
+| `system` | `src/levels/system/SystemLevel.js` | scene units (compressed AU) | Star, planets on Kepler orbits, belts, comets |
+| `planet` | `src/levels/planet/PlanetLevel.js` | **meters**, planet at origin | One seamless world from orbit to the ground: terrain, ocean, sky, life, cities, player, vehicles |
+
+Navigation: `engine.go(level, addr, opts)` with cinematic warp transitions.
+`engine.up()` goes up one scale. Address `addr = { g, s, p }` (galaxy id, star
+index, planet index). URL: `?scene=planet&g=0&s=0&p=2`.
+
+## Core (owned by core — additive changes only, never restructure)
+
+- `src/core/Engine.js` — renderer (reversed-Z float depth when available), loop,
+  adaptive DPR, level lifecycle, transitions, harness API (`window.__REVERIES__`).
+- `src/core/PostFX.js` — HDR pipeline: scene → level effects → bloom → AgX/ACES
+  tonemap → grade → FXAA. **Owned by the postfx sub-project.**
+- `src/core/Input.js` — unified keyboard/mouse/gamepad/touch. **Owned by the ui sub-project.**
+- `src/core/OrbitRig.js` — inertial orbit camera for map levels.
+- `src/core/Random.js` — `Random` (seeded sfc32), `seedFrom`, `hash2i/hash3i`, `u01`.
+- `src/core/Noise.js` — `SimplexNoise(seed)` with `noise2/3/4`, `fbm3`, `ridged3`, `billow3`, `warped3`, `worley3`; `clamp/lerp/smoothstep/remap`. Worker-safe.
+- `src/core/glsl/noise.js` — GLSL `snoise(vec2|vec3)`, `fbm`, `ridged`, `worley`, `hash*`. Export `NOISE_GLSL`.
+- `src/core/glsl/common.js` — `DEPTH_GLSL` (`depthToViewZ`, `isFarDepth`, `viewPosFromDepth`), `COLOR_GLSL` (`blackbody`, `luma`, `ign`), `FULLSCREEN_VERT`.
+- `src/universe/Universe.js` — deterministic catalog: `galaxy(id)`, `galaxySample(g, rng)`, `star(g, i)`, `system(g, s)`, `planet(g, s, p)`, `crumbs(addr)`.
+- `src/universe/Astro.js` — real physics: ΛCDM `E(a)`, `growthFactor`, `growthRate`, `ageAt`, `powerSpectrum`; stellar `massLuminosity`, `blackbodyColor`, `habitableZone`; `solveKepler`, `orbitPosition`.
+- `src/universe/Aesthetics.js` — the art direction of every world (palette, atmosphere, terrain style, architecture, flora, fauna, weather, grade, music) — homages to Villeneuve, Miyazaki, Moebius, Kubrick, Tarkovsky, Ueda, Cameron, Watanabe, FromSoftware, Black Myth/Sekiro, Nolan, Rick & Morty, Nausicaä, NASA-punk, Mustafar, Hoth.
+
+## Rendering rules everyone must follow
+
+1. **Reversed depth.** `engine.reversedDepth` is usually `true`: depth 1 = near,
+   0 = far, 32-bit float depth texture. Built-in materials just work. In post
+   effects use `DEPTH_GLSL` helpers with the `ctx.reversed` flag — never assume
+   standard depth. For backgrounds (skies, starfields) use `depthWrite:false`,
+   a low `renderOrder`, and keep them inside the far plane; do not use the
+   `gl_Position.z = gl_Position.w` trick.
+2. **HDR linear.** The scene renders to a HalfFloat target. Output linear,
+   physically plausible radiance; emissive things can exceed 1.0 (they bloom).
+   No tonemapping in materials (`toneMapped` is irrelevant; PostFX tonemaps).
+   Colors from hex go through `THREE.Color` (sRGB → linear).
+3. **OLED black.** Space must be true black. Keep fog/haze/grain from lifting
+   pure-black regions. Bloom is energy-conserving; don't add flat ambient glow.
+4. **Performance budget.** Desktop `high` ≈ 60 fps on a mid-range laptop GPU;
+   phones run `low`/`medium`. Scale counts/steps with `engine.quality`
+   (`.level` 0–3, `.pick(low, med, high, ultra)`, `.scale(n)`). Instancing,
+   GPU animation, workers for heavy CPU work. Avoid per-frame allocations.
+5. **Determinism.** Use `Random`/`seedFrom` from seeds in the universe catalog,
+   never `Math.random()` for world content (fine for transient VFX).
+6. **Post effects** a level/subsystem adds implement
+   `{ enabled, render(renderer, inputTexture, outputTarget, ctx) }` where ctx has
+   `depthTexture, camera, near, far, reversed, time, width, height, projInv,
+   viewInv, cameraPosition, fullscreen(material, target)`.
+
+## Level contract
+
+```js
+export default class XLevel {
+  constructor(engine, addr, opts)
+  async load(progress)        // progress(p01, label)
+  enter(prevLevelName)
+  update(dt, t)               // read engine.input; call engine.go / engine.up
+  render?()                   // default: engine.postfx.render(scene, camera, effects, {time, dt})
+  exit(); dispose()
+  scene; camera; effects = []; grade = { ...partial PostFX grade }
+  shots = { name: async () => {...} }   // camera presets for screenshots (harness)
+  onResize(w, h)
+  onBegin?()                  // cosmos only: user clicked the title screen
+}
+```
+
+## Planet subsystems
+
+`PlanetLevel` loads every module in `SUBSYSTEMS` (dynamic import, failures
+isolated). Each default-exports a class:
+
+```js
+export default class X {
+  static order = 30;                 // update order (lower first)
+  constructor(level)                 // level.world, .scene, .camera, .engine, .planet, .star, .aesthetic, .sun, .hemi
+  async init(progress)
+  update(dt, t)
+  lateUpdate?(dt, t)                 // after all updates (camera rigs, LOD selection)
+  effects?                           // array of PostFX effects (collected in order)
+  shot?(name, spot) → bool           // pose for a screenshot preset; return true if handled
+  onModeChange?(mode)                // 'orbit' | 'onfoot' | 'bike' | 'ship'
+  dispose()
+}
+```
+
+| Order | Subsystem | Module | Owner |
+|---|---|---|---|
+| 10 | vehicles | `src/vehicles/Vehicles.js` (+ files in `src/vehicles/`) | vehicles |
+| 20 | player | `src/player/Player.js` (+ `src/player/`) | player |
+| 30 | terrain | `src/levels/planet/terrain/Terrain.js`, `TerrainHeight.js` | terrain |
+| 40 | ocean | `src/levels/planet/ocean/Ocean.js` | ocean |
+| 50 | flora | `src/levels/planet/flora/Flora.js` | flora |
+| 60 | fauna | `src/levels/planet/fauna/Fauna.js` | fauna |
+| 70 | civ | `src/levels/planet/civ/Civilization.js` | civ |
+| 80 | sky | `src/levels/planet/atmosphere/Sky.js` | atmosphere |
+| 85 | clouds | `src/levels/planet/atmosphere/Clouds.js` | atmosphere |
+| 88 | weather | `src/levels/planet/atmosphere/Weather.js` | atmosphere |
+| 90 | atmosphere | `src/levels/planet/atmosphere/Atmosphere.js` | atmosphere |
+
+### World (`src/levels/planet/World.js`) — the physical truth
+
+Planet centered at origin, meters, radius 22–70 km (`world.radius`). The planet
+does not rotate; `world.sunDir` orbits. Everyone queries terrain through World so
+physics and visuals agree:
+
+- `heightAt(dir)`, `sample(dir)` → `{h, moisture, temp, rock, biome}`, `surfaceRadius(dir)`
+- `groundAt(pos)` → `{height, radius, point, normal, water, waterDepth, waterRadius, colliderTop}`
+- `normalAt(dir)`, `up(pos)`, `frame(pos, forwardHint)` → `{up, forward, right}`, `altitude(pos)`, `raycast(origin, dir, max)`
+- Colliders: `addCollider({type:'box', center, quaternion, half})`, `{type:'cylinder', center, up, radius, height}`, `{type:'sphere', center, radius}`; `collide(pos, radius, height)` pushes a capsule out; `colliderTopAt(pos)` for walkable roofs/platforms.
+- POIs: `addPOI({position, radius, title, text, kind})`, `nearestPOI(pos, maxDist)`
+- `sites[]`: settlements `{dir, position, height, radius, kind: 'megacity'|'city'|'town'|'village'|'outpost'|'spaceport'|'ruins', name, style}`
+- Time: `setTimeOfDay(t, atDir)` (0 midnight, .25 sunrise, .5 noon, .75 sunset), `timeOfDay`, `daylight`, `sunDir`
+- `seaLevel` (m above base radius, `-Infinity` if no ocean), `hasOcean`, `gravity`, `atmosphereRadius`, `wind`, `windStrength`
+- `uniforms`: shared `{uTime, uSunDir, uPlanetRadius, uSeaLevel, uAtmoRadius, uDaylight, uWind, uCameraPos}` — bind the same objects in your materials.
+
+`terrain/TerrainHeight.js` is **pure and worker-safe**: `terrainParams(planet)`
+→ JSON; `createTerrain(params)` → `{height(x,y,z), sample(x,y,z)}` on unit
+directions. Main thread and workers must produce identical heights.
+
+### Player ⇄ vehicles contract
+
+- Player subsystem sets `level.player = this` and exposes `position` (Vector3,
+  feet), `velocity`, `up`, `mode`, `cameraRig`, `spawn(kind)` (`'orbit'|'surface'|'ship'|'bike'`),
+  `board(vehicle)`, `alight()`, `handlesEscape()` (return true if it consumed Esc).
+- Vehicles subsystem sets `level.vehicles = this` with `list` (array) and
+  `nearest(pos, maxDist)`. Each vehicle: `{ type: 'bike'|'ship', object3d,
+  position, quaternion, velocity, seat (Vector3 local), cameraProfile:
+  {distance, height, fov, lag}, canBoard(pos), enter(player), exit() → exit
+  position, update(dt, input|null) }` — `input` is non-null only while the
+  player drives it.
+- `level.setMode(mode)` broadcasts `onModeChange`; `ui.setMode` switches touch layouts.
+- When `level.freeCam` is set (screenshot/debug), camera rigs must not move the camera.
+
+## UI, input, audio
+
+- `engine.ui`: `setLocation(crumbs)`, `info(card)`, `hint(text, ms)`, `prompt(key, text)`,
+  `toast(title, text)`, `telemetry(obj)`, `setProgress(p, label)`, `setMode(mode)`, `setVisible(bool)`.
+  Elements that take pointer input carry `data-ui`.
+- `engine.input`: `move{x,y}`, `look{x,y}` (radians/frame), `pan`, `zoom`, `throttle`,
+  `down/pressed/released(action)`, `click`, `doubleClick`, `setMode('orbit'|'game')`,
+  `isTouch`, `lastDevice`, `pointerLocked`, `requestPointerLock()`.
+  Actions: `forward back left right jump sprint crouch interact toggleView map escape travel rollLeft rollRight photo timeFaster timeSlower light help primary secondary brake`.
+- `engine.audio`: `setScene(name, music)`, `setTimeOfDay`, `setFlight`, `setEngine`, `sfx(name)`.
+
+## Screenshots (the harness)
+
+```
+node tools/shoot.mjs --scene planet --p 2 --shots vista,city --out shots/mine/
+```
+Renders headless via SwiftShader (software — slow but faithful). One shared Vite
+dev server on :5173 and a global lock serialize renders across agents. Prints
+console errors — **read them**. Planet shots: `orbit approach vista character
+fp city night ocean bike ship`. Each level defines its own `shots`.
+Home system planets (g0 s0): p0 Ember (lava/inferno), p1 Arrakeen (desert/dune),
+p2 Laputa (terran/ghibli), p3 Huaguo (terran/wukong), p4 Eywa (jungle/pandora),
+p5 Saturnine (gas giant, rings), p6 Isolde (ice/glacier).
+
+## Collaboration rules (parallel sub-projects)
+
+- Only edit files you own. Shared files (`Engine.js`, `PlanetLevel.js`,
+  `World.js`, `Universe.js`, `Aesthetics.js`): **small additive edits only**,
+  re-read right before editing, never reformat or restructure.
+- Never run `git` commands that change state (commit/checkout/reset/stash) — the
+  lead commits.
+- Do not delete or rename other modules' exports.
+- Keep shaders compiling on WebGL2/GLSL ES 3.0 via three's ShaderMaterial
+  (`gl_FragColor`/`texture2D` are fine — three aliases them).
