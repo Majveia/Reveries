@@ -180,3 +180,20 @@ p5 Saturnine (gas giant, rings), p6 Isolde (ice/glacier).
 - Do not delete or rename other modules' exports.
 - Keep shaders compiling on WebGL2/GLSL ES 3.0 via three's ShaderMaterial
   (`gl_FragColor`/`texture2D` are fine — three aliases them).
+
+## Harness etiquette (parallel agents share one software renderer)
+
+- Run the harness with a long Bash timeout (`timeout: 600000`) — renders queue
+  behind a global lock and SwiftShader is slow. Never kill the Vite dev server
+  or other agents' processes; the harness starts the server if it is down.
+- Keep a single shot render under ~2 minutes: use `--w 960 --h 540 --frames 6`
+  while iterating, 1280×720 for final checks. In `engine.shotMode` temporal
+  effects (auto-exposure, TAA history, cloud reprojection, LOD streaming) must
+  converge immediately or within a few frames.
+- Statically imported core files (`Engine.js`, `PostFX.js`, `Input.js`,
+  `UI.js`, `ui.css`, `Audio.js`) must never be left broken: develop the new
+  version as `src/core/PostFX.next.js` / `src/core/Input.next.js` /
+  `src/ui/UI.next.js` / `src/audio/Audio.next.js`, test with
+  `--extra "next=postfx"` (comma-separate several), then swap it in with a
+  single `cp` and delete the `.next.js` file.
+- Before finishing: `node tools/check.mjs` must pass (syntax + full Vite build).

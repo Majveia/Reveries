@@ -13,7 +13,7 @@
 //   --out DIR|FILE.png                     output (default shots/)
 //   --w --h                                viewport (default 1280x720)
 //   --q low|medium|high|ultra              quality tier (default high)
-//   --frames N                             frames to render after each preset (default 24)
+//   --frames N                             frames to render after each preset (default 10)
 //   --time T                               planet time of day 0..1
 //   --spawn orbit|surface|…                planet spawn
 //   --ui 0|1                               show UI (default 0)
@@ -72,6 +72,7 @@ async function acquire() {
     try {
       fs.mkdirSync(LOCK);
       fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
+      holding = true;
       return;
     } catch {
       // stale lock?
@@ -87,7 +88,11 @@ async function acquire() {
     }
   }
 }
-function release() { try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* ignore */ } }
+let holding = false;
+function release() { if (!holding) return; holding = false; try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* ignore */ } }
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { release(); process.exit(130); });
+// Hard stop so a hung render can never hold the shared lock forever.
+setTimeout(() => { console.error('[shoot] global timeout (15 min) — aborting'); release(); process.exit(2); }, 15 * 60 * 1000).unref();
 
 async function main() {
   await ensureServer();
@@ -131,7 +136,7 @@ async function main() {
       let ok = true;
       if (shot !== 'default') ok = await page.evaluate((s) => window.__REVERIES__.shot(s), shot);
       if (!ok) { logs.push(`[shoot] level has no shot "${shot}" (available: ${await page.evaluate(() => window.__REVERIES__.shots().join(','))})`); }
-      const frames = parseInt(args.frames || '24', 10);
+      const frames = parseInt(args.frames || '10', 10);
       await page.evaluate((n) => window.__REVERIES__.frames(n), frames);
       const file = outIsFile ? path.resolve(ROOT, out) : path.resolve(ROOT, out, `${scene}${args.p != null ? '-p' + args.p : ''}-${shot}${args.mobile ? '-mobile' : ''}.png`);
       await page.screenshot({ path: file, type: 'png' });

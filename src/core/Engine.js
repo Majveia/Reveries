@@ -31,7 +31,7 @@ const ORDER = ['cosmos', 'galaxy', 'system', 'planet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class Engine {
-  constructor(params = new URLSearchParams(location.search)) {
+  constructor(params = new URLSearchParams(location.search), overrides = {}) {
     this.params = params;
     this.shotMode = params.has('shot');
     this.debug = params.has('debug');
@@ -59,11 +59,11 @@ export class Engine {
 
     this.events = new EventTarget();
     this.universe = new Universe(params.get('seed') || 'reveries');
-    this.input = new Input(canvas);
-    this.postfx = new PostFX(this.renderer, this.quality);
-    this.ui = new UI(this);
+    this.input = new (overrides.Input || Input)(canvas);
+    this.postfx = new (overrides.PostFX || PostFX)(this.renderer, this.quality);
+    this.ui = new (overrides.UI || UI)(this);
     if (params.get('ui') === '0') this.ui.setVisible(false);
-    this.audio = new AudioEngine(this);
+    this.audio = new (overrides.AudioEngine || AudioEngine)(this);
 
     this.level = null;
     this.levelName = null;
