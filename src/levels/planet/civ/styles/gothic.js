@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { M, W, F, G } from '../ids.js';
-import { col, glow, plinth, lampPost, roadLamps, flag, statue, TAU } from '../kit.js';
+import { col, glow, plinth, lampPost, roadLamps, flag, statue, plantTrees, TAU } from '../kit.js';
 import { rockLathe, foliageBlob } from '../landmarks.js';
 
 export function palette(A, rng) {
@@ -156,7 +156,8 @@ export function plaza(ctx, pz) {
 }
 
 export function extras(ctx) {
-  const { plan } = ctx;
+  const { plan, pal } = ctx;
+  plantTrees(ctx, ctx.settlement.level.engine.quality.pick(30, 60, 110, 150) * (ctx.main ? 1 : 0.5), ['round', 'round', 'cypress'], pal.foliage, foliageBlob);
   for (const r of plan.roads) if (r.kind === 'main') roadLamps(ctx, r, 20, 'iron');
 }
 

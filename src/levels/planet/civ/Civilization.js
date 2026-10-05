@@ -41,8 +41,7 @@ export default class Civilization {
       }
     }
     for (const s of this.settlements) {
-      if (s === main) continue;
-      try { s.makeFarLights(); this.level.scene.add(s.group); } catch (e) { console.warn('[civ] far lights', e); }
+      try { s.makeFarLOD(); if (!s.group.parent) this.level.scene.add(s.group); } catch (e) { console.warn('[civ] far LOD', s.site.name, e); }
     }
     progress?.(1);
   }
@@ -66,11 +65,11 @@ export default class Civilization {
       }
     }
     for (const s of this.settlements) {
-      if (!s.built && !s.farLights) continue;
+      if (!s.group.parent) continue;
       const camLocal = s.frame.toLocal(cam, _v);
       const d = camLocal.length();
       this._lightUniforms(s);
-      if (s.built) s.update(dt, t, camLocal, d);
+      s.update(dt, t, camLocal, d);
     }
   }
 

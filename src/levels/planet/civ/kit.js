@@ -282,3 +282,56 @@ export function roadLamps(ctx, road, every, kind, offset = 0.8) {
     s += L;
   }
 }
+
+/**
+ * Garden tree at plan point: 'round' (deciduous), 'cypress', 'maple' (layered,
+ * spreading), 'pine'. Trunk + noisy foliage lobes; cheap enough for hundreds.
+ */
+export function tree(ctx, x, z, kind, colors, scale = 1, foliageBlob) {
+  const fr = ctx.frame, rng = ctx.rng;
+  ctx.place(x, z, fr.hAt(x, z) - 0.2, rng.float() * TAU);
+  const B = ctx.B;
+  const s = scale * rng.range(0.8, 1.2);
+  const bark = col('#4a3a2c');
+  B.mat(M.WOOD, rng.float(), 0, 3).color(bark).ext(0.9, 0, F.NOWIN, 0);
+  if (kind === 'cypress') {
+    B.cylinder(0, 0, 0.18 * s, 0.12 * s, 0, 1.5 * s, { segs: 5 });
+    const h = rng.range(7, 11) * s;
+    B.mat(M.FOLIAGE, rng.float(), 0, 3).color(rng.pick(colors).clone().multiplyScalar(0.7)).ext(0.85, 0, F.NOWIN, 0);
+    B.lathe(0, 0, [[0.6 * s, 1.0 * s], [1.1 * s, h * 0.3], [0.9 * s, h * 0.65], [0.3 * s, h * 0.92], [0.02, h]], { segs: 8 });
+    ctx.collider(0, h / 2, 0, 0.6 * s, h / 2, 0.6 * s, false);
+    return;
+  }
+  const h = (kind === 'maple' ? rng.range(5, 8) : rng.range(5, 9)) * s;
+  const lean = rng.range(-0.6, 0.6) * s;
+  B.tube([new THREE.Vector3(0, 0, 0), new THREE.Vector3(lean * 0.4, h * 0.45, 0), new THREE.Vector3(lean, h * 0.75, lean * 0.3)], 0.22 * s, 5);
+  const n = kind === 'maple' ? rng.int(3, 5) : rng.int(2, 4);
+  for (let i = 0; i < n; i++) {
+    const a = rng.float() * TAU, rr = (kind === 'maple' ? rng.range(1.2, 2.6) : rng.range(0.6, 1.8)) * s;
+    const r = (kind === 'maple' ? rng.range(1.8, 2.8) : rng.range(1.8, 3.0)) * s;
+    const cy = h * (kind === 'maple' ? rng.range(0.72, 1.0) : rng.range(0.78, 1.05));
+    foliageBlob(B, lean + Math.cos(a) * rr, cy, lean * 0.3 + Math.sin(a) * rr, r, rng.pick(colors).clone().multiplyScalar(rng.range(0.85, 1.1)), Math.floor(rng.float() * 1000), 10);
+  }
+  ctx.collider(0, h * 0.4, 0, 0.35 * s, h * 0.4, 0.35 * s, false);
+}
+
+/** Plant garden trees on free ground near the roads of the inner town. */
+export function plantTrees(ctx, n, kinds, colors, foliageBlob, maxZone = 0.95) {
+  const { plan, rng } = ctx;
+  let planted = 0;
+  for (let k = 0; k < n * 8 && planted < n; k++) {
+    const road = rng.pick(plan.roads);
+    if (!road || road.pts.length < 2) continue;
+    const i = rng.int(0, road.pts.length - 2);
+    const [ax, az] = road.pts[i], [bx, bz] = road.pts[i + 1];
+    const L = Math.hypot(bx - ax, bz - az) || 1;
+    const side = rng.chance(0.5) ? 1 : -1;
+    const off = road.w / 2 + rng.range(1.5, 7);
+    const x = ax - (bz - az) / L * off * side, z = az + (bx - ax) / L * off * side;
+    if (Math.hypot(x - plan.center[0], z - plan.center[1]) > plan.builtRadius * maxZone + 40) continue;
+    if (!ctx.free(x, z, 1.4)) continue;
+    tree(ctx, x, z, rng.pick(kinds), colors, 1, foliageBlob);
+    ctx.occupy(x, z, 2.2);
+    planted++;
+  }
+}

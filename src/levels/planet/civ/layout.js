@@ -103,7 +103,7 @@ function obbOverlap(A, B) {
 // ---------------------------------------------------------------- style planning parameters
 export const PLAN_STYLE = {
   pastoral:   { net: 'organic', mains: [4, 6], meander: 0.35, slope: 0.24, lotW: [5.5, 9], lotD: [7, 10], gap: 0.15, setback: [0.2, 0.9], fill: 0.97, rows: 3, plazaR: [15, 22], wall: 0.25, fields: true, branchEvery: [20, 34], branchLen: [40, 130], roadW: { main: 5.5, street: 4, lane: 3 } },
-  temple:     { net: 'axial', mains: [3, 4], meander: 0.25, slope: 0.3, lotW: [7, 11], lotD: [7, 10], gap: 0.7, setback: [0.3, 1.4], fill: 0.92, rows: 3, plazaR: [20, 28], wall: 0.6, fields: true, branchEvery: [30, 50], branchLen: [30, 110], roadW: { main: 7, street: 4, lane: 3 } },
+  temple:     { net: 'axial', mains: [3, 4], meander: 0.25, slope: 0.3, lotW: [7, 11], lotD: [7, 10], coreScale: 1.55, gap: 0.7, setback: [0.3, 1.4], fill: 0.92, rows: 3, plazaR: [20, 28], wall: 0.6, fields: true, branchEvery: [30, 50], branchLen: [30, 110], roadW: { main: 7, street: 4, lane: 3 } },
   monolithic: { net: 'grid', mains: [4, 4], meander: 0.05, slope: 0.12, lotW: [9, 26], lotD: [9, 24], gap: 2.0, setback: [0.5, 3], fill: 0.85, rows: 2, plazaR: [30, 40], wall: 1, fields: false, gridStep: [44, 64], roadW: { main: 14, street: 7, lane: 4 } },
   organic:    { net: 'radial', mains: [5, 7], meander: 0.5, slope: 0.3, lotW: [8, 14], lotD: [8, 14], gap: 2.2, setback: [1, 3], fill: 0.75, rows: 2, plazaR: [22, 30], wall: 0, fields: false, branchEvery: [30, 46], branchLen: [30, 90], roadW: { main: 5, street: 3.5, lane: 2.5 } },
   outpost:    { net: 'grid', mains: [2, 2], meander: 0.02, slope: 0.12, lotW: [8, 16], lotD: [8, 14], gap: 3, setback: [1.5, 4], fill: 0.7, rows: 1, plazaR: [18, 24], wall: 0, fields: false, gridStep: [40, 56], roadW: { main: 10, street: 6, lane: 4 } },
@@ -343,7 +343,7 @@ export function planSettlement(frame, style, kind, seed, opts = {}) {
         const dist = Math.hypot(px - cx, pz - cz) / radius;
         const dens = 1 - dist * dist * 0.85;
         let w = rng.range(...P.lotW), d = rng.range(...P.lotD);
-        if (dist < 0.3) { w *= 1.1; d *= 1.1; }
+        if (dist < 0.3) { const k = P.coreScale ?? 1.1; w *= k; d *= k; }
         for (const side of [-1, 1]) {
           if (P.net === 'grid' && road.kind !== 'avenue') continue;
           if (!rng.chance(P.fill * dens)) continue;

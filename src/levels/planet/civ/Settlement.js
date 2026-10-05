@@ -19,8 +19,22 @@ import { pads as spaceportPads } from './styles/outpost.js';
 import { People } from './people.js';
 import { Traffic } from './traffic.js';
 import { inscription } from './lore.js';
+import { plantTrees } from './trees.js';
 
 const TILE = 128;
+// far-LOD silhouette heights per style (m) and which styles get pitched roofs
+const SIL_H = { pastoral: [6, 10], temple: [5, 8], monolithic: [8, 34], organic: [7, 14], outpost: [3.5, 7], gothic: [8, 13], neon: [14, 70], ruins: [2, 8] };
+const PITCHED = new Set(['pastoral', 'temple', 'gothic']);
+function prismGeometry() {
+  const P = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5, -0.5, 1, 0, 0.5, 1, 0];
+  const I = [3, 2, 5, 3, 5, 4, 1, 0, 4, 1, 4, 5, 2, 1, 5, 0, 3, 4];
+  const pos = [];
+  for (const i of I) pos.push(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
 const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
 
 export class Settlement {
@@ -77,6 +91,12 @@ export class Settlement {
       },
       inv() { return ctx.M.clone().invert(); },
       collider(cx, cy, cz, hx, hy, hz, walkable = true) {
+        // on sloped lots extend the box down to the lowest ground under the plinth
+        const lot = ctx.lot;
+        if (lot && lot.low != null) {
+          const bottom = (lot.low - lot.base) - 0.4;
+          if (cy - hy > bottom) { const top = cy + hy; hy = (top - bottom) / 2; cy = (top + bottom) / 2; }
+        }
         const c = _v.set(cx, cy, cz).applyMatrix4(ctx.M).applyMatrix4(frame.matrix).clone();
         _m.multiplyMatrices(frame.matrix, ctx.M); _m.decompose(_s, _q, _s);
         self.colliders.push({ type: 'box', center: c, quaternion: _q.clone(), half: new THREE.Vector3(hx, hy, hz), walkable });
@@ -115,19 +135,26 @@ export class Settlement {
     return ctx;
   }
 
+  /** Plan only (cheap, ~50–100 ms): context, palette, reserved zones, street plan. Idempotent. */
+  prepare() {
+    if (this.plan) return;
+    const S = this.style;
+    const ctx = this._makeCtx();
+    this.ctx = ctx;
+    ctx.pal = S.palette(this.level.aesthetic, ctx.rng);
+    const radius = KIND_RADIUS[this.kind] ?? 220;
+    const reserve = S.reserve ? S.reserve(ctx, radius) : [];
+    const plan = planSettlement(this.frame, this.styleKey, this.kind, this.seed, { main: this.main, radius, reserve });
+    ctx.plan = plan;
+    this.plan = plan;
+  }
+
   /** Time-sliced build. Yields periodically; run to completion with buildNow(). */
   *build() {
     const t0 = performance.now();
     const S = this.style, frame = this.frame;
-    const ctx = this._makeCtx();
-    this.ctx = ctx;
-    const rng = ctx.rng;
-    ctx.pal = S.palette(this.level.aesthetic, rng);
-    const radius = KIND_RADIUS[this.kind] ?? 220;
-    const reserve = S.reserve ? S.reserve(ctx, radius) : [];
-    const plan = planSettlement(frame, this.styleKey, this.kind, this.seed, { main: this.main, radius, reserve });
-    ctx.plan = plan;
-    this.plan = plan;
+    this.prepare();
+    const ctx = this.ctx, rng = ctx.rng, plan = this.plan;
     yield;
     // materials
     const engine = this.level.engine;
@@ -139,13 +166,17 @@ export class Settlement {
     let k = 0;
     for (const lot of plan.lots) {
       ctx.select(lot.x, lot.z);
+      ctx.lot = lot;
       S.building(ctx, lot);
+      ctx.lot = null;
       if (++k % 24 === 0) yield;
     }
     for (const pz of plan.plazas) { S.plaza(ctx, pz); }
     yield;
     S.extras?.(ctx);
     if (this.kind === 'spaceport' && this.styleKey !== 'outpost') spaceportPads(ctx, this.main ? 6 : 4);
+    yield;
+    this.trees = plantTrees(this, ctx);
     yield;
     if (this.main) S.landmark?.(ctx);
     yield;
@@ -157,7 +188,8 @@ export class Settlement {
       if (B.n === 0) continue;
       const mesh = new THREE.Mesh(B.toGeometry(), this.material);
       mesh.name = `civ-tile:${key}`;
-      mesh.castShadow = true; mesh.receiveShadow = true;
+      // city-scale sun shadows come from CityShadow; casting into the engine cascades only near the player
+      mesh.castShadow = false; mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.group.add(mesh); this.meshes.push(mesh);
       this.archMeshes = this.archMeshes || [];
@@ -227,6 +259,7 @@ export class Settlement {
     this.shadow = new CityShadow(engine.renderer, sm, this.uniforms);
     this.shadow.setBounds(new THREE.Vector3(c[0], frame.hAt(c[0], c[1]) - frame.h0, c[1]), plan.builtRadius + 60);
     for (const m of this.archMeshes || []) this.shadow.addCaster(m);
+    for (const m of this.trees?.meshes || []) this.shadow.addCaster(m);
 
     // life
     if (this.style.people !== false) {
@@ -239,35 +272,80 @@ export class Settlement {
     // colliders & POIs
     for (const col of this.colliders) this.world.addCollider(col);
     this._makePOIs(ctx);
-    if (this.farLights) this.farLights.visible = false;
     this.built = true;
+    this.lod = null;
     this.buildMs = performance.now() - t0;
     ctx.glows = null; ctx.lamps = null;
   }
 
   /**
-   * Far LOD: a cloud of warm lights on dry ground for a settlement that has
-   * not been built yet (seen at night from orbit or on approach).
+   * Far LOD (also stands in for settlements not built yet): one instanced box
+   * per lot (+ gable prisms for pitched-roof styles) and a warm light per lot
+   * for the night side. Cheap: two draw calls, a few hundred instances.
    */
-  makeFarLights() {
-    const f = this.frame, rng = new Random(seedFrom(this.seed, 'far'));
-    const R = (KIND_RADIUS[this.kind] ?? 220) * 0.85;
-    const n = { megacity: 900, city: 600, town: 320, village: 140, outpost: 90, spaceport: 260, ruins: 0 }[this.kind] ?? 120;
-    if (!n) return;
+  makeFarLOD() {
+    if (this.farGroup) return;
+    this.prepare();
+    const f = this.frame, plan = this.plan, pal = this.ctx.pal;
+    const rng = new Random(seedFrom(this.seed, 'far'));
+    const lots = plan.lots;
+    const g = new THREE.Group();
+    g.matrixAutoUpdate = false;
+    g.name = 'civ-far';
+    this.farGroup = g;
+    this.group.add(g);
+    if (!lots.length) return;
+    const H = SIL_H[this.styleKey] || [6, 10];
+    const walls = pal.walls || pal.concrete || pal.towers || pal.panels || pal.shells || pal.stones || [new THREE.Color('#bbbbbb')];
+    const roofs = PITCHED.has(this.styleKey) ? pal.roofs : null;
+    const box = new THREE.BoxGeometry(1, 1, 1); box.translate(0, 0.5, 0);
+    this.farMat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
+    const bm = new THREE.InstancedMesh(box, this.farMat, lots.length);
+    const rm = roofs ? new THREE.InstancedMesh(prismGeometry(), this.farMat, lots.length) : null;
+    const M4 = new THREE.Matrix4(), S4 = new THREE.Matrix4(), c = new THREE.Color();
     const lamp = new THREE.Color(this.level.aesthetic?.palette?.lights || '#ffcf87');
     const items = [];
-    for (let i = 0; i < n * 3 && items.length < n; i++) {
-      const a = rng.range(0, Math.PI * 2), r = Math.pow(rng.float(), 0.7) * R;
-      const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      if (f.wet(x, z)) continue;
-      items.push({ position: f.point(x, z, f.hAt(x, z) + rng.range(2, 9)), color: lamp.clone().multiplyScalar(rng.range(0.6, 1.2)), scale: rng.range(1.2, 2.4), phase: rng.float() });
+    for (let i = 0; i < lots.length; i++) {
+      const l = lots[i];
+      const core = 1 - Math.min(1, l.zone ?? 0.5);
+      const h = rng.range(H[0], H[1]) * (0.7 + 0.6 * core);
+      const drop = (l.base - (l.low ?? l.base)) + 0.5;
+      f.placement(l.x, l.z, l.base - drop, l.yaw, M4);
+      M4.multiply(S4.makeScale(l.w * 0.85, h + drop, l.d * 0.85));
+      bm.setMatrixAt(i, M4);
+      bm.setColorAt(i, c.copy(walls[i % walls.length]).multiplyScalar(0.9));
+      if (rm) {
+        f.placement(l.x, l.z, l.base + h, l.yaw, M4);
+        M4.multiply(S4.makeScale(l.w * 0.95, Math.min(l.w, l.d) * 0.45, l.d * 0.95));
+        rm.setMatrixAt(i, M4);
+        rm.setColorAt(i, c.copy(roofs[i % roofs.length]));
+      }
+      if (rng.chance(0.75)) items.push({ position: f.point(l.x + rng.range(-2, 2), l.z + rng.range(-2, 2), l.base + rng.range(2, Math.max(2.5, h * 0.8))), color: lamp.clone().multiplyScalar(rng.range(0.6, 1.2)), scale: rng.range(1.2, 2.2), phase: rng.float() });
     }
-    if (!items.length) return;
-    this.farMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.2, gain: 5 });
-    this.farLights = makeGlowMesh(this.farMat, items);
-    this.farLights.matrixAutoUpdate = false;
-    this.farLights.frustumCulled = false;
-    this.group.add(this.farLights);
+    for (const m of [bm, rm]) {
+      if (!m) continue;
+      m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.matrixAutoUpdate = false; m.receiveShadow = false; m.castShadow = false;
+      m.computeBoundingSphere();
+      g.add(m);
+    }
+    if (items.length) {
+      this.farGlowMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.2, gain: 5 });
+      const gl = makeGlowMesh(this.farGlowMat, items);
+      gl.matrixAutoUpdate = false; gl.frustumCulled = false;
+      g.add(gl);
+    }
+  }
+
+  /** 'detail' | 'far' | 'none' */
+  setLOD(lod) {
+    if (this.lod === lod) return;
+    this.lod = lod;
+    const detail = lod === 'detail' && this.built;
+    for (const m of this.meshes) m.visible = detail;
+    if (this.people?.mesh) this.people.mesh.visible = detail;
+    for (const m of this.traffic?.meshes || []) m.visible = detail;
+    if (this.farGroup) this.farGroup.visible = lod === 'far' || (lod === 'detail' && !this.built);
   }
 
   buildNow() { const g = this.build(); while (!g.next().done) { /* run */ } }
@@ -293,16 +371,13 @@ export class Settlement {
     }
   }
 
-  /** Per-frame update: shadows, uniforms, animation, life. */
+  /** Per-frame update: LOD, shadows, animation, life. */
   update(dt, t, camLocal, camDist) {
-    if (!this.built) return;
+    const detailR = this.main ? 14000 : 6000;
+    const lod = camDist < detailR ? 'detail' : camDist < 90000 ? 'far' : 'none';
+    this.setLOD(lod);
+    if (!this.built || lod !== 'detail') return;
     const sunL = this.frame.sunLocal(this.world.sunDir, this.uniforms.uCivSunL.value);
-    const near = camDist < Math.max(9000, this.plan.radius * 20);
-    if (near !== this.visible) {
-      this.visible = near;
-      for (const m of this.meshes) if (m !== this.glowMesh && m !== this.beaconMesh) m.visible = near;
-    }
-    if (!near) return;
     this.shadow.update(sunL, this.level.engine.shotMode && !this._shotShadowDone);
     if (this.level.engine.shotMode) this._shotShadowDone = true;
     for (const fn of this.anim) fn(t, dt);
@@ -317,7 +392,9 @@ export class Settlement {
     this.group.parent?.remove(this.group);
     for (const m of this.meshes) m.geometry?.dispose();
     this.material?.dispose(); this.dynMaterial?.dispose(); this.groundMaterial?.dispose();
-    this.catcherMat?.dispose(); this.glowMat?.dispose(); this.beaconMat?.dispose(); this.farMat?.dispose(); this.farLights?.geometry.dispose();
+    this.catcherMat?.dispose(); this.glowMat?.dispose(); this.beaconMat?.dispose(); this.farMat?.dispose(); this.farGlowMat?.dispose();
+    this.farGroup?.traverse((o) => o.geometry?.dispose());
+    this.trees?.dispose();
     this.shadow?.dispose();
     this.people?.dispose(); this.traffic?.dispose();
   }

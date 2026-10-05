@@ -5,8 +5,8 @@
 
 import * as THREE from 'three';
 import { M, W, F, G } from '../ids.js';
-import { col, glow, plinth, lampPost, stall, fountain, statue, flag, bunting, crates, lowWall, roadLamps, paperLantern, TAU } from '../kit.js';
-import { floatingIsland } from '../landmarks.js';
+import { col, glow, plinth, lampPost, stall, fountain, statue, flag, bunting, crates, lowWall, roadLamps, paperLantern, plantTrees, TAU } from '../kit.js';
+import { floatingIsland, foliageBlob } from '../landmarks.js';
 
 export function palette(A, rng) {
   const P = A?.palette || {};
@@ -246,6 +246,9 @@ export function extras(ctx) {
   }
   // docks
   for (const dk of plan.docks) dock(ctx, dk);
+  // gardens: round orchard trees and dark cypresses between the houses
+  const q = ctx.settlement.level.engine.quality;
+  plantTrees(ctx, q.pick(40, 80, 140, 180) * (ctx.main ? 1 : 0.5), ['round', 'round', 'round', 'cypress'], [col('#4e8a3a'), col('#5f9a44'), col('#3f7a34'), col('#7aa84a')], foliageBlob);
 }
 
 function bellTower(ctx, x, z, yaw) {

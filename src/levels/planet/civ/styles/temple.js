@@ -6,8 +6,8 @@
 
 import * as THREE from 'three';
 import { M, W, F, G } from '../ids.js';
-import { col, glow, plinth, lampPost, flag, paperLantern, stall, roadLamps, lowWall, stair, TAU } from '../kit.js';
-import { colossus } from '../landmarks.js';
+import { col, glow, plinth, lampPost, flag, paperLantern, stall, roadLamps, lowWall, stair, plantTrees, TAU } from '../kit.js';
+import { colossus, foliageBlob } from '../landmarks.js';
 import { boat } from './pastoral.js';
 
 export function palette(A, rng) {
@@ -87,7 +87,7 @@ function hall(ctx, w, d, lot, o = {}) {
   const roofC = o.roofColor || rng.pick(pal.roofs);
   const rx = w / 2 + colsR + 0.2, rz = d / 2 + colsR + 0.2;
   let top;
-  const roofOpt = { over: o.over ?? 1.5, curve: 1.8, flare: o.flare ?? 1.1, segS: 10, segR: 6, thick: 0.3, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: o.lacquer ? pal.lacquer2 : pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8) };
+  const roofOpt = { over: o.over ?? 1.5, curve: 1.8, flare: o.flare ?? 1.1, segS: 8, segR: 5, thick: 0.3, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: o.lacquer ? pal.lacquer2 : pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8) };
   if (o.double) {
     // lower eave skirt, clerestory, upper roof
     B.curvedRoof(-rx, -rz, rx, rz, yE + 0.45, Math.min(rx, rz) * 0.35, { ...roofOpt, ridge: false, hipK: 0.55 });
@@ -113,9 +113,57 @@ export function building(ctx, lot) {
   const core = lot.zone < 0.35;
   const w = Math.max(6, lot.w * rng.range(0.8, 0.92) - 1.6), d = Math.max(5, lot.d * rng.range(0.78, 0.9) - 1.6);
   let r;
+  const big = lot.w * lot.d > 130;
+  if (big && (core || lot.plaza) && rng.chance(0.7)) return compound(ctx, lot);
   if (lot.plaza) r = hall(ctx, w, d, lot, { big: true, peristyle: rng.chance(0.6), double: rng.chance(0.4), lacquer: true, terrace: 1.2 });
   else if (core && rng.chance(0.25)) r = hall(ctx, w, d, lot, { big: true, peristyle: rng.chance(0.5), double: rng.chance(0.3), lacquer: rng.chance(0.6), terrace: 0.9 });
   else r = huiHouse(ctx, w, d, lot, core);
+  ctx.collider(0, r.H / 2, 0, w / 2 + 0.8, r.H / 2 + 0.5, d / 2 + 0.8, false);
+  ctx.footprints.push({ lot, h: r.top });
+}
+
+/** Walled temple compound: white wall with tile coping, roofed gate, hall inside. */
+function compound(ctx, lot) {
+  const { rng, pal } = ctx, B = ctx.B;
+  const W = lot.w * 0.97, D = lot.d * 0.97, H = 2.7, T = 0.5;
+  plinth(ctx, W, D, lot, 0.35, M.STONE, pal.stone, 0.05);
+  const wall = pal.walls[0];
+  const roofC = pal.roofs[0];
+  const gw = 3.2;
+  const seg = (x0, z0, x1, z1) => {
+    const L = Math.hypot(x1 - x0, z1 - z0); if (L < 0.3) return;
+    B.mat(M.PLASTER, rng.float(), 0, 3).color(wall).ext(1, 0, F.NOWIN, 0);
+    B.slab(x0, z0, x1, z1, T, 0.35, H, { base: 0.35 });
+    // grey brick base course and dark tile coping with a little ridge
+    B.mat(M.BRICK, rng.float(), 0, 3).color(col('#6e6a64'));
+    B.slab(x0, z0, x1, z1, T + 0.06, 0.35, 0.9, { base: 0.35, top: false });
+    B.mat(M.TEMPLE_TILE, rng.float(), 0, 3).color(roofC);
+    B.slab(x0, z0, x1, z1, T + 0.5, H, H + 0.22, { base: H });
+    B.slab(x0, z0, x1, z1, 0.22, H + 0.22, H + 0.48, { base: H });
+  };
+  const hw = W / 2, hd = D / 2;
+  seg(-hw, -hd, hw, -hd); seg(hw, -hd, hw, hd); seg(-hw, -hd, -hw, hd);
+  seg(-hw, hd, -gw / 2, hd); seg(gw / 2, hd, hw, hd);
+  // gatehouse: two lacquer posts, a curved roof, lanterns
+  B.mat(M.LACQUER, 0.4, 0, 3).color(pal.lacquer).ext(1, 0, F.NOWIN, 0);
+  for (const sx of [-1, 1]) B.cylinder(sx * (gw / 2 + 0.1), hd, 0.2, 0.18, 0.35, 3.6, { segs: 8 });
+  B.mat(M.LACQUER, 0.5, 0, 3).color(col('#2c5a5a'));
+  B.box(-gw / 2 - 0.4, 3.3, hd - 0.25, gw / 2 + 0.4, 3.75, hd + 0.25);
+  B.curvedRoof(-gw / 2 - 0.3, hd - 0.9, gw / 2 + 0.3, hd + 0.9, 3.75, 1.0, { over: 0.8, curve: 1.6, flare: 0.6, segS: 8, segR: 4, thick: 0.18, roofMat: [M.TEMPLE_TILE, 0.4, 0, 3], roofColor: roofC, trimMat: [M.LACQUER, 0.3, 0, 3], trimColor: pal.lacquer2, ridgeW: 0.3, ridgeH: 0.4 });
+  for (const sx of [-1, 1]) paperLantern(ctx, sx * (gw / 2 + 0.2), 2.6, hd + 0.75, pal.lantern, 0.3);
+  // the hall within, raised on its own terrace
+  const w = Math.max(6, W - 5), d = Math.max(5, D - 6.5);
+  const r = hall(ctx, w, d, lot, { big: true, peristyle: rng.chance(0.5), double: rng.chance(0.45), lacquer: true, terrace: 1.3, lanterns: true });
+  // courtyard incense burner
+  B.mat(M.BRONZE, 0.5, 0, 3).color(col('#4a3a24')).ext(1, 0, F.NOWIN, 0);
+  B.lathe(0, hd - 2.2, [[0.3, 0.35], [0.6, 0.6], [0.7, 1.2], [0.5, 1.4], [0.6, 1.5], [0.1, 1.55]], { segs: 10 });
+  glow(ctx, 0, 1.4, hd - 2.2, col('#ff8a3a'), 0.4, rng.float());
+  for (const [x0, z0, x1, z1] of [[-hw, -hd, hw, -hd], [hw, -hd, hw, hd], [-hw, -hd, -hw, hd]]) {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    ctx.collider(cx, H / 2, cz, Math.max(Math.abs(x1 - x0) / 2, T / 2), H / 2 + 0.3, Math.max(Math.abs(z1 - z0) / 2, T / 2), false);
+  }
+  ctx.collider(-(hw + gw / 2) / 2, H / 2, hd, (hw - gw / 2) / 2, H / 2 + 0.3, T / 2, false);
+  ctx.collider((hw + gw / 2) / 2, H / 2, hd, (hw - gw / 2) / 2, H / 2 + 0.3, T / 2, false);
   ctx.collider(0, r.H / 2, 0, w / 2 + 0.8, r.H / 2 + 0.5, d / 2 + 0.8, false);
   ctx.footprints.push({ lot, h: r.top });
 }
@@ -138,7 +186,7 @@ function huiHouse(ctx, w, d, lot, core) {
   const yE = y0 + H;
   const rise = d * 0.28;
   // dual-pitch curved roof (hip with long ridge), modest flare
-  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 0.8, curve: 1.6, flare: 0.35, sweep: 0.2, segS: 8, segR: 5, thick: 0.2, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8), ridgeW: 0.32, ridgeH: 0.4, hipK: 0.25, ornaments: false });
+  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 0.8, curve: 1.6, flare: 0.35, sweep: 0.2, segS: 6, segR: 3, thick: 0.2, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8), ridgeW: 0.32, ridgeH: 0.4, hipK: 0.25, ornaments: false });
   // stepped horse-head firewalls on both gable ends
   if (rng.chance(core ? 0.75 : 0.45)) {
     for (const sx of [-1, 1]) {
@@ -279,6 +327,8 @@ export function plaza(ctx, pz) {
 
 export function extras(ctx) {
   const { plan, rng, pal } = ctx;
+  const q = ctx.settlement.level.engine.quality;
+  plantTrees(ctx, q.pick(40, 80, 150, 200) * (ctx.main ? 1 : 0.5), ['maple', 'maple', 'maple', 'round'], [col('#b8322a'), col('#c8442a'), col('#d8642a'), col('#a82a22'), col('#e8a83a'), col('#3f5a34')], foliageBlob);
   for (const r of plan.roads) if (r.kind === 'avenue' || r.kind === 'main') roadLamps(ctx, r, 16, 'paper', 1.0);
   // gates where main roads leave the plaza and at the edge of town
   for (const r of plan.mains || []) {

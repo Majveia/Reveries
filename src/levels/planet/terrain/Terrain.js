@@ -304,6 +304,9 @@ export default class Terrain {
     this.Ro = this.R + Math.min(0, this.hMinSeen ?? this.hMin);
     this.camDist = d;
     this.horizon = d > this.Ro ? Math.sqrt(d * d - this.Ro * this.Ro) : 0;
+    // a camera deep inside the planet (not yet placed by a rig) must not refine
+    // the whole sphere down to centimetres
+    this.viewValid = Number.isFinite(d) && d > this.R + this.hMin * 1.5;
   }
 
   _visibleHorizon(n) {
@@ -315,17 +318,19 @@ export default class Terrain {
   }
 
   _wantsSplit(n) {
-    if (n.level >= this.maxLevel) return false;
+    if (n.level >= this.maxLevel || !this.viewValid) return false;
     let d = Math.max(0, n.center.distanceTo(this.camPos) - n.radius);
     _sphere.center.copy(n.center); _sphere.radius = n.radius * 1.15;
     if (!_frustum.intersectsSphere(_sphere)) d = d * 12 + n.radius * 2; // off-screen: much coarser
     // projected vertex spacing in pixels
     const px = (n.spacing * this.pxPerRad) / Math.max(d, 1e-3);
-    return px > this.pixelError;
+    if (px <= this.pixelError) return false;
+    return this._splitBudget-- > 0;
   }
 
   _select() {
     this.frame++;
+    this._splitBudget = this.engine.shotMode ? 400 : 220; // hard cap on refinement work per selection
     const want = [];
     const draw = this._draw || (this._draw = []);
     draw.length = 0;

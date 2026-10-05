@@ -129,7 +129,9 @@ export function extras(ctx) {
     if (!ctx.free(x, z, Math.max(w, d) * 0.6)) continue;
     const lot = { x, z, w, d, yaw, base: fp.max, low: fp.min, zone: r / plan.radius };
     ctx.select(x, z);
+    ctx.lot = lot;
     building(ctx, lot);
+    ctx.lot = null;
     ctx.occupy(x, z, Math.max(w, d) * 0.6);
     placed++;
   }
