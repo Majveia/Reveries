@@ -411,6 +411,15 @@ export default class CosmosLevel {
     return {
       hero: async () => { this.mode = 'live'; this._pose(this.home, this._heroOffset(), 50); },
       early: async () => { this.mode = 'early'; this._pose(this.home, this._heroOffset(250, HERO.yaw + 0.4, 0.3), 50); },
+      // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
+      bang: async () => {
+        const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;
+        this.mode = 'live';
+        this.sim.restartSync();
+        if (a > A_START) await this.sim.runTo(a);
+        this.aTarget = this.sim.a;
+        this._pose(this.home, this._heroOffset(d, HERO.yaw + 0.5, 0.3), 50);
+      },
       node: async () => { this.mode = 'live'; this._pose(this.home, this._heroOffset(24, HERO.yaw + 2.2, 0.22), 55); },
       web: async () => {
         this.mode = 'live';

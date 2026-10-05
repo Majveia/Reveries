@@ -140,7 +140,7 @@ export function catcherGeometry(frame, cx, cz, R, lots, step = 3) {
     const k = j * N + i;
     const x = cx - R + i * step, z = cz - R + j * step;
     xs[k] = x; zs[k] = z;
-    frame.point(x, z, frame.hAt(x, z) + 0.05, _p);
+    frame.point(x, z, frame.hAt(x, z) + 0.25, _p);
     pos[k * 3] = _p.x; pos[k * 3 + 1] = _p.y; pos[k * 3 + 2] = _p.z;
     groundNormal(frame, x, z, _u);
     nor[k * 3] = _u.x; nor[k * 3 + 1] = _u.y; nor[k * 3 + 2] = _u.z;

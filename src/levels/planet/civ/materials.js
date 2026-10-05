@@ -989,7 +989,7 @@ export function makeCatcherMaterial(uniforms) {
         vLoc = position; vLocN = normal; vAO = aAO;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         vDist = length(mv.xyz);
-        mv.xyz *= 1.0 - 0.0035;
+        mv.xyz *= 1.0 - 0.0016;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */`

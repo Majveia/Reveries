@@ -29,6 +29,7 @@ export function roadMat(road, zone) {
 }
 export const plazaMat = (pz) => (pz.kind === 'main' ? G.FLAG : G.COBBLE);
 export const lampKind = 'iron';
+export const shotSun = 0.14;
 
 /** One house / tower / hall on a lot. */
 export function building(ctx, lot) {

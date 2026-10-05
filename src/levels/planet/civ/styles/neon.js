@@ -23,7 +23,7 @@ export function palette(A, rng) {
 
 export function roadMat(road) { return road.kind === 'avenue' ? G.DECK : G.FLAG; }
 export const plazaMat = () => G.FLAG;
-export const shotSun = -0.02;
+export const shotSun = 0.03;
 export const shot = { dist: 0.74, height: 48, sunAngle: 2.4, lmLift: 0.2 };
 
 function sign(ctx, x, y, z, w, h, c) {

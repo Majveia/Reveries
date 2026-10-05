@@ -246,7 +246,7 @@ void main(){
     rho += w3.x * w3.y * w3.z * texelFetch(tForce, c2t(wrapc(d0 + ivec3(dx, dy, dz))), 0).w;
   }
   rho = max(1.0 + rho, 0.02);
-  float rhoH = max(rho, min(rhoSheet, 25.0) * min(1.0, rho * 1.5));
+  float rhoH = max(rho, min(rhoSheet, 8.0) * min(1.0, rho * 1.5));
   // heat: 0 voids … 0.2 sheets … 0.45 filaments … 0.7 groups … 1 cluster cores.
   // uContrast = D(a)^-0.6 keeps the young, low-contrast web legible.
   float heat = 0.2 + 0.31 * uContrast * log(rhoH) / log(10.0) + 0.022 * sigma;
@@ -549,6 +549,12 @@ export class PMSolver {
     } finally { r.autoClear = ac; r.setRenderTarget(null); }
   }
   _indexOf(a) { const i = this.schedule.findIndex((x) => x >= a - 1e-9); return i < 0 ? this.schedule.length - 1 : i; }
+
+  /** Synchronous restart (look-dev / shots). */
+  restartSync() {
+    const r = this.renderer, ac = r.autoClear; r.autoClear = false;
+    try { this.job = null; this._restarting = false; this._drain(this._startGen()); } finally { r.autoClear = ac; r.setRenderTarget(null); }
+  }
 
   /** Restart from a = 0.02 (asynchronously pumped). */
   restart() { this.job = this._startGen(); this._restarting = true; }

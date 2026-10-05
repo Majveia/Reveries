@@ -30,7 +30,7 @@ export function roadMat(road, zone) {
   return zone < 0.5 ? G.FLAG : G.DIRT;
 }
 export const plazaMat = () => G.SANDSTONE;
-export const shotSun = 0.06;
+export const shotSun = 0.13;
 export const shot = { dist: 1.0, height: 45, sunAngle: 1.75, lmLift: 0.25, fov: 52 };
 
 function slab(ctx, lot, w, d, H) {

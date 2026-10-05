@@ -78,9 +78,10 @@ export default class Civilization {
     const sunL = s.frame.sunLocal(this.level.world.sunDir, u.uCivSunL.value);
     const y = sunL.y;
     const ss = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
-    u.uCivNight.value = 1 - ss(-0.1, 0.1, y);
+    // lanterns start glowing in the golden hour, windows light up progressively toward night
+    u.uCivNight.value = 1 - ss(-0.08, 0.3, y);
     u.uCivDay.value = ss(-0.1, 0.25, y);
-    u.uCivLitP.value = 0.06 + 0.66 * ss(0.12, -0.1, y);
+    u.uCivLitP.value = 0.05 + 0.7 * ss(0.32, -0.06, y);
     // sky colour for glass reflections follows the light
     const P = this.level.aesthetic?.palette || {};
     const day = u.uCivDay.value;
@@ -117,7 +118,7 @@ export default class Civilization {
 
   _shotCity(s, o = {}) {
     const w = this.level.world, f = s.frame, plan = s.plan;
-    this._timeFor(s, o.night ? -0.2 : (s.style.shotSun ?? 0.045));
+    this._timeFor(s, o.night ? -0.2 : (s.style.shotSun ?? 0.14));
     const sunL = f.sunLocal(w.sunDir, new THREE.Vector3());
     const sunA = Math.atan2(sunL.z, sunL.x);
     const c = plan.center;

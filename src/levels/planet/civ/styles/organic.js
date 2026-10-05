@@ -28,7 +28,7 @@ export function palette(A, rng) {
 
 export function roadMat(road) { return road.kind === 'main' ? G.FLAG : G.DIRT; }
 export const plazaMat = () => G.TERRACE;
-export const shotSun = 0.04;
+export const shotSun = 0.11;
 export const shot = { dist: 1.0, height: 38, sunAngle: 1.8, lmLift: 0.35 };
 
 function pod(ctx, x, y, z, r, h, color, seed, kind = 0) {

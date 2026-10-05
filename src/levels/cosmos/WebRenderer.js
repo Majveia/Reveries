@@ -63,13 +63,13 @@ void main(){
   float spacing = (uL / float(MT)) * clamp(pow(rhoEff, -0.333), 0.05, 1.8) * uScale;
   float sharp = (uL / float(MT)) * uSizeK * 0.09 * uScale;
   float px = max(sharp, spacing * uOverlap) * uProj / dist;
-  float pxc = clamp(px, 1.0, 64.0);
+  float pxc = clamp(px, 1.0, 40.0);
   gl_PointSize = pxc;
   // emission ∝ mass · ρ^γ ; per-pixel value is column density (Mpc of mean matter)
   float emis = uVol * pow(10.0, uGamma * (heat - 0.2) / 0.31);
   float pxWorld = dist / uProj;
   float norm = max(1.0, 0.262 * pxc * pxc);
-  float near = smoothstep(1.0, 5.0, dist);
+  float near = smoothstep(3.0, 14.0, dist);
   float val = fade * near * emis / (pxWorld * pxWorld * norm) / (uScale * uScale) * 1e-3; // ×1e-3 keeps half-float sums finite
   val = min(val, 30.0);
   // depth cue: distant structure cools and dims slightly (atmospheric perspective of the web)
