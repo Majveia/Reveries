@@ -431,6 +431,19 @@ export default class Vehicles {
     return t.normalize();
   }
 
+  /** Called by PlanetLevel before every screenshot preset: drop all shot state. */
+  shotReset() {
+    this.shotCam = null; this.autopilot = null; this.shotDrive = null;
+    this.forceVortex = 0; this.forceContrail = 0;
+    for (const v of this.list) v._holdForShot = false;
+    const pl = this.level.player;
+    if (pl?.vehicle) { try { pl.alight(); } catch (e) { console.warn(e); } }
+    const fc = this.level.freeCam;
+    if (fc && (fc._vehicles || fc._shot)) this.level.freeCam = null;
+    this.level.maxNear = 0;
+    this.engine.ui.telemetry?.(null);
+  }
+
   async shot(name, spot) {
     if (!['bike', 'ship', 'orbit'].includes(name)) return false;
     const level = this.level, w = this.world;

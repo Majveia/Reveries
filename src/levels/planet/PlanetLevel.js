@@ -252,7 +252,7 @@ export default class PlanetLevel {
       return false;
     };
     const free = (pos, target) => { this.freeCam = { position: pos.clone(), target: target.clone() }; };
-    return {
+    const presets = {
       orbit: async () => {
         const dir = (w.sites[0]?.dir || new THREE.Vector3(0.3, 0.5, 0.8)).clone();
         w.setTimeOfDay(0.62, dir);
@@ -314,6 +314,18 @@ export default class PlanetLevel {
         if (!(await delegate('ship', spot))) free(spot.position, spot.lookAt);
       },
     };
+    // Every preset starts from a clean slate: subsystems drop any camera /
+    // vehicle / pose state a previous preset left behind (shotReset), so one
+    // shot can never leak its camera into the next.
+    for (const k of Object.keys(presets)) {
+      const fn = presets[k];
+      presets[k] = async () => {
+        for (const s of this.subsystems) { try { s.shotReset?.(); } catch (e) { console.warn(e); } }
+        this.freeCam = null; this.maxNear = 0;
+        return fn();
+      };
+    }
+    return presets;
   }
 }
 
