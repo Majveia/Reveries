@@ -47,8 +47,9 @@ const RIM_GLSL = /* glsl */`
     float nv = saturate(dot(normal, V));
     float fres = pow(1.0 - nv, 3.5);
     // stronger when the sun is behind the character (back/edge light)
-    float back = 0.35 + 0.65 * saturate(dot(uSunView, -V) * 0.5 + 0.5);
-    outgoingLight += uRim * fres * back * mix(0.4, 1.0, rvAO);
+    float back = 0.2 + 0.8 * pow(saturate(dot(uSunView, -V) * 0.5 + 0.5), 1.5);
+    // albedo-tinted: cloth keeps its colour at grazing angles, dark fabric doesn't halo
+    outgoingLight += uRim * fres * back * mix(0.4, 1.0, rvAO) * (0.3 + 1.2 * diffuseColor.rgb);
     // character-only kicker (cinematic edge light from behind-side, like a film set)
     float kd = saturate(dot(normal, uKickDir));
     float edge = smoothstep(0.05, 0.75, 1.0 - nv);

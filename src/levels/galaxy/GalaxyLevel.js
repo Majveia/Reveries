@@ -70,12 +70,20 @@ export default class GalaxyLevel {
     progress?.(0.9, 'bending light');
     this.blackHole = new BlackHole(E, g);
     this.blackHole.setNoise(this.noise3D);
-    if (this.nebulaList.length) this.stars.addPoints(this.nebulae.clusterGeo, 0.02);
+    // nebula clusters render AFTER the nebula volumes (they sit in the cleared cavities)
+    this.overlay2 = new THREE.Scene();
+    if (this.nebulaList.length) {
+      this.nebStars = this.stars.addPoints(this.nebulae.clusterGeo, 0.0022);
+      this.stars.group.remove(this.nebStars);
+      this.overlay2.add(this.nebStars);
+    }
+    this.overlayPass2 = new OverlayPass(this.overlay2);
 
     this.deepSky = new DeepSky(E, g);
     this.scene.add(this.deepSky.points);
+    this.overlay.add(this.deepSky.fg);
 
-    this.effects = [this.volume, this.overlayPass, this.nebulae, this.blackHole];
+    this.effects = [this.volume, this.overlayPass, this.nebulae, this.overlayPass2, this.blackHole];
     // debug: ?gdbg=volume,overlay,nebulae,bh disables those effects
     const dbg = (E.params.get('gdbg') || '').split(',');
     if (dbg.includes('volume')) this.volume.enabled = false;
@@ -89,8 +97,8 @@ export default class GalaxyLevel {
     });
 
     this.grade = {
-      exposure: 1.0, agxPunch: 0.55, contrast: 1.14, saturation: 1.2, blackPoint: 0.006,
-      vignette: 0.32, grain: 0.012, bloomStrength: 0.085, bloomRadius: 0.8, chroma: 0.0015, temperature: 0.0,
+      exposure: 1.0, agxPunch: 0.6, contrast: 1.16, saturation: 1.12, blackPoint: 0.0,
+      vignette: 0.3, grain: 0.01, bloomStrength: 0.16, bloomRadius: 0.85, chroma: 0.0012, temperature: 0.0,
     };
     this.crumbs = U.crumbs(this.addr);
     this._makeLabels();
@@ -205,10 +213,20 @@ export default class GalaxyLevel {
     this.blackHole.update(this.camera, t);
     if (this._noBH) this.blackHole.enabled = false;
     if (this._noNeb) this.nebulae.enabled = false;
+    if (this.overlayPass2) this.overlayPass2.enabled = this.nebulae.enabled;
     // inside the bulge the diffuse light resolves into the point-star layers
     const coreD = this.camera.position.length();
     this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.clamp(this.rig.distance * 4, 0.12, 0.7);
-    this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3));
+    // inside the disk the sky becomes a Milky-Way-like band: expose it down, neutral grade
+    const inside = (1 - THREE.MathUtils.smoothstep(Math.abs(this.camera.position.y), this.P.hOld * 1.5, this.P.hOld * 6)) * (1 - THREE.MathUtils.smoothstep(this.rig.distance, 0.3, 2.0));
+    this.volume.march.uniforms.uInside.value = inside;
+    this.gu.uKappa.value = THREE.MathUtils.lerp(5.0, 9.0, inside);
+    this.volume.march.uniforms.uEmit.value = THREE.MathUtils.lerp(1.0, 0.7, inside);
+    // emission within ~1.5 kpc resolves into the point-star layers; dust keeps absorbing → rifts
+    this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 1.6, inside);
+    const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
+    this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
+    this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value);
 
     // markers: visible within ~a kpc of the camera
     const mu = this.stars.markMat.uniforms;
@@ -236,7 +254,7 @@ export default class GalaxyLevel {
 
     // labels (engine UI name tags when available, own DOM tags otherwise)
     const ui = E.ui;
-    if (ui.labelWorld && this.hoverEl.style.display !== 'none') {
+    if (ui.labelWorld && !this._ownLabels && this.hoverEl.style.display !== 'none') {
       this.hoverEl.style.opacity = '0'; this.homeEl.style.opacity = '0';
       const hi = this.hover >= 0 ? this.hover : this.selected;
       if (hi > 0) {
@@ -272,7 +290,7 @@ export default class GalaxyLevel {
 
   dispose() {
     this.hoverEl?.remove(); this.homeEl?.remove();
-    this.stars?.dispose(); this.deepSky?.dispose(); this.volume?.dispose(); this.overlayPass?.dispose(); this.nebulae?.dispose(); this.blackHole?.dispose();
+    this.stars?.dispose(); this.nebStars?.material.dispose(); this.overlayPass2?.dispose(); this.deepSky?.dispose(); this.volume?.dispose(); this.overlayPass?.dispose(); this.nebulae?.dispose(); this.blackHole?.dispose();
     this.mapRT?.dispose(); this.noise3D?.dispose();
   }
 
@@ -284,23 +302,35 @@ export default class GalaxyLevel {
     r.distance = distance; r._logDistTarget = Math.log(distance);
     r.yaw = yaw; r.pitch = pitch; r._yawV = 0; r._pitchV = 0; r.autoRotate = 0; r._idle = 0;
     r.apply();
+    // shots start clean: no selection / labels left over from a previous preset
+    if (this.engine.shotMode && this.engine.params.get('ui') !== '1') {
+      this._ownLabels = false; this.hover = -1;
+      if (this.selected >= 0) this.select(-1);
+      this.hoverEl.style.display = 'none'; this.homeEl.style.display = 'none';
+    }
   }
 
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 2.35, 0.55, 0.78); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.5, 1.1, 0.045); },
+      hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.95, 0.55, 0.82); },
+      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.022); },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];
         if (!n) { this._pose(new THREE.Vector3(), P.R * 0.6, 0.3, 0.3); return; }
-        // inside the nebula, at the foot of the dust cliffs, looking across the cavity
-        this._pose(n.pos.clone().add(new THREE.Vector3(0, n.radius * 0.05, 0)), n.radius * 0.88, n.rot + 0.6, 0.2);
+        // inside the cleared cavity, above the dust skyline, looking across at the cliffs
+        // with the ionizing cluster high in frame (Carina "Cosmic Cliffs" composition)
+        this._pose(n.pos.clone().add(new THREE.Vector3(0, n.radius * 0.2, 0)), n.radius * 0.8, n.rot + 0.6, 0.25);
       },
       stars: async () => {
+        // among the stars of the home neighbourhood, in the disk plane, looking toward the
+        // galactic centre: the bulge and the dusty disk become a Milky-Way-like band
         const s = this.stars.systems[0];
-        this._pose(s.pos, 0.3, 0.9, 0.55);
+        const yaw = Math.atan2(s.pos.x, s.pos.z);
+        this._pose(s.pos, 0.035, yaw + 0.12, 0.05);
+        this._ownLabels = true;
+        this.hoverEl.style.display = ''; this.homeEl.style.display = '';
         this.select(0);
         this.hover = 0;
       },

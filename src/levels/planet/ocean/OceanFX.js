@@ -12,6 +12,8 @@ uniform float uNear, uFar, uRev, uTime, uRs;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam, uSunDir;
 uniform float uUnder, uHaze;
+uniform vec2 uFume;          // density at the surface (1/m), scale height (m)
+uniform vec3 uGlow;          // radiance of the lit fumes
 uniform vec3 uAbsorb, uScatter, uLight;
 varying vec2 vUv;
 
@@ -34,6 +36,23 @@ void main(){
     uv += n * s * 0.006;
   }
   vec3 col = texture2D(tInput, uv).rgb;
+
+  if (uHaze > 0.0) {
+    // incandescent fumes: a low exponential layer over the melt, lit from below.
+    // Rays that climb leave it at once (black sky stays black); rays skimming the
+    // sea gather a molten horizon glow.
+    float tEnd = far ? 30000.0 : dist;
+    float od = 0.0, prev = 0.0;
+    for (int i = 1; i <= 12; i++) {
+      float f = float(i) / 12.0;
+      float t = tEnd * f * f;
+      float hh = length(uCam + rd * (0.5 * (t + prev))) - uRs;
+      od += exp(-max(hh, 0.0) / uFume.y) * (t - prev);
+      prev = t;
+    }
+    od *= uFume.x;
+    col = col * exp(-od * 0.35) + uGlow * (1.0 - exp(-od));
+  }
 
   if (uUnder > 0.5) {
     float d = min(dist, 4000.0);
@@ -69,7 +88,7 @@ export class OceanFX {
         tInput: { value: null }, tDepth: { value: null }, tDetail: { value: ocean.tDetail },
         uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 }, uTime: w.uniforms.uTime, uRs: { value: ocean.seaRadius },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() }, uSunDir: w.uniforms.uSunDir,
-        uUnder: { value: 0 }, uHaze: { value: 0 },
+        uUnder: { value: 0 }, uHaze: { value: 0 }, uFume: { value: new THREE.Vector2(1 / 2600, 70) }, uGlow: { value: new THREE.Vector3(0.9, 0.12, 0.012) },
         uAbsorb: { value: new THREE.Vector3(0.32, 0.075, 0.06) }, uScatter: { value: new THREE.Vector3(0.02, 0.16, 0.2) }, uLight: { value: new THREE.Vector3(1, 1, 1) },
       },
     });

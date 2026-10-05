@@ -28,28 +28,43 @@ uniform sampler2D tInput;
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv, uView, uProj;
 uniform vec3 uCam;            // camera position in Rs units (BH at origin)
-uniform float uBg, uTime, uSteps, uIn, uOut, uDoppler, uGain, uTmax, uRint;
+uniform float uBg, uTime, uSteps, uIn, uOut, uDoppler, uGain, uTmax, uRint, uPix, uHoleAng, uStarGain, uSS;
+uniform vec3 uHoleDir, uCoreCol;
+uniform vec2 uRes;
 varying vec2 vUv;
 const float TAU = 6.2831853;
 
+// analytic star layer evaluated in the BENT direction: lensed stars stay crisp points
+// (arcs only where the true lens map stretches them), Einstein-ring images included.
+vec3 starLayer(vec3 dir, float scale, float dens, float pix){
+  vec3 g = dir * scale;
+  vec3 cell = floor(g);
+  vec3 hsh = hash33(cell);
+  float pick = hash13(cell + 7.0);
+  if (pick < 1.0 - dens) return vec3(0.0);
+  vec3 sp = (cell + 0.5 + (hsh - 0.5) * 0.7) / scale;
+  float ang = length(normalize(sp) - dir);
+  float w = pix * 0.75;
+  float mag = pow(hash13(cell + 3.1), 6.0) * 6.0 + 0.15;
+  vec3 c = blackbody(mix(3200.0, 14000.0, hsh.y * hsh.y));
+  return c * mag * exp(-ang * ang / (w * w));
+}
 vec3 background(vec3 dir){
   vec3 vd = mat3(uView) * dir;
   vec4 clip = uProj * vec4(vd, 0.0);
-  vec3 sky = vec3(0.0);
-  // sparse procedural field for directions outside the frame (keeps the ring alive)
-  vec3 g = dir * 180.0;
-  vec3 cell = floor(g);
-  vec3 hsh = hash33(cell);
-  float d = length(fract(g) - 0.5 - (hsh - 0.5) * 0.6);
-  float st = step(0.985, hash13(cell + 7.0)) * exp(-d * d * 120.0);
-  sky += st * mix(vec3(1.0, 0.75, 0.5), vec3(0.7, 0.8, 1.0), hsh.x) * 0.8;
+  vec3 sky = starLayer(dir, 140.0, 0.022, uPix) + starLayer(dir, 380.0, 0.012, uPix) * 0.45;
+  // the frame behind the hole contains the (unlensed) nucleus itself: mask it out so it is not
+  // self-lensed into a hard graphic Einstein ring; its light is the broad lensed glow instead
+  float toHole = acos(clamp(dot(dir, uHoleDir), -1.0, 1.0));
+  float mask = smoothstep(uHoleAng * 2.5, uHoleAng * 9.0, toHole);
+  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 6.0, 1e-4)) * 0.6;
   if (clip.w > 1e-5) {
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float inside = smoothstep(0.0, 0.04, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
-    vec3 c = texture2D(tInput, clamp(uv, 0.001, 0.999)).rgb;
-    return mix(sky + c * 0.6 * uBg, c * uBg, inside);
+    vec3 c = texture2D(tInput, clamp(uv, 0.001, 0.999)).rgb * mask + glow;
+    return sky * uStarGain + c * uBg * mix(0.6, 1.0, inside);
   }
-  return sky;
+  return sky * uStarGain + glow * uBg;
 }
 
 vec4 diskSample(vec3 hit, vec3 v){
@@ -64,7 +79,10 @@ vec4 diskSample(vec3 hit, vec3 v){
   float n1 = texture(uNoise, q).r;
   float n2 = texture(uNoise, vec3(r * 0.42, a / TAU * 7.0, 0.71) + n1 * 0.08).b;
   float n3 = texture(uNoise, vec3(r * 1.3, a / TAU * 11.0, 0.13)).g;
-  float dens = (0.35 + 0.9 * n1) * (0.45 + 0.9 * n2) * (0.7 + 0.5 * n3);
+  // hot turbulent filaments on the inner edge (24-40 angular cells), sheared by the flow
+  float n4 = texture(uNoise, vec3(r * 3.7 + n2 * 0.3, a / TAU * 2.0 + r * 0.05, 0.53)).b;
+  float inner = 1.0 - smoothstep(0.0, 0.45, x);
+  float dens = (0.35 + 0.9 * n1) * (0.45 + 0.9 * n2) * (0.7 + 0.5 * n3) * mix(1.0, 0.35 + 1.4 * n4, inner);
   float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.55, 1.0, x));
   float alpha = clamp(dens * edge * 1.35, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
@@ -78,15 +96,15 @@ vec4 diskSample(vec3 hit, vec3 v){
   float g = D * sqrt(max(1.0 - 1.0 / r, 0.0));
   g = mix(1.0, g, uDoppler);
   float T = uTmax * tp * g;
-  vec3 c = blackbody(T) * pow(g, 4.0) * tp * tp * uGain * (0.6 + 0.8 * n2);
+  vec3 c = blackbody(T) * pow(g, 4.0) * tp * tp * uGain * (0.6 + 0.8 * n2) * (0.7 + 0.6 * n4 * inner);
   return vec4(c * alpha, alpha);
 }
 
 // rotate v toward the hole (perpendicular component direction n) by angle a
 vec3 bend(vec3 v, vec3 n, float a){ return normalize(v * cos(a) + n * sin(a)); }
 
-void main(){
-  vec4 cp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+vec3 trace(vec2 uv){
+  vec4 cp = uProjInv * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
   vec3 p = uCam;
   vec3 v = rd;
@@ -102,8 +120,7 @@ void main(){
   // alpha(s1→s2) = (Rs/b)·(s2/√(s2²+b²) − s1/√(s1²+b²))
   if (r0 > uRint && (b > uRint || tca < 0.0)) {
     float a = (1.0 / b) * (1.0 - sObs / sqrt(sObs * sObs + b * b));
-    gl_FragColor = vec4(background(bend(v, toBH, a)), 1.0);
-    return;
+    return background(bend(v, toBH, a));
   }
   if (r0 > uRint) {
     // bend by the deflection accumulated before entering the integration sphere
@@ -119,10 +136,11 @@ void main(){
     if (float(i) >= uSteps) break;
     float r = length(p);
     minR = min(minR, r);
-    float dt = clamp((r - 0.95) * 0.09, 0.006, 1.6);
-    vec3 acc = -1.5 * h2 * p / pow(r, 5.0);
-    vec3 vn = v + acc * dt;
-    vec3 pn = p + vn * dt;
+    float dt = clamp((r - 0.95) * 0.08, 0.003, 1.6) * (abs(r - 1.5) < 0.25 ? 0.6 : 1.0);
+    vec3 vh = v - 0.75 * h2 * p / pow(r, 5.0) * dt;
+    vec3 pn = p + vh * dt;
+    float rn = length(pn);
+    vec3 vn = vh - 0.75 * h2 * pn / pow(rn, 5.0) * dt;
     if (pn.y * p.y < 0.0) {
       float f = p.y / (p.y - pn.y);
       vec3 hit = mix(p, pn, f);
@@ -147,7 +165,15 @@ void main(){
     col += T * background(v);
   }
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
-  gl_FragColor = vec4(max(col, 0.0), 1.0);
+  return max(col, 0.0);
+}
+void main(){
+  if (uSS < 1.5) { gl_FragColor = vec4(trace(vUv), 1.0); return; }
+  // 2x2 rotated-grid supersampling (shot mode): sharp photon ring, no speckle
+  vec2 px = 1.0 / uRes;
+  vec3 c = trace(vUv + px * vec2(0.125, 0.375)) + trace(vUv + px * vec2(-0.375, 0.125))
+         + trace(vUv + px * vec2(-0.125, -0.375)) + trace(vUv + px * vec2(0.375, -0.125));
+  gl_FragColor = vec4(c * 0.25, 1.0);
 }`;
 
 export class BlackHole {
@@ -166,8 +192,10 @@ export class BlackHole {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() },
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
-        uSteps: { value: engine.shotMode ? 320 : q.pick(160, 220, 300, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.1 }, uTmax: { value: 6200 }, uRint: { value: 60.0 },
+        uSteps: { value: engine.shotMode ? 300 : q.pick(160, 220, 300, 360) },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.24 }, uTmax: { value: 6600 }, uRint: { value: 60.0 },
+        uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
+        uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },
     });
   }
@@ -180,6 +208,8 @@ export class BlackHole {
     // eye adaptation to the disk: the bright nuclear sky is exposed down near the hole
     this.mat.uniforms.uBg.value = 0.035 + 0.965 * THREE.MathUtils.smoothstep(d, 150, 4000);
     this.mat.uniforms.uTime.value = this.engine.shotMode ? 3.0 : t;
+    // the analytic lensed star layer only near the hole (farther out the frame already holds the stars)
+    this.mat.uniforms.uStarGain.value = 0.55 * (1 - THREE.MathUtils.smoothstep(d, 250, 2500));
   }
 
   render(renderer, input, output, ctx) {
@@ -190,6 +220,11 @@ export class BlackHole {
     u.uView.value.copy(ctx.camera.matrixWorldInverse);
     u.uProj.value.copy(ctx.camera.projectionMatrix);
     u.uCam.value.copy(ctx.cameraPosition).sub(this.position).divideScalar(this.rs);
+    const dist = Math.max(u.uCam.value.length(), 1e-6);
+    u.uHoleDir.value.copy(u.uCam.value).multiplyScalar(-1 / dist);
+    u.uHoleAng.value = Math.asin(Math.min(1, 2.6 / dist));
+    u.uPix.value = (ctx.camera.fov * Math.PI / 180) / ctx.height;
+    u.uRes.value.set(ctx.width, ctx.height);
     ctx.fullscreen(this.mat, output);
   }
 

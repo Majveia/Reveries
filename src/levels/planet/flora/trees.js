@@ -10,6 +10,8 @@ import { foliageAtlas } from './textures.js';
 import { Random, seedFrom } from '../../../core/Random.js';
 
 const CELL = 128;
+const TIER_FRAC = [1, 0.5, 0.22];
+const TIER_SCALE = [1, 1.18, 1.5];
 const _dir = [0, 0, 0];
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vector3();
 const _c = new THREE.Color();
@@ -47,10 +49,15 @@ function barkMaterial(U, depth = false) {
     if (depth) return;
     sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + BARK_FRAG + sh.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
-  float flF = fl_vn(vec2(vBUv.x * 3.0, vBUv.y * 0.9)) * 0.6 + fl_vn(vec2(vBUv.x * 9.0, vBUv.y * 2.7)) * 0.4;
+  // bark furrows, faded to their mean where they would alias (no shimmering streaks)
+  float flFw = fwidth(vBUv.x * 9.0) + fwidth(vBUv.y * 2.7);
+  float flAA = 1.0 - smoothstep(0.35, 1.2, flFw);
+  float flAA2 = 1.0 - smoothstep(0.35, 1.2, flFw * 0.33);
+  float flF = mix(0.5, fl_vn(vec2(vBUv.x * 3.0, vBUv.y * 0.9)), flAA2) * 0.6 + mix(0.5, fl_vn(vec2(vBUv.x * 9.0, vBUv.y * 2.7)), flAA) * 0.4;
   float flRidge = smoothstep(0.25, 0.65, flF);
-  diffuseColor.rgb *= mix(0.55, 1.12, flRidge) * (0.9 + 0.2 * fl_vn(vBUv * vec2(1.0, 0.2)));`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += mix(diffuseColor.rgb, uGlowCol, 0.75) * vBGlow * (0.35 + 3.0 * uNight);');
+  diffuseColor.rgb *= mix(mix(0.8, 0.55, flAA2), mix(0.9, 1.12, flAA2), flRidge) * (0.9 + 0.2 * fl_vn(vBUv * vec2(1.0, 0.2)));
+  float flSpot = smoothstep(0.6, 0.82, fl_vn(vBUv * vec2(1.6, 0.7) + 7.3)) * flAA2 + 0.12;`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += mix(diffuseColor.rgb, uGlowCol, 0.75) * vBGlow * flSpot * (0.06 + 3.0 * uNight);');
   }, depth ? 'flora-bark-depth' : 'flora-bark');
 }
 
@@ -67,9 +74,14 @@ ${WIND_APPLY}
   vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 4.0);`);
     if (depth) return;
     sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
-      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize( vNormal );')
-      .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * uKeyColor * (0.05 + 0.5 * vLBack) * 0.35;
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vLGlow * (0.3 + 3.0 * uNight);
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
+      .replace('#include <opaque_fragment>', `// backlit translucency: sun shining through the crown, warmer and more saturated
+  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.95 * vLBack) * 0.42;
+  // bioluminescence follows the leaf texture (veins, bright leaflets, strand
+  // beads) instead of flooding whole cards: luminance-keyed mask with falloff
+  vec3 flTx = texture2D(map, vMapUv).rgb;
+  float flGM = pow(clamp(dot(flTx, vec3(0.333)), 0.0, 1.0), 6.0) * 1.8;
+  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vLGlow * flGM * (0.06 + 3.0 * uNight);
 #include <opaque_fragment>`);
   }, depth ? 'flora-leaf-depth' : 'flora-leaf');
 }
@@ -106,9 +118,11 @@ function impostorMaterial(U, tex) {
   vMapUv = (vec2(iC, iR) + vec2(position.x + 0.5, position.y) * 0.985 + 0.0075) / uTiles;`);
     sh.fragmentShader = 'varying vec3 vICol;\nvarying float vIGlow;\nvarying float vIBack;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
       .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vICol;')
-      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize( vNormal );')
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
       .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * uKeyColor * (0.05 + 0.5 * vIBack) * 0.3;
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vIGlow * (0.25 + 2.2 * uNight);
+  // distant glowing forests shimmer softly (keyed to the brighter texels), never a flat cyan wash
+  float iGM = 0.3 + 0.7 * step(0.86, fract(sin(dot(floor(vMapUv * 160.0), vec2(12.9898, 78.233))) * 43758.5453));
+  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.6) * vIGlow * iGM * 0.9 * (0.03 + 2.0 * uNight);
 #include <opaque_fragment>`);
   }, 'flora-impostor');
 }
@@ -309,7 +323,7 @@ export class Trees {
     const T = this.T, R = this.R, sea = this.sea;
     const cellM = (Math.PI * 0.5 * R) / N;
     const kmax = Math.round(cellM * cellM * T.density * 1.6); // dense groves, open meadows between
-    const frac = tier === 0 ? 1 : tier === 1 ? 0.3 : 0.1;
+    const frac = TIER_FRAC[tier];
     const gen = Math.ceil(kmax * frac);
     const rng = cellRng(this.flora.seed, 31, face, i, j);
     const trees = [];
@@ -324,15 +338,20 @@ export class Trees {
       const rr = R + s.h;
       const x = _dir[0] * rr, y = _dir[1] * rr, z = _dir[2] * rr;
       const fm = valueFbm3(x * fz, y * fz, z * fz, 3);
-      // forests (large scale) made of groves (small scale) with glades between
+      // forests (large scale, crisp edges) made of groves (small scale) with
+      // glades between; outside the woods a few majestic solitary trees
       const gv = valueNoise3(x * 0.016, y * 0.016, z * 0.016, 11);
-      p *= THREE.MathUtils.smoothstep(fm + (s.biome === 2 ? 0.18 : -0.05) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.4, 0.0, 0.22);
-      p *= THREE.MathUtils.smoothstep(gv + 0.25 + (fm > 0.25 ? 0.4 : 0), -0.1, 0.35) * 0.85 + 0.15;
+      const forestK = THREE.MathUtils.smoothstep(fm + (s.biome === 2 ? 0.25 : 0) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.45, -0.02, 0.14);
+      const grove = THREE.MathUtils.smoothstep(gv + 0.2, -0.1, 0.3);
+      p *= forestK * (0.5 + 0.5 * grove) + (1 - forestK) * (T.lone ?? 0.035) * (0.3 + grove);
       p *= this.flora.siteClear(x, y, z, 1.0);
       if (r1 > p) continue;
-      const sp = this._pickSpecies(s, r2);
+      const isLone = forestK < 0.3;
+      // solitary meadow trees are the world's signature species, grown broad
+      const sp = isLone && this.species[0].kind !== 'scrub' && r2 < 0.8 ? this.species[0] : this._pickSpecies(s, r2);
       const vv = sp.variants[Math.floor(r3 * sp.variants.length) % sp.variants.length];
-      const scale = (0.72 + 0.55 * r4) * (k < kmax * 0.06 ? 1.2 : 1) * (sp.sizeK || 1);
+      const lone = isLone && sp.kind !== 'scrub';
+      const scale = (0.72 + 0.55 * r4) * (k < kmax * 0.06 ? 1.2 : 1) * (lone ? 1.3 : 1) * (sp.sizeK || 1);
       trees.push({ x, y, z, nx: _dir[0], ny: _dir[1], nz: _dir[2], yaw: u * 97.0 + v * 53.0, scale, v: vv, rank: k / kmax, tint: r2 * 7.31 % 1, sp });
     }
     c.data = { tier, trees };
@@ -346,11 +365,12 @@ export class Trees {
     const wantCol = new Set();
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
-      const frac = c.tier === 0 ? 1 : c.tier === 1 ? 0.3 : 0.1;
+      const frac = TIER_FRAC[c.tier], fs = TIER_SCALE[c.tier];
       for (const t of c.data.trees) {
         if (t.rank >= frac) continue;
         const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z;
         const d2 = dx * dx + dy * dy + dz * dz;
+        t.fs = d2 < 900 * 900 ? 1 : fs; // only far impostors grow
         if (d2 < mr2) t.v.list.push(t); else imp.push(t);
         if (player) {
           const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
@@ -393,7 +413,8 @@ export class Trees {
     for (let k = 0; k < imp.length; k++) {
       const t = imp[k], v = t.v;
       P[k * 3] = t.x - anchor.x; P[k * 3 + 1] = t.y - anchor.y; P[k * 3 + 2] = t.z - anchor.z;
-      D[k * 4] = v.impSize * t.scale; D[k * 4 + 1] = v.impY * t.scale; D[k * 4 + 2] = v.index; D[k * 4 + 3] = v.glow;
+      const ts = t.scale * (t.fs || 1);
+      D[k * 4] = v.impSize * ts; D[k * 4 + 1] = v.impY * ts; D[k * 4 + 2] = v.index; D[k * 4 + 3] = v.glow;
       const tv = (t.tint - 0.5);
       _c.setRGB(1 + tv * 0.16, 1 + tv * 0.1, 1 - tv * 0.12);
       if (t.sp.tints) _c.multiply(t.sp.tints[Math.floor(t.tint * t.sp.tints.length) % t.sp.tints.length]);

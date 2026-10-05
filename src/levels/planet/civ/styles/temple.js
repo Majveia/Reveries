@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { M, W, F, G } from '../ids.js';
-import { col, glow, plinth, lampPost, flag, paperLantern, stall, roadLamps, lowWall, stair, plantTrees, TAU } from '../kit.js';
+import { col, glow, plinth, lampPost, flag, paperLantern, stall, roadLamps, lowWall, stair, plantTrees, lanternStrings, TAU } from '../kit.js';
 import { colossus, foliageBlob } from '../landmarks.js';
 import { boat } from './pastoral.js';
 
@@ -33,8 +33,8 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.15;
-export const shot = { dist: 0.8, height: 48, sunAngle: 1.7, lmLift: 0.3 };
+export const shotSun = 0.24;
+export const shot = { dist: 0.8, height: 34, sunAngle: 1.7, lmLift: 0.3 };
 
 /** A timber hall: terrace, columns, lattice screens, curved roof (1–2 eaves). */
 function hall(ctx, w, d, lot, o = {}) {
@@ -182,11 +182,19 @@ function huiHouse(ctx, w, d, lot, core) {
   B.box(-w / 2 - 0.04, y0, -d / 2 - 0.04, w / 2 + 0.04, y0 + 0.7, d / 2 + 0.04, { top: false });
   B.mat(M.WOOD, 0.2, 0, 3).color(pal.woodDark).ext(0.7, 0, F.NOWIN, 0);
   B.box(-w / 2 - 0.1, y0 + H - 0.3, -d / 2 - 0.1, w / 2 + 0.1, y0 + H, d / 2 + 0.1);
+  // exposed timber frame: corner posts and floor beams (red lacquer in the old core)
+  {
+    const fc = core && rng.chance(0.45) ? pal.lacquer : pal.woodDark;
+    B.mat(M.LACQUER, rng.float(), 0, 3).color(fc).ext(1, 0, F.NOWIN, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.boxC(sx * (w / 2), y0 + 0.7, sz * (d / 2), 0.36, H - 0.7, 0.36, { top: false });
+    for (let k = 1; k < floors; k++) B.box(-w / 2 - 0.08, y0 + k * fh - 0.14, -d / 2 - 0.08, w / 2 + 0.08, y0 + k * fh + 0.14, d / 2 + 0.08, { top: false });
+    if (w > 7) for (const sx of [-1, 1]) B.boxC(sx * w / 6, y0 + 0.7, d / 2 + 0.05, 0.26, H - 0.7, 0.14, { top: false });
+  }
   const roofC = rng.pick(pal.roofs);
   const yE = y0 + H;
-  const rise = d * 0.28;
+  const rise = d * 0.34;
   // dual-pitch curved roof (hip with long ridge), modest flare
-  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 0.8, curve: 1.6, flare: 0.35, sweep: 0.2, segS: 6, segR: 3, thick: 0.2, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8), ridgeW: 0.32, ridgeH: 0.4, hipK: 0.25, ornaments: false });
+  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 1.15, curve: 1.8, flare: 0.95, sweep: 0.5, segS: 7, segR: 4, thick: 0.22, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8), ridgeW: 0.32, ridgeH: 0.4, hipK: 0.25, ornaments: false });
   // stepped horse-head firewalls on both gable ends
   if (rng.chance(core ? 0.75 : 0.45)) {
     for (const sx of [-1, 1]) {
@@ -256,6 +264,24 @@ export function pagoda(ctx, x, z, tiers = 9) {
     const hw = s / 2;
     B.mat(M.WOOD, rng.float(), W.LATTICE, h).color(t === 0 ? pal.lacquer : pal.wood).ext(1, 0, 0, 0);
     B.box(-hw, y, -hw, hw, y + h, hw, { top: false, base: y, front: F.FRONT });
+    if (t > 0) {
+      // walk-around balcony with a red railing (reads as a bright line between the dark roofs)
+      const bw = hw + 1.3;
+      B.mat(M.WOOD, 0.3, 0, 3).color(pal.woodDark).ext(0.8, 0, F.NOWIN, 0);
+      B.box(-bw, y - 0.3, -bw, bw, y + 0.05, bw);
+      B.mat(M.LACQUER, 0.4, 0, 3).color(pal.lacquer).ext(1, 0, F.NOWIN, 0);
+      B.box(-bw, y + 0.95, bw - 0.12, bw, y + 1.1, bw + 0.02); B.box(-bw, y + 0.95, -bw - 0.02, bw, y + 1.1, -bw + 0.12);
+      B.box(bw - 0.12, y + 0.95, -bw, bw + 0.02, y + 1.1, bw); B.box(-bw - 0.02, y + 0.95, -bw, -bw + 0.12, y + 1.1, bw);
+      const np = Math.max(3, Math.round(bw * 2 / 1.6));
+      for (let k = 0; k <= np; k++) {
+        const u = -bw + (k / np) * bw * 2;
+        B.boxC(u, y + 0.05, bw - 0.05, 0.1, 0.95, 0.1, { top: false }); B.boxC(u, y + 0.05, -bw + 0.05, 0.1, 0.95, 0.1, { top: false });
+        B.boxC(bw - 0.05, y + 0.05, u, 0.1, 0.95, 0.1, { top: false }); B.boxC(-bw + 0.05, y + 0.05, u, 0.1, 0.95, 0.1, { top: false });
+      }
+    }
+    // bracket (dougong) band under the eaves: gold-lit blocks on a dark beam
+    B.mat(M.LACQUER, 0.5, 0, 3).color(col('#2c5a5a')).ext(0.8, 0, F.NOWIN, 0);
+    B.box(-hw - 0.3, y + h - 0.7, -hw - 0.3, hw + 0.3, y + h, hw + 0.3, { top: false });
     B.mat(M.LACQUER, 0.3, 0, 3).color(pal.lacquer).ext(1, 0, F.NOWIN, 0);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) B.boxC(sx * hw, y, sz * hw, 0.5, h, 0.5, { top: false });
     B.mat(M.WOOD, 0.2, 0, 3).color(pal.woodDark).ext(0.6, 0, F.NOWIN, 0);
@@ -330,6 +356,8 @@ export function extras(ctx) {
   const q = ctx.settlement.level.engine.quality;
   plantTrees(ctx, q.pick(40, 80, 150, 200) * (ctx.main ? 1 : 0.5), ['maple', 'maple', 'maple', 'round'], [col('#b8322a'), col('#c8442a'), col('#d8642a'), col('#a82a22'), col('#e8a83a'), col('#3f5a34')], foliageBlob);
   for (const r of plan.roads) if (r.kind === 'avenue' || r.kind === 'main') roadLamps(ctx, r, 16, 'paper', 1.0);
+  // red paper lantern strings strung across the lanes of the old town
+  for (const r of plan.roads) if (r.kind === 'main' || r.kind === 'street') lanternStrings(ctx, r, r.kind === 'main' ? 14 : 22, [pal.lantern, pal.lantern, col('#ff8a3a')], { n: 6, h: 5.2, sag: 0.9, scale: 0.55, core: 0.55 });
   // gates where main roads leave the plaza and at the edge of town
   for (const r of plan.mains || []) {
     const pts = r.pts;

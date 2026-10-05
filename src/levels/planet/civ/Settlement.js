@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { MeshBuilder } from './builder.js';
+import { makeSmokeMesh } from './smoke.js';
 import { makeCivMaterial, makeCatcherMaterial, makeGlowMaterial, makeGlowMesh, CityShadow, createCivUniforms } from './materials.js';
 import { SiteFrame } from './frame.js';
 import { planSettlement, KIND_RADIUS } from './layout.js';
@@ -79,7 +80,7 @@ export class Settlement {
     const occ = [];
     const ctx = {
       settlement: this, frame, rng, world: this.world, plan: null, pal: null, A: this.level.aesthetic, main: this.main,
-      M: new THREE.Matrix4(), glows: [], beacons: [], lamps: [], anim: this.anim, footprints: [], landmarkSpots: [], group: this.group, tiles,
+      M: new THREE.Matrix4(), glows: [], beacons: [], smokes: [], lamps: [], anim: this.anim, footprints: [], landmarkSpots: [], group: this.group, tiles,
       get B() { return cur || (cur = tileFor(0, 0)); },
       select(x, z) { cur = tileFor(x, z); return cur; },
       useTile(key) { forced = key; if (key) cur = tileFor(0, 0); },
@@ -246,6 +247,14 @@ export class Settlement {
       this.glowMesh.matrixAutoUpdate = false;
       this.group.add(this.glowMesh); this.meshes.push(this.glowMesh);
     }
+    if (ctx.smokes.length) {
+      try {
+        const lim = this.level.engine.quality.pick(20, 40, 70, 90);
+        this.smokeMesh = makeSmokeMesh(this.uniforms, ctx.smokes.slice(0, lim), this.level.engine.quality.pick(5, 7, 9, 10));
+        this.smokeMesh.matrixAutoUpdate = false;
+        this.group.add(this.smokeMesh); this.meshes.push(this.smokeMesh);
+      } catch (e) { console.warn('[civ] smoke', e); }
+    }
     if (ctx.beacons.length) {
       this.beaconMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 2.2, gain: 9, dayVis: 0.6 });
       this.beaconMesh = makeGlowMesh(this.beaconMat, ctx.beacons);
@@ -255,7 +264,7 @@ export class Settlement {
     yield;
 
     // city shadow
-    const sm = engine.quality.pick(1024, 2048, 2048, 4096);
+    const sm = engine.quality.pick(1024, 2048, 4096, 4096);
     this.shadow = new CityShadow(engine.renderer, sm, this.uniforms);
     this.shadow.setBounds(new THREE.Vector3(c[0], frame.hAt(c[0], c[1]) - frame.h0, c[1]), plan.builtRadius + 60);
     for (const m of this.archMeshes || []) this.shadow.addCaster(m);

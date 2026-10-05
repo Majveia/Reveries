@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { M, W, F, G } from '../ids.js';
-import { col, glow, plinth, lampPost, stall, fountain, statue, flag, bunting, crates, lowWall, roadLamps, paperLantern, plantTrees, TAU } from '../kit.js';
+import { col, glow, plinth, lampPost, stall, fountain, statue, flag, bunting, crates, lowWall, roadLamps, paperLantern, plantTrees, lanternStrings, TAU } from '../kit.js';
 import { floatingIsland, foliageBlob } from '../landmarks.js';
 
 export function palette(A, rng) {
@@ -94,6 +94,7 @@ export function building(ctx, lot) {
     B.boxC(cx, yE - 0.5, cz, 0.6, ridgeY - yE + 1.6, 0.6);
     B.mat(M.STONE, 0.4, 0, 3).color(pal.stoneDark);
     B.boxC(cx, ridgeY + 1.1, cz, 0.78, 0.12, 0.78);
+    if (ctx.smokes && rng.chance(0.2)) ctx.smokes.push({ position: new THREE.Vector3(cx, ridgeY + 1.3, cz).applyMatrix4(ctx.M), seed: rng.float() });
   }
   // balcony on the first floor
   if (floors >= 2 && rng.chance(0.38)) {
@@ -185,6 +186,8 @@ export function extras(ctx) {
   const { rng, pal, plan } = ctx;
   // street lamps along main roads in town
   for (const r of plan.roads) if (r.kind === 'main' || r.kind === 'avenue') roadLamps(ctx, r, 22, 'iron');
+  // festival lights strung between the houses of the old town
+  for (const r of plan.roads) if (r.kind === 'street' || r.kind === 'main') lanternStrings(ctx, r, 26, [col('#ffc878'), col('#ffb060'), col('#ffd9a0')], { n: 9, h: 5.0, sag: 0.8, scale: 0.32, core: 0.5 });
   // bell tower over the main square
   const pz = plan.plazas[0];
   {

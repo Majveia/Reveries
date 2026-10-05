@@ -325,6 +325,18 @@ const FRAG_SURFACE = /* glsl */`
   float hRock = 0.0;
   float crack = 0.0;
   if ( rockW > 0.004 ) {
+    // large-scale structure (32 m / 8 m lattices + 16 m fractured slabs): keeps
+    // mid-distance cliffs and shoulders reading as broken rock, not clay
+    gRock += m2.xyz * 5.0 + m3.xyz * 2.2;
+    hRock += m3.w * 0.35;
+    float bwL = octW( 1.0 / 128.0, pix ) * uStyleB.y;
+    {
+      vec4 cL = nB( D.yzx + 17.0, 1.0 / 128.0 );
+      vec3 tiltL = vec3( hash11( cL.z * 19.1 ), hash11( cL.z * 67.3 + 2.1 ), hash11( cL.z * 7.9 + 4.4 ) ) - 0.5;
+      gRock += tiltL * 0.75 * smoothstep( 0.0, 0.08, cL.y ) * max( bwL, 0.35 * uStyleB.y );
+      crack = ( 1.0 - smoothstep( 0.0, 0.05, cL.y ) ) * bwL * 0.8;
+      hRock += ( hash11( cL.z * 33.3 ) - 0.5 ) * 0.4;
+    }
     w = octW( 1.0 / 32.0, pix );
     if ( w > 0.0 ) { vec4 o1 = nA( D + 7.1, 1.0 / 32.0 ); gRock += o1.xyz * 1.2 * w; hRock += o1.w * 0.5 * w; }
     w = octW( 1.0 / 8.0, pix );
@@ -336,7 +348,7 @@ const FRAG_SURFACE = /* glsl */`
     // vertical runnels: noise in a space compressed along 'up'
     float rw = octW( 1.0 / 8.0, pix ) * uStyleA.z * smoothstep( 0.25, 0.6, slope );
     if ( rw > 0.0 ) {
-      vec3 Dq = D - up * dot( D, up ) * 0.9;
+      vec3 Dq = D - up * dot( D, up ) * 0.78;
       vec4 r1 = nA( Dq + 11.0, 1.0 / 8.0 );
       gRock += ( r1.xyz - up * dot( r1.xyz, up ) ) * 0.35 * rw;
       hRock += r1.w * 0.3 * rw;
@@ -344,17 +356,32 @@ const FRAG_SURFACE = /* glsl */`
     // large runnels / gullies visible from afar
     float rw2 = octW( 1.0 / 64.0, pix ) * uStyleA.z * smoothstep( 0.3, 0.7, slope );
     if ( rw2 > 0.0 ) {
-      vec3 Dq = D - up * dot( D, up ) * 0.85;
+      vec3 Dq = D - up * dot( D, up ) * 0.75;
       vec4 r2 = nA( Dq.zxy + 3.0, 1.0 / 64.0 );
       gRock += ( r2.xyz - up * dot( r2.xyz, up ) ) * 2.5 * rw2;
       hRock += r2.w * 0.4 * rw2;
     }
-    // blocks / joints (Worley cell borders → cracks)
+    // blocks / joints (Worley cell borders → cracks) + fractured facets:
+    // every cell is a planar block face with its own tilt (piecewise-constant
+    // normal) → reads as broken stone, not noise. Two scales: 4 m slabs, 1 m chips.
     float bw = octW( 1.0 / 32.0, pix ) * uStyleB.y;
     if ( bw > 0.0 ) {
       vec4 c1 = nB( D + 0.5, 1.0 / 32.0 );
-      crack = ( 1.0 - smoothstep( 0.0, 0.07, c1.y ) ) * bw;
+      crack = max( crack, ( 1.0 - smoothstep( 0.0, 0.07, c1.y ) ) * bw );
       hRock -= crack * 0.5;
+      vec3 tilt = vec3( hash11( c1.z * 97.1 ), hash11( c1.z * 31.7 + 3.1 ), hash11( c1.z * 13.3 + 7.7 ) ) - 0.5;
+      float fw = bw * smoothstep( 0.0, 0.12, c1.y );
+      gRock += tilt * 0.9 * fw;
+      hRock += ( hash11( c1.z * 57.3 ) - 0.5 ) * 0.35 * fw;
+      float bw2 = octW( 1.0 / 8.0, pix ) * uStyleB.y;
+      if ( bw2 > 0.0 ) {
+        vec4 c2 = nB( D.zxy + 9.5, 1.0 / 8.0 );
+        float crack2 = ( 1.0 - smoothstep( 0.0, 0.06, c2.y ) ) * bw2;
+        vec3 tilt2 = vec3( hash11( c2.z * 71.3 ), hash11( c2.z * 23.9 + 1.3 ), hash11( c2.z * 41.1 + 5.5 ) ) - 0.5;
+        gRock += tilt2 * 0.55 * bw2 * smoothstep( 0.0, 0.1, c2.y );
+        crack = max( crack, crack2 * 0.7 );
+        hRock -= crack2 * 0.25;
+      }
     }
     // strata ledges: sawtooth along 'up' (overhanging lips, recessed beds)
     float sw = uStyleA.y * octW( 0.5 / strataH, pix ) * smoothstep( 0.2, 0.55, slope );
@@ -379,17 +406,21 @@ const FRAG_SURFACE = /* glsl */`
     vec3 wb = cross( up, wt );
     vec4 wq = nA( D + 21.0, 1.0 / 16.0 );
     // primary ripples (~0.22 m) + megaripples (~1.6 m), curved by noise
-    float ph1 = dot( D, wt ) / 0.22 + wq.w * 1.4 + dot( D, wb ) * 0.12;
-    float ph2 = dot( D, wt ) / 1.6 + wq.w * 1.1 + dot( D, wb ) * 0.05;
+    // ~12 cm wind ripples; a 1 m phase warp makes them bifurcate (Y-junctions)
+    vec4 wf = octW( 1.0 / 8.0, pix ) > 0.0 ? nA( D.yzx + 7.0, 1.0 / 8.0 ) : vec4( 0.0 );
+    float ph1 = dot( D, wt ) / 0.12 + wq.w * 2.5 + wf.w * 1.6 + dot( D, wb ) * 0.2;
+    vec4 wq2 = nA( D.zxy + 5.0, 1.0 / 64.0 );
+    float ph2 = dot( D, wt ) / 1.6 + wq.w * 1.6 + wq2.w * 3.0 + dot( D, wb ) * 0.05;
     float f1 = fract( ph1 ), f2 = fract( ph2 );
     // asymmetric profile: long stoss slope, steep lee face
     float p1 = f1 < 0.75 ? f1 / 0.75 : ( 1.0 - f1 ) / 0.25;
     float d1 = f1 < 0.75 ? 1.0 / 0.75 : -1.0 / 0.25;
     float p2 = f2 < 0.7 ? f2 / 0.7 : ( 1.0 - f2 ) / 0.3;
     float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3;
-    float w1 = octW( 1.0 / 1.8, pix ) * uStyleA.w * ( 1.0 - 0.85 * leeF );
-    float w2 = octW( 1.0 / 12.0, pix ) * uStyleA.w * ( 1.0 - 0.7 * leeF );
-    gSand += wt * ( d1 / 0.22 ) * 0.016 * w1 + wt * ( d2 / 1.6 ) * 0.07 * w2;
+    float w1 = octW( 1.0, pix ) * uStyleA.w * ( 1.0 - 0.85 * leeF ) * ( 0.35 + 0.65 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) );
+    // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
+    float w2 = octW( 1.0 / 12.0, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( -0.1, 0.55, wq2.w + wq.w * 0.3 );
+    gSand += wt * ( d1 / 0.12 ) * 0.006 * w1 + wt * ( d2 / 1.6 ) * 0.035 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1;
     w = octW( 0.25, pix );
@@ -444,6 +475,8 @@ const FRAG_SURFACE = /* glsl */`
   grassCol = mix( grassCol, grassCol * vec3( 0.52, 0.64, 0.56 ), forest * ( 0.25 + 0.5 * farK ) );
   grassCol = mix( dry, grassCol, smoothstep( 0.18, 0.55, moist + macro * 0.12 ) );
   grassCol = mix( grassCol, grassCol * vec3( 1.08, 1.0, 0.72 ), smoothstep( 0.55, 0.85, temp ) * 0.5 );
+  // cold steppe / tundra: olive-brown bands toward the poles and the heights
+  grassCol = mix( grassCol, mix( uSoil, uGround3, 0.45 ) * ( 0.9 + 0.15 * macro ), smoothstep( 0.4, 0.22, temp + meso * 0.04 ) * 0.65 );
   grassCol *= 0.82 + 0.3 * ( hGrass * 0.5 + 0.5 );
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );

@@ -78,13 +78,15 @@ void main(){
     float bar = uBar > 0.0 ? exp(-pow(bp.x / max(bl, 0.1), 2.0) - pow(bp.y / max(bl * 0.28, 0.1), 2.0) - pow(p.y / 0.35, 2.0)) : 0.0;
     float bulge = exp(-length(vec3(p.x, p.y * 1.7, p.z)) / (0.55 + uBulge));
     // clumpy structure: star clouds and dust filaments
-    float n1 = snoise(p * 1.6), n2 = snoise(p * 4.7 + 3.1), n3 = n2 * 0.5 + 0.5 * sin(dot(p, vec3(9.1, 13.3, 11.7)) + n1 * 4.0);
-    float clump = clamp(0.55 + 0.45 * n1 + 0.25 * n2, 0.0, 2.0);
+    // clumps at a few hundred pc: star clouds and dust lanes read as fine structure, not giant blobs
+    float n1 = snoise(p * 3.4), n2 = snoise(p * 9.5 + 3.1), n4 = snoise(p * 22.0 - 1.7);
+    float n3 = n2 * 0.5 + 0.5 * sin(dot(p, vec3(19.1, 27.3, 23.7)) + n1 * 4.0);
+    float clump = clamp(0.6 + 0.3 * n1 + 0.3 * n2 + 0.15 * n4, 0.0, 2.0);
     vec3 em = vec3(1.0, 0.86, 0.7) * disk * (0.35 + 1.4 * arm) * clump
             + uColArms * thin * arm * uSF * 1.6 * (0.6 + 0.6 * n2)
             + uColHII * thin * pow(arm, 2.0) * uSF * max(n3, 0.0) * 2.5
             + uColCore * (bar * 2.2 + bulge * 6.0);
-    float dust = exp(-R / (hR * 1.25)) * exp(-z / 0.075) * (0.35 + 1.7 * arm) * clamp(0.5 + 0.9 * n1 + 0.5 * n2 + 0.25 * n3, 0.0, 2.4);
+    float dust = exp(-R / (hR * 1.25)) * exp(-z / 0.075) * (0.35 + 1.7 * arm) * clamp(0.55 + 0.45 * n1 + 0.6 * n2 + 0.45 * abs(n4) * 2.0 - 0.3, 0.0, 2.4);
     vec3 ext = uDustAmt * 9.0 * dust * vec3(0.66, 0.92, 1.3);
     vec3 st2 = exp(-ext * dt);
     vec3 ie = max(ext, vec3(1e-6));
@@ -119,6 +121,8 @@ uniform float uSunAngR;
 uniform mat3 uWorldToCel;
 uniform samplerCube tGalaxy;
 uniform float uGalaxyGain;
+uniform mat3 uCelToGal;
+uniform float uSpace;
 uniform float uStarVis;
 uniform float uPixelAng;
 uniform float uTime;
@@ -155,13 +159,13 @@ vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float
   if (any(lessThan(f, vec3(0.12))) || any(greaterThan(f, vec3(0.88)))) return vec3(0.0);
   vec3 sd = normalize(sp);
   float ang = length(d - sd);
-  float sig = uPixelAng * 0.55;
+  float sig = uPixelAng * 0.7;   // >= ~1.2 px footprint: survives upsampling and FXAA
   float u = max(h.y / max(density, 1e-3), 1e-4);
   float flux = min(fmin * pow(u, -0.6667), fmax);
   float g = exp(-ang * ang / (2.0 * sig * sig)) / (6.2831853 * sig * sig);
   // mostly white with a gentle B-V tint
   vec3 tint = mix(vec3(1.0), starColor(h.z), 0.45);
-  return tint * flux * g * 2.5e-6;
+  return tint * flux * g * 1.25e-5;
 }
 
 vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
@@ -174,7 +178,9 @@ vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
   float rim = smoothstep(0.32, 0.4, w1.x) * (1.0 - smoothstep(0.4, 0.52, w1.x));
   float fine = 0.88 + 0.12 * smoothstep(0.0, 0.3, w2.x);
   float alb = mix(1.0, 0.55, maria) * crater * fine + rim * 0.18;
-  vec3 col = tint * alb;
+  // highlands keep the moon's tint, maria go cool grey-blue (basalt), not brown
+  vec3 grey = vec3(dot(tint, vec3(0.3333)));
+  vec3 col = mix(mix(tint, grey, 0.45) * 1.08, grey * vec3(0.8, 0.86, 0.98), maria) * alb;
   if (kind == 1) { // ice: bright with dark lineae
     float cracks = 1.0 - smoothstep(0.0, 0.06, abs(snoise(q * 2.5)) * (0.6 + 0.4 * snoise(q * 7.0)));
     col = mix(vec3(0.92, 0.95, 1.0), tint, 0.25) * (1.0 - cracks * 0.45) * (0.9 + 0.1 * crater);
@@ -234,7 +240,8 @@ void main(){
     col += uSunRadiance * limb * disk * occl;
   }
   // inner corona (visible from space and through thin air)
-  col += uSunRadiance * (0.00035 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 1.8)) + 0.000012 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 9.0))) * occl;
+  // (from space only a tight 2-3 radius glow: the wide term would lift black space through bloom)
+  col += uSunRadiance * (0.00035 * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * mix(1.8, 0.9, uSpace))) + 0.000012 * (1.0 - uSpace) * exp(-max(th - uSunAngR, 0.0) / (uSunAngR * 9.0))) * occl;
 
   // ---- galaxy band + stars ------------------------------------------------
   if (uStarVis > 0.001) {
@@ -242,9 +249,20 @@ void main(){
     float gl = dot(gal, vec3(0.333));
     // contrast curve: the diffuse disk glow we sit inside is cut to black (OLED),
     // the band, bulge and star clouds keep their structure; mostly neutral colour.
-    vec3 galD = mix(vec3(gl) * vec3(0.95, 0.97, 1.05), gal, 0.4) * uGalaxyGain;
+    vec3 galD = mix(vec3(gl) * vec3(0.95, 0.97, 1.05), gal, 0.78) * uGalaxyGain;
     float gd = gl * uGalaxyGain;
-    galD *= smoothstep(0.006, 0.035, gd) * clamp(gd / 0.035, 0.3, 1.3);
+    galD *= smoothstep(0.004, 0.04, gd) * clamp(gd / 0.04, 0.3, 1.5);
+    // fine dust filaments + star-cloud mottling (resolution-independent, anisotropic along the plane)
+    vec3 dg = uCelToGal * dc;
+    float bandM = exp(-dg.y * dg.y / 0.018);
+    if (bandM > 0.01) {
+      vec3 fp = vec3(dg.x, dg.y * 3.2, dg.z);
+      float r1 = 1.0 - abs(snoise(fp * 13.0 + 1.7));
+      float r2 = 1.0 - abs(snoise(fp * 34.0 + vec3(5.1, 2.3, 8.7)));
+      float fil = pow(r1, 7.0) * 0.6 + pow(r2, 9.0) * 0.45;
+      float mott = 0.7 + 0.6 * smoothstep(-0.6, 0.8, snoise(dc * 55.0) * 0.6 + snoise(dc * 140.0) * 0.4);
+      galD *= mix(1.0, (1.0 - clamp(fil, 0.0, 0.92)) * mott, bandM);
+    }
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
     float dens = smoothstep(0.0, 1.0, gl * 90.0);
@@ -372,7 +390,7 @@ export default class Sky {
 
   _bakeGalaxy() {
     const q = this.engine.quality;
-    const size = this.engine.shotMode ? 256 : q.pick(256, 384, 512, 768);
+    const size = this.engine.shotMode ? 1024 : q.pick(384, 512, 1024, 1536);
     const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
     const cel = this.celestial, g = cel.galaxy;
     const obs = cel.starGal.clone();
@@ -422,7 +440,7 @@ export default class Sky {
       uSunAngR: { value: 0.0095 },
       uWorldToCel: { value: cel.worldToCel },
       tGalaxy: { value: this.galaxyRT.texture },
-      uGalaxyGain: { value: 1 },
+      uGalaxyGain: { value: 1 }, uCelToGal: { value: cel.celToGal }, uSpace: { value: 0 },
       uStarVis: { value: 0 },
       uPixelAng: { value: 0.001 },
       uTime: { value: 0 },
@@ -502,7 +520,8 @@ export default class Sky {
     const night = 1 - THREE.MathUtils.smoothstep(sunEl, -0.16, 0.04);
     const space = m.present ? THREE.MathUtils.smoothstep(alt, m.thickness * 0.8, m.thickness * 2.0) : 1;
     u.uStarVis.value = Math.max(night, space);
-    u.uGalaxyGain.value = this.galaxyGain ?? 0.38;
+    u.uGalaxyGain.value = this.galaxyGain ?? 0.6;
+    u.uSpace.value = space;
     // aurora (weather decides)
     const ws = L.weatherState;
     u.uAurora.value = (ws?.aurora || 0) * night * (1 - space);

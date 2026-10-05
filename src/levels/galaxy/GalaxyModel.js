@@ -28,7 +28,7 @@ export function galaxyParams(g) {
     R, type: t, k, arms: g.arms, r0: R * 0.12, bar: g.bar, sf: g.starFormation, dust: g.dust,
     extent: R * 1.3,
     // vertical scale heights (kpc)
-    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.07, thick * 0.2),
+    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.08, thick * 0.26),
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
     bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12),
@@ -109,9 +109,9 @@ void main(){
   // spiral-sheared frame: noise in this frame winds up along the arms (flocculent texture)
   float shA = -uK * log(max(rq, 0.3) / uR0) * 0.92;
   vec2 qs = mat2(cos(shA), -sin(shA), sin(shA), cos(shA)) * q;
-  float flocY = max(0.0, fbm2(qs * vec2(0.22, 0.9) + 5.0, 5) + 0.05);
-  float flocD = ridge2(qs * vec2(0.5, 2.2) + 9.0, 5);
-  float edge = 1.0 - smoothstep(0.85 * uR, 1.25 * uR, r);
+  float flocY = max(0.0, 0.7 * fbm2(qs * vec2(0.34, 0.85) + 5.0, 5) + 0.3 * fbm2(q * 0.7 + 2.0, 4) + 0.05);
+  float flocD = 0.7 * ridge2(qs * vec2(0.75, 1.9) + 9.0, 5) + 0.3 * ridge2(q * 1.3 + 4.0, 4);
+  float edge = 1.0 - smoothstep(0.7 * uR, 1.2 * uR, r);
   vec4 o = vec4(0.0);
 
   // ---- spiral coordinates (matches Universe.galaxySample) -----------------------
@@ -129,7 +129,9 @@ void main(){
     float arm = exp(-phi * phi / (2.0 * sig * sig));
     float frag = smoothstep(-0.35, 0.45, fbm2(vec2(lr * 5.0, armId * 13.0 + across * 0.3), 4));
     float clump = 0.45 + 1.1 * max(0.0, fbm2(q * 0.9, 5) + 0.25);
-    young = arm * (0.25 + 0.75 * frag) * clump * exp(-r / (0.36 * uR)) * inner * edge * 2.2;
+    // hierarchical star-forming clumps: ridged noise (power 2.5) breaks the arm into knots and spurs
+    float clR = pow(ridge2(q * 1.7 + 13.0, 4), 2.5) * 2.4 + pow(ridge2(q * 5.5 + 3.0, 3), 3.0) * 1.2;
+    young = arm * (0.25 + 0.75 * frag) * clump * (0.3 + clR) * exp(-r / (0.36 * uR)) * inner * edge * 2.0;
     young += 0.07 * disk * edge * (0.6 + 0.6 * fbm2(q * 0.6, 3));
     // secondary branches / spurs and flocculent arm fragments between the main arms
     float ph2 = (tq - uK * 1.18 * lr + 1.1) * (uArms * 2.0) / TAU;
@@ -141,9 +143,9 @@ void main(){
     float dSig = 0.055 + 0.03 * max(0.0, fbm2(q * 0.5 + 3.0, 3));
     float lane = exp(-pow(phi - dOff, 2.0) / (2.0 * dSig * dSig));
     float fil = ridge2(vec2(lr * 9.0, across * 3.5 + armId * 17.0), 5);
-    float laneD = lane * (0.35 + 1.3 * fil * fil);
+    float laneD = lane * (0.2 + 2.2 * smoothstep(0.3, 0.8, fil) * (0.5 + fil));
     // feathers: thin dark streaks leaving the lane outward through the arm at a steep angle
-    float sp = ridge2(vec2(lr * 30.0 + phi * 7.5, armId * 3.0 + across * 0.2), 3);
+    float sp = ridge2(vec2(lr * 22.0 + phi * 6.0, armId * 3.0 + across * 0.6), 3);
     float feather = pow(sp, 6.0) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.22 * 0.22));
     float floc = max(0.0, fbm2(q * 1.4 + 7.0, 5) + 0.15);
     dust = (laneD * 2.2 + feather * 1.6 + floc * 0.45 * arm) * exp(-r / (0.5 * uR)) * inner * edge;
@@ -192,11 +194,19 @@ void main(){
     float a = uR * uBar * 0.45, b = uR * 0.055;
     float bar = exp(-0.5 * (p.x * p.x / (a * a) + p.y * p.y / (b * b)));
     old += bar * 2.2;
-    float sx = sign(p.x);
-    float lanePos = sx * (0.022 * uR + 0.05 * abs(p.x) * abs(p.x) / uR);
-    float ln = exp(-pow(p.y + lanePos, 2.0) / (2.0 * pow(0.006 * uR, 2.0)));
-    float along = smoothstep(0.02 * uR, 0.08 * uR, abs(p.x)) * (1.0 - smoothstep(1.4 * a, 2.4 * a, abs(p.x)));
-    dust += ln * along * (0.6 + 1.2 * ridge2(p * 1.8, 4)) * 1.8;
+    // leading-edge bar lanes: offset, curved (S-shaped through the centre), wandering in width,
+    // fragmented into filaments, swinging out into the inner arm lanes at the bar ends
+    float sx = sign(p.x), ax = abs(p.x) / a;
+    float lanePos = sx * (0.016 * uR + 0.035 * uR * ax * ax + 0.02 * uR * smoothstep(0.7, 1.6, ax) * ax)
+                  + 0.009 * uR * fbm2(vec2(p.x * 0.9, sx * 3.0), 3);
+    float lw = 0.0045 * uR * (0.6 + 1.1 * max(0.0, fbm2(vec2(p.x * 0.7, sx * 7.0 + 2.0), 3) + 0.4));
+    float ln = exp(-pow(p.y + lanePos, 2.0) / (2.0 * lw * lw));
+    ln += 0.5 * exp(-pow(p.y + lanePos * 1.35, 2.0) / (2.0 * pow(lw * 0.6, 2.0))) * smoothstep(0.3, 0.9, ax);  // secondary strand
+    float along = smoothstep(0.015 * uR, 0.07 * uR, abs(p.x)) * (1.0 - smoothstep(1.3 * a, 2.3 * a, abs(p.x)));
+    float bfil = ridge2(vec2(p.x * 2.5, p.y * 6.0) + 21.0, 4);
+    dust += ln * along * (0.25 + 1.8 * smoothstep(0.25, 0.75, bfil)) * 1.9;
+    // dust spurs feathering off the lanes across the bar
+    dust += pow(ridge2(vec2(p.x * 9.0 + p.y * 3.0, p.y * 2.0), 3), 5.0) * bar * 0.9;
     // nuclear star-forming ring / mini spiral
     float nr = exp(-pow(r - 0.035 * uR, 2.0) / (2.0 * pow(0.008 * uR, 2.0)));
     young += nr * 1.5; hii += nr * smoothstep(0.3, 0.0, worley(q * 14.0).x) * 3.0;
@@ -212,8 +222,8 @@ void main(){
   }
   // screen extinction inside the column: lanes silhouette the arm light face-on
   float dd = dust * uDust;
-  young *= exp(-dd * 1.1);
-  old *= exp(-dd * 0.3);
+  young *= exp(-dd * 2.0);
+  old *= exp(-dd * 0.55);
   hii *= exp(-dd * 0.6);
   // diffuse dust disk with a longer scale length than the starlight (edge-on lanes span the disk)
   if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0);

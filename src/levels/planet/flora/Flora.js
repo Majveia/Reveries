@@ -142,7 +142,7 @@ export default class Flora {
     try { if (this.rocks && alt < 1500) this.rocks.update(_cam, col, budget * 0.4, force); } catch (e) { this._err('rocks', e); }
     for (const m of this.motes || []) { try { m.update(_cam); } catch (e) { this._err('motes', e); } }
     this._first = false;
-    if (shot && !this._logged) { this._logged = true; console.log(`[flora] ${this.kind}: grass ${this.grass?.count | 0}, trees ${this.trees?.meshCount | 0}+${this.trees?.impCount | 0} imp, rocks ${this.rocks?.count | 0}`); }
+    if (shot && (this._logN || 0) < 4 && (!this._logAt || this._logAt.distanceTo(_cam) > 50)) { this._logN = (this._logN || 0) + 1; (this._logAt ||= new THREE.Vector3()).copy(_cam); console.warn(`[flora] ${this.kind}: grass ${this.grass?.count | 0}, trees ${this.trees?.meshCount | 0}+${this.trees?.impCount | 0} imp, rocks ${this.rocks?.count | 0}, landmark ${this.trees?.landmark ? Math.round(this.trees.landmark.position.distanceTo(_cam)) + ' m' : '-'}`); }
   }
 
   _err(name, e) {

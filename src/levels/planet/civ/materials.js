@@ -19,7 +19,7 @@ export const CIV_COMMON_GLSL = /* glsl */`
 uniform float uCivTime, uCivNight, uCivDay, uCivLitP, uCivWinI;
 uniform vec3 uCivSkyZ, uCivSkyH, uCivUpV, uCivLamp, uCivSunL, uCivMoss, uCivSand, uCivAccent;
 uniform sampler2D uCivShadow; uniform mat4 uCivShadowM; uniform vec4 uCivShadowP; uniform float uCivShadowOn;
-uniform float uCivNearFade; uniform float uCivSnow;
+uniform float uCivNearFade; uniform float uCivSnow; uniform vec3 uCivBounce;
 varying vec2 vFac; varying vec4 vMat; varying vec4 vExt; varying vec3 vLoc; varying vec3 vLocN; varying float vCivDist;
 
 float civH12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -46,14 +46,21 @@ float civShadowAt(vec3 lp, vec3 ln){
   vec3 sp = (uCivShadowM * vec4(lp + ln * uCivShadowP.x * 1.2, 1.0)).xyz;
   if (sp.x <= 0.0 || sp.y <= 0.0 || sp.x >= 1.0 || sp.y >= 1.0 || sp.z >= 1.0) return 1.0;
   float bias = uCivShadowP.y * (1.0 + 1.5 * min(sqrt(max(1.0 - ndl * ndl, 0.0)) / max(ndl, 0.05), 6.0));
+  // 4x4-texel tent-filtered PCF (bilinear 3x3 kernel): soft, stair-free edges
   float t = uCivShadowP.z;
-  float s = 0.0;
-  s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(-t, -t))));
-  s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(t, -t))));
-  s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(-t, t))));
-  s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(t, t))));
-  s += 2.0 * step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy)));
-  return s / 6.0;
+  vec2 tc = sp.xy / t - 0.5;
+  vec2 b = floor(tc);
+  float s = 0.0, ws = 0.0;
+  for (int j = 0; j < 4; j++) {
+    for (int i = 0; i < 4; i++) {
+      vec2 uv = (b + vec2(float(i) - 1.0, float(j) - 1.0) + 0.5) * t;
+      vec2 dd = abs(b + vec2(float(i) - 1.0, float(j) - 1.0) - tc);
+      float w = max(0.0, 1.5 - dd.x) * max(0.0, 1.5 - dd.y);
+      s += w * step(sp.z - bias, civUnpack(texture2D(uCivShadow, uv)));
+      ws += w;
+    }
+  }
+  return s / max(ws, 1e-5);
 }
 `;
 
@@ -371,6 +378,53 @@ void civWindows(inout CivS s, vec2 uv, vec2 fw, float fwm, vec3 wall){
   }
 }
 
+// ---------------------------------------------------------------- macro weathering
+// Ages every building: per-building value/hue jitter, metre-scale mottling in
+// settlement space, rain/soot streaks hanging from the eaves, a damp or sandy
+// ground-contact band with contact occlusion, and per-window light variance.
+void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, float H, bool roof, bool wallLike){
+  if (id == 7 || id == 9 || id == 14 || id == 15 || id == 23 || id == 26 || id == 29 || id == 19) return;
+  float hb = fract(seed * 113.7 + 0.31);
+  float hb2 = fract(seed * 71.3 + 0.77);
+  // per-building value (+-14%) and a slight warm/cool cast
+  s.alb *= (0.86 + 0.28 * hb) * mix(vec3(0.97, 0.99, 1.03), vec3(1.04, 1.0, 0.94), hb2);
+  // metre-scale mottling in settlement space (breaks up identical walls across the town)
+  float m1 = civF2(vLoc.xz * 0.045 + vLoc.y * 0.03 + 7.1);
+  float m2 = civN2(vLoc.xz * 0.21 + vLoc.y * 0.17);
+  s.alb *= 0.84 + 0.24 * m1 + 0.08 * m2;
+  if (wallLike) {
+    float far = smoothstep(0.08, 0.5, fwm);
+    // rain / soot streaks under the eaves and sills
+    float sx = uv.x * 1.1 + seed * 37.0;
+    float st = civN2(vec2(sx, uv.y * 0.035 + seed)) * 0.7 + civN2(vec2(sx * 3.1, uv.y * 0.08)) * 0.3;
+    float fromTop = clamp((H - uv.y) / max(H, 1.0), 0.0, 1.0);
+    float streak = smoothstep(0.5, 0.92, st) * (1.0 - smoothstep(0.0, 0.85, fromTop) * 0.65) * step(uv.y, H);
+    float k = id == 6 ? 0.42 : (id == 17 ? 0.22 : 0.3);
+    s.alb *= 1.0 - k * streak * mix(1.0, 0.6, far);
+    s.rough = mix(s.rough, s.rough * 0.85, streak * 0.4);
+    // ground-contact band: damp/moss in green worlds, sand drift in deserts
+    float bandH = 0.9 + 1.4 * civN2(vec2(uv.x * 0.35 + seed * 9.0, 3.0));
+    float band = (1.0 - smoothstep(0.0, bandH, uv.y)) * step(-0.5, uv.y);
+    vec3 bandC = (id == 6 || id == 17) ? uCivSand * 0.82 : s.alb * mix(vec3(0.5, 0.48, 0.42), uCivMoss * 1.4, 0.35 * (1.0 - uCivSnow));
+    s.alb = mix(s.alb, bandC, band * (id == 6 || id == 17 ? 0.7 : 0.5));
+    // contact occlusion at the wall foot (alley/ground junction)
+    s.ao *= mix(0.42, 1.0, smoothstep(0.0, 2.6, uv.y + 0.2));
+    // edge darkening near the top (parapet run-off)
+    s.alb *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, 0.7, H - uv.y)) * step(uv.y, H);
+    // per-window light variance: some brighter, some dim, a few cool; lanterns breathe
+    float wc = civH12(floor(vec2(uv.x / 2.7, uv.y / 3.1)) + seed * 17.0);
+    float gain = 0.35 + 2.2 * wc * wc;
+    vec3 tint = mix(vec3(1.0), vec3(0.75, 0.85, 1.15), step(0.94, fract(wc * 13.7)));
+    float flick = 1.0 + 0.12 * sin(uCivTime * (2.0 + 5.0 * wc) + wc * 40.0) * step(0.8, fract(wc * 7.3));
+    s.emit *= gain * tint * flick;
+  }
+  if (roof || id == 4 || id == 11 || id == 12) {
+    // roofs: sun-bleached patches and dark dirt lines in the valleys
+    float b = civF2(vLoc.xz * 0.12 + seed * 3.0);
+    s.alb *= 0.82 + 0.3 * b;
+  }
+}
+
 // ---------------------------------------------------------------- base surfaces
 CivS civSurface(){
   CivS s;
@@ -612,6 +666,16 @@ CivS civSurface(){
     s.alb *= 0.7 + 0.5 * n;
     s.h = n * (id == 21 ? 0.1 : 0.4);
     s.rough = 0.9;
+    if (id == 22) {
+      // leaf clumps: dark gaps between sunlit tufts, cooler deep inside, lighter tips on top
+      float far = smoothstep(0.08, 0.4, fwm);
+      float cl = civN2(uv * 2.6 + seed * 11.0) * 0.6 + civN2(uv * 6.3 + seed * 5.0) * 0.4;
+      float gap = smoothstep(0.5, 0.25, cl) * (1.0 - far);
+      s.alb *= mix(1.0, 0.45, gap);
+      s.ao *= mix(1.0, 0.55, gap) * (0.75 + 0.25 * clamp(up * 0.5 + 0.5, 0.0, 1.0));
+      s.alb *= mix(vec3(0.8, 0.9, 1.0), vec3(1.12, 1.08, 0.9), clamp(up * 0.5 + 0.5, 0.0, 1.0));
+      s.h += cl * 0.25 * (1.0 - far);
+    }
   } else if (id == 13) {
     // cloth banners: woven + emblem
     float weave = civLines(uv.x * 7.0, 1.0, 0.5, fw.x * 7.0) * 0.5 + civLines(uv.y * 7.0, 1.0, 0.5, fw.y * 7.0) * 0.5;
@@ -636,6 +700,7 @@ CivS civSurface(){
   }
 
   if (wallLike) civWindows(s, uv, fw, fwm, s.alb);
+  civWeather(s, id, seed, uv, fwm, up, H, roof, wallLike);
   // snow settles on up-facing surfaces (ice worlds)
   if (uCivSnow > 0.0 && id != 14 && id != 9 && id != 26 && id != 23) {
     float sn = smoothstep(0.3, 0.7, up + (civF2(vLoc.xz * 0.35) - 0.5) * 0.5) * uCivSnow;
@@ -746,6 +811,15 @@ CivS civSurface(){
   float curb = smoothstep(0.84, 0.9, edge) * (1.0 - smoothstep(0.98, 1.0, edge)) * step(float(id), 1.5);
   s.alb = mix(s.alb, s.alb * 1.18 + 0.03, curb * 0.8);
   s.h += curb * 0.06;
+  // gutters darken, the trodden centre is polished lighter, shallow puddles collect in the dips
+  float ec = abs(edge * 2.0 - 1.0);
+  s.alb *= 1.0 - 0.28 * smoothstep(0.72, 0.95, ec) * (1.0 - curb);
+  s.alb *= 1.0 + 0.1 * (1.0 - smoothstep(0.0, 0.45, ec));
+  s.ao *= 1.0 - 0.3 * smoothstep(0.8, 1.0, ec);
+  float pud = smoothstep(0.62, 0.7, civF2(p * 0.09 + seed * 5.0) + smoothstep(0.6, 1.0, ec) * 0.12) * step(float(id), 6.5);
+  s.rough = mix(s.rough, 0.08, pud * 0.85);
+  s.alb *= 1.0 - 0.35 * pud;
+  s.h *= 1.0 - pud;
   if (uCivSnow > 0.0) {
     float sn = smoothstep(0.35, 0.75, civF2(p * 0.12 + seed) + (1.0 - abs(edge * 2.0 - 1.0)) * -0.25 + 0.2) * uCivSnow;
     s.alb = mix(s.alb, vec3(0.85, 0.89, 0.95), sn); s.rough = mix(s.rough, 0.75, sn); s.h += sn * 0.02;
@@ -814,6 +888,7 @@ export function createCivUniforms(world, palette = {}) {
     uCivShadowOn: { value: 0 },
     uCivNearFade: { value: 70 },
     uCivSnow: { value: 0 },
+    uCivBounce: { value: new THREE.Vector3() },
     uCivPull: { value: 0 },
   };
 }
@@ -863,6 +938,9 @@ if (civS.glass > 0.001) {
   float civSh = ${dynamic ? '1.0' : 'civShadowAt(vLoc, normalize(vLocN))'};
   ${shadowNear ? 'civSh = mix(civSh, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}
   reflectedLight.directDiffuse *= civSh; reflectedLight.directSpecular *= civSh;
+  // warm bounce from the sunlit ground onto walls and under the eaves
+  float civUpN = clamp(normalize(vLocN).y, -1.0, 1.0);
+  reflectedLight.indirectDiffuse += BRDF_Lambert(diffuseColor.rgb) * uCivBounce * (0.5 - 0.5 * civUpN) * (1.0 - smoothstep(25.0, 90.0, vLoc.y)) * civS.ao;
 }`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
 { float civAo = civS.ao; ${ground ? 'civAo = mix(civAo, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}

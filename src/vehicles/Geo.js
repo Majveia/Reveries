@@ -28,15 +28,21 @@ function se(t, n) {
  * (w/h half extents, n superellipse exponent, top/bot scale the upper/lower half).
  */
 export function loft(sections, { seg = 28, caps = true } = {}) {
-  const pos = [], idx = [];
+  const pos = [], idx = [], uvm = [];
   const R = sections.length, S1 = seg + 1;
   for (let i = 0; i < R; i++) {
     const S = sections[i];
+    let arc = 0, px = 0, py = 0;
+    // start the seam at the keel (t = -π/2) so it hides under the belly
     for (let j = 0; j <= seg; j++) {
-      const t = (j / seg) * Math.PI * 2;
+      const t = (j / seg) * Math.PI * 2 - Math.PI / 2;
       const [c, s] = se(t, S.n ?? 2.5);
       const hh = s > 0 ? S.h * (S.top ?? 1) : S.h * (S.bot ?? 1);
-      pos.push((S.x || 0) + c * S.w, (S.y || 0) + s * hh, S.z);
+      const x = (S.x || 0) + c * S.w, y = (S.y || 0) + s * hh;
+      if (j) arc += Math.hypot(x - px, y - py);
+      px = x; py = y;
+      pos.push(x, y, S.z);
+      uvm.push(arc, S.z);
     }
   }
   for (let i = 0; i < R - 1; i++) for (let j = 0; j < seg; j++) {
@@ -45,6 +51,7 @@ export function loft(sections, { seg = 28, caps = true } = {}) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uvm', new THREE.Float32BufferAttribute(uvm, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   // weld the seam normals (j = 0 and j = seg share a position)
@@ -69,6 +76,7 @@ export function loft(sections, { seg = 28, caps = true } = {}) {
       }
       const cg = new THREE.BufferGeometry();
       cg.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+      cg.setAttribute('uvm', new THREE.Float32BufferAttribute(cp.filter((_, i) => i % 3 !== 2), 2));
       cg.computeVertexNormals();
       parts.push(cg);
     }
@@ -82,6 +90,9 @@ export function lathe(profile, seg = 28) {
   const g = new THREE.LatheGeometry(pts, seg);
   // LatheGeometry revolves around Y; turn Y into Z
   g.rotateX(Math.PI / 2);
+  const uv = g.attributes.uv, p = g.attributes.position, m = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) { const r = Math.hypot(p.getX(i), p.getY(i)); m[i * 2] = uv.getX(i) * Math.PI * 2 * Math.max(r, 0.05); m[i * 2 + 1] = p.getZ(i); }
+  g.setAttribute('uvm', new THREE.BufferAttribute(m, 2));
   return g;
 }
 
@@ -117,7 +128,7 @@ export function cyl(a, b, r0, r1 = r0, seg = 10) {
 
 function strip(g) {
   let n = g.index ? g.toNonIndexed() : g;
-  for (const k of Object.keys(n.attributes)) if (k !== 'position' && k !== 'normal') n.deleteAttribute(k);
+  for (const k of Object.keys(n.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uvm') n.deleteAttribute(k);
   if (!n.attributes.normal) n.computeVertexNormals();
   return n;
 }
@@ -126,9 +137,9 @@ function strip(g) {
  * Normalize a part: non-indexed, box-projected UVs (uvScale per meter), vertex
  * colors from `paint` (hex, THREE.Color or fn(x,y,z,nx,ny,nz) → Color).
  */
-export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0) {
+export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao = 0.3) {
   g = strip(g);
-  const p = g.attributes.position, nrm = g.attributes.normal;
+  const p = g.attributes.position, nrm = g.attributes.normal, um = g.attributes.uvm;
   const N = p.count;
   const uv = new Float32Array(N * 2), col = new Float32Array(N * 3);
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), fn = new THREE.Vector3();
@@ -141,14 +152,18 @@ export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0) {
       const v = i + k;
       const x = p.getX(v), y = p.getY(v), z = p.getZ(v);
       let u, w;
-      if (ax >= ay && ax >= az) { u = z; w = y; } else if (ay >= az) { u = x; w = z; } else { u = x; w = y; }
+      if (um) { u = um.getX(v); w = um.getY(v); }
+      else if (ax >= ay && ax >= az) { u = z; w = y; } else if (ay >= az) { u = x; w = z; } else { u = x; w = y; }
       uv[v * 2] = u * uvScale; uv[v * 2 + 1] = w * uvScale;
       const C = fixed || paint(x, y, z, nrm.getX(v), nrm.getY(v), nrm.getZ(v), _c);
-      col[v * 3] = C.r; col[v * 3 + 1] = C.g; col[v * 3 + 2] = C.b;
+      // baked sky occlusion: undersides and inward faces darker (cheap cavity AO)
+      const occ = 1 - ao * (0.5 - 0.5 * nrm.getY(v));
+      col[v * 3] = C.r * occ; col[v * 3 + 1] = C.g * occ; col[v * 3 + 2] = C.b * occ;
     }
   }
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (um) g.deleteAttribute('uvm');
   return g;
 }
 

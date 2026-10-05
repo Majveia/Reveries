@@ -479,8 +479,10 @@ export function createTerrain(p) {
 
     // ---- band-limited detail (64 m → 1.5 m) --------------------------------
     {
-      const r2 = clamp01(rough * 0.6 + rock * 0.8 + cliff * 0.6);
-      const amp = style === 'dunes' ? 0.04 + 2.6 * clamp01(rock * 0.8 + cliff * 0.6) : 0.55 + 2.6 * r2;
+      // soft ground (meadow, plains) stays gently undulating — metre-scale
+      // lumps on grass read as 'moguls'; bedrock keeps the full broken relief
+      const rk = clamp01(rock * 0.8 + cliff * 0.6);
+      const amp = style === 'dunes' ? 0.04 + 2.6 * rk : 0.22 + 0.45 * rough + 2.8 * rk;
       const d = fbmAmp(nD, X / 48 + o[21], Y / 48 + o[22], Z / 48 + o[23], 6, 2.0, 0.44, 48);
       h += d * amp;
     }
@@ -644,7 +646,10 @@ export function createTerrain(p) {
     // rocky escarpments & buttes (isotropic: no axis-aligned fluting)
     let rockH = -1e9, riser = 0, rr = 0;
     if (up > 0.001) {
-      rr = mountains(x, y, z, X, Y, Z, 7000, 7, 1.6, 1.5);
+      // smooth driver: terracing a ridged field stacks its knife-thin crest
+      // into 150 m fins; a smooth field terraces into real mesas & buttes
+      const wq = fbmM(nW, X, Y, Z, 4000, 2, 2.0, 0.5, 1.1, -0.7, 2.9) * 0.35;
+      rr = clamp01(fbm(nM, X / 6000 + wq + 31.7, Y / 6000 - wq - 12.4, Z / 6000 + wq + 7.1, 5, 2.0, 0.5, 6000) * 0.85 + 0.5);
       const plateau = terrace(rel * 0.5 * (0.3 + 0.7 * rr) * up, rel * 0.07, 0.8);
       riser = TR.riser;
       rockH = base * 0.6 + plateau;
@@ -718,21 +723,24 @@ export function createTerrain(p) {
     if (dens > 0.001) {
       // fluted outlines: the radius wobble lives on the sphere (no height term)
       // → vertical karren runnels on every wall, 8–20 m period
-      const wob = fbmM(nD, X, Y, Z, 60, 2, 2.0, 0.5, 0, 0, 0) * 0.07 + fbmM(nD, X, Y, Z, 16, 2, 2.0, 0.5, 1.7, 0, -2.1) * 0.03;
+      // in metres, slope < 1 → the radial profile stays monotonic (no detached
+      // needle fragments where the wobble dips outside the wall)
+      const wobM = fbmM(nD, X, Y, Z, 60, 2, 2.0, 0.5, 0, 0, 0) * 5.0 + fbmM(nD, X, Y, Z, 16, 2, 2.0, 0.5, 1.7, 0, -2.1) * 1.0;
       const crownN = fbmM(nD, X, Y, Z, 45, 2, 2.0, 0.5, -4.4, 2.2, 0);
       KT.t = 1;
       const bigC = 300, smallC = 120;
       const big = cells(nK, X, Y, Z, bigC, 11, (d, ra, rb, rc, acc) => {
         if (ra > 0.95 * dens - 0.03) return acc; // empty cell (lone towers where sparse)
         const rad = 0.17 + 0.2 * rb; // in cells (< 0.5)
-        const t = (d + wob) / rad;
+        const t = (d + wobM / bigC) / rad;
         if (t >= 1.0) return acc;
         const Ht = (150 + 400 * rc * rc) * (0.6 + 0.4 * dens);
         // flattish vegetated crown, near-vertical fluted walls, talus apron
         const ws = Math.min(0.3, LS * 1.6 / (rad * bigC));
         const top = 1 - 0.1 * t * t - 0.14 * t * t * t * t + crownN * 0.035 * (1 - t);
         const wl = 1 - smoothstep(0.8 - ws, 0.97, t);
-        const v = Ht * top * wl + Ht * 0.05 * (1 - smoothstep(0.86, 1.0, t)) * (1 - wl);
+        // dips below the blend width at the rim → smax hands back acc continuously
+        const v = Ht * top * wl + Ht * 0.05 * (1 - smoothstep(0.86, 1.0, t)) * (1 - wl) - 14 * smoothstep(0.9, 1.0, t);
         if (v > acc) KT.t = Math.min(KT.t, t);
         return smax(acc, v, 12);
       }, 0);
@@ -740,11 +748,11 @@ export function createTerrain(p) {
       const small = cells(nK, X, Y, Z, smallC, 23, (d, ra, rb, rc, acc) => {
         if (ra > 0.6 * dens - 0.04) return acc;
         const rad = 0.16 + 0.24 * rb;
-        const t = (d + wob * 1.3) / rad;
+        const t = (d + wobM * 0.8 / smallC) / rad;
         if (t >= 1.0) return acc;
         const Ht = (50 + 190 * rc) * (0.4 + 0.6 * dens);
         const ws = Math.min(0.3, LS * 1.6 / (rad * smallC));
-        const v = Ht * (1 - 0.18 * t * t + crownN * 0.04) * (1 - smoothstep(0.76 - ws, 0.97, t));
+        const v = Ht * (1 - 0.18 * t * t + crownN * 0.04) * (1 - smoothstep(0.76 - ws, 0.97, t)) - 7 * smoothstep(0.9, 1.0, t);
         if (v > acc) KT.t = Math.min(KT.t, t);
         return smax(acc, v, 6);
       }, 0);

@@ -22,7 +22,7 @@
 import * as THREE from 'three';
 import { FULLSCREEN_VERT } from '../../../core/glsl/common.js';
 
-export const TRANS_W = 256, TRANS_H = 64, MS_SIZE = 32, SKY_W = 192, SKY_H = 108;
+export const TRANS_W = 256, TRANS_H = 64, MS_SIZE = 32, SKY_W = 192, SKY_H = 108, IRR_W = 64, IRR_H = 16;
 export const AP_SLICES = 32, AP_RES = 32; // froxel volume: 32×32 screen tiles × 32 depth slices
 
 // Tunables (visual optical depths, vertical, at density 1).
@@ -58,6 +58,7 @@ uniform vec4 uFog;          // x: fog density at ground (1/m), y: 1/fog scale he
 uniform vec3 uFogColor;     // fog / dust scattering colour (albedo per channel)
 uniform sampler2D tTransmittance;
 uniform sampler2D tMultiScat;
+uniform sampler2D tIrradiance;  // mean sky radiance on an up-facing surface per unit light (Bruneton E(r, mu_s)/pi)
 `;
 
 /** Media, phase functions, LUT parameterisations, integration. Requires ATMO_PARS. */
@@ -66,6 +67,11 @@ export const ATMO_FUNCS = /* glsl */ `
 float atmoSunShadow(vec3 P);
 #endif
 float atmoSafeSqrt(float x){ return sqrt(max(x, 0.0)); }
+#ifdef ATMO_FOG_NOISE
+// Spatial structure of the weather fog / dust (drifting walls, valley banks); defined by the including shader.
+vec3 gAtmoP = vec3(0.0);
+float atmoFogNoise(vec3 P);
+#endif
 // Per-pixel sample offset (0..1) for the in-scattering march; < 0 = fixed (smooth).
 float gAtmoJitter = -1.0;
 
@@ -103,6 +109,9 @@ void atmoMedium(float r, out vec3 scatR, out vec3 scatM, out vec3 ext){
   // Weather fog / dust: an extra low, dense layer (lit like Mie with its own albedo).
   if (uFog.x > 0.0) {
     float dF = uFog.x * exp(-max(h - uFog.z, 0.0) * uFog.y);
+#ifdef ATMO_FOG_NOISE
+    dF *= atmoFogNoise(gAtmoP);
+#endif
     scatM += uFogColor * dF * uFog.w;
     ext += vec3(dF);
   }
@@ -148,6 +157,13 @@ vec3 atmoMultiScat(float r, float mu){
   return texture2D(tMultiScat, vec2(0.5 / ${MS_SIZE}.0 + x * (1.0 - 1.0 / ${MS_SIZE}.0), 0.5 / ${MS_SIZE}.0 + y * (1.0 - 1.0 / ${MS_SIZE}.0))).rgb;
 }
 
+// Mean sky radiance (irradiance / pi) on a surface facing 'up' at radius r, light at cos-zenith mu, per unit TOA illuminance.
+vec3 atmoSkyIrr(float r, float mu){
+  float x = clamp(mu * 0.5 + 0.5, 0.0, 1.0);
+  float y = clamp((r - uRb) / (uRt - uRb), 0.0, 1.0);
+  return texture2D(tIrradiance, vec2(0.5 / ${IRR_W}.0 + x * (1.0 - 1.0 / ${IRR_W}.0), 0.5 / ${IRR_H}.0 + y * (1.0 - 1.0 / ${IRR_H}.0))).rgb;
+}
+
 // Source term (in-scattered radiance per meter) at radius r / up vector, for both lights.
 vec3 atmoSource(vec3 P, float r, vec3 sR, vec3 sM, float pRs, float pMs, float pRm, float pMm){
   vec3 up = P / r;
@@ -190,6 +206,9 @@ void atmoIntegrate(vec3 ro, vec3 rd, float t0, float t1, int N, int mode, out ve
     vec3 P = ro + rd * t;
     float r = length(P);
     vec3 sR, sM, ext;
+#ifdef ATMO_FOG_NOISE
+    gAtmoP = P;
+#endif
     atmoMedium(r, sR, sM, ext);
     vec3 S = atmoSource(P, r, sR, sM, pRs, pMs, pRm, pMm);
     vec3 st = exp(-ext * dt);
@@ -295,6 +314,47 @@ void main(){
   gl_FragColor = vec4(L2 / max(vec3(1.0) - fms, vec3(1e-3)), 1.0);
 }`;
 
+// Sky irradiance LUT: integrates single + multiple scattering over the upper
+// hemisphere for a unit light at cos-zenith mu_s (stores E/pi = mean radiance).
+const IRR_FRAG = /* glsl */ `
+${ATMO_PARS}
+${ATMO_FUNCS}
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5) / vec2(${IRR_W - 1}.0, ${IRR_H - 1}.0);
+  float muS = clamp(uv.x * 2.0 - 1.0, -1.0, 1.0);
+  float r = clamp(uRb + uv.y * (uRt - uRb), uRb + 1.0, uRt - 1.0);
+  vec3 sunDir = vec3(0.0, muS, atmoSafeSqrt(1.0 - muS * muS));
+  vec3 ro = vec3(0.0, r, 0.0);
+  vec3 acc = vec3(0.0);
+  const int NA = 8, NE = 6, STEPS = 12;
+  for (int i = 0; i < NA; i++) {
+    for (int j = 0; j < NE; j++) {
+      float ph = 2.0 * PI * (float(i) + 0.5) / float(NA);
+      float ct = (float(j) + 0.5) / float(NE);           // uniform in cos(theta) over the hemisphere
+      float stt = atmoSafeSqrt(1.0 - ct * ct);
+      vec3 rd = vec3(stt * cos(ph), ct, stt * sin(ph));
+      float c = dot(rd, sunDir);
+      float pR = phaseRayleigh(c), pM = phaseMie(c, uMieG);
+      float tMax = distToTopR(r, ct);
+      float dt = tMax / float(STEPS);
+      vec3 T = vec3(1.0), L = vec3(0.0);
+      for (int s = 0; s < STEPS; s++) {
+        vec3 P = ro + rd * ((float(s) + 0.5) * dt);
+        float rr = length(P);
+        vec3 sR, sM, ext;
+        atmoMedium(rr, sR, sM, ext);
+        float mu = dot(P / rr, sunDir);
+        vec3 S = transmittanceToLight(rr, mu) * (sR * pR + sM * pM) + atmoMultiScat(rr, mu) * (sR + sM);
+        vec3 st = exp(-ext * dt);
+        L += T * (S - S * st) / max(ext, vec3(1e-12));
+        T *= st;
+      }
+      acc += L * ct;
+    }
+  }
+  gl_FragColor = vec4(acc * 2.0 / float(NA * NE), 1.0);
+}`;
+
 const SKYVIEW_FRAG = /* glsl */ `
 ${ATMO_PARS}
 ${ATMO_FUNCS}
@@ -319,8 +379,9 @@ void main(){
   int N = int(clamp(18.0 + tMax / (uRt - uRb) * 4.0, 18.0, 32.0));
   atmoIntegrate(ro, rd, 0.0, tMax, N, g ? 2 : 0, L, T);
   // Night airglow: a faint emissive layer seen edge-on near the horizon.
-  float el = max(0.0, 1.0 - abs(theta - zh + 0.04) * 2.2);
-  L += uNightGlow * (0.25 + el * el * 1.5) * (g ? 0.4 : 1.0);
+  // confined to ~8 degrees above the horizon; the zenith stays OLED black
+  float el = max(0.0, 1.0 - abs(theta - zh + 0.05) * 7.0);
+  L += uNightGlow * (0.015 + el * el * 1.6) * (g ? 0.4 : 1.0);
   gl_FragColor = vec4(L, dot(T, vec3(0.3333)));
 }`;
 
@@ -377,7 +438,7 @@ export class AtmosphereModel {
       uSunDir: { value: this.sunDir }, uSunE: { value: this.sunE },
       uMoonDir: { value: this.moonDir }, uMoonE: { value: this.moonE },
       uFog: { value: new THREE.Vector4(0, 1 / 120, 0, 0.9) }, uFogColor: { value: new THREE.Vector3(1, 1, 1) },
-      tTransmittance: { value: null }, tMultiScat: { value: null },
+      tTransmittance: { value: null }, tMultiScat: { value: null }, tIrradiance: { value: null },
       tSkyView: { value: null }, uSkyFrame: { value: new THREE.Matrix3() }, uSkyR: { value: this.Rb + 2 },
       uNightGlow: { value: new THREE.Vector3() },
     };
@@ -410,7 +471,8 @@ export class AtmosphereModel {
     // Mie: aerosols, haze. mieColor is the single-scattering albedo tint.
     const haze = A.haze ?? 0.3, mie = A.mie ?? 0.4;
     const w = this.weather;
-    const tauM = (mie * (0.045 + 0.3 * haze) + w.dust * 0.35 + w.overcast * 0.08) * density;
+    // clamp the aerosol column: a dusty sky keeps a readable sun disc and a darker zenith
+    const tauM = Math.min((mie * (0.045 + 0.3 * haze) + w.dust * 0.35 + w.overcast * 0.08) * density, 0.6);
     const mc = new THREE.Color(A.mieColor || '#ffffff');
     const mx = Math.max(mc.r, mc.g, mc.b, 1e-3);
     const ms = tauM / colM;
@@ -454,12 +516,15 @@ export class AtmosphereModel {
       this.transRT = hdr(TRANS_W, TRANS_H, { type: THREE.FloatType });
       this.msRT = hdr(MS_SIZE, MS_SIZE);
       this.skyRT = hdr(SKY_W, SKY_H, { wrapS: THREE.RepeatWrapping });
+      this.irrRT = hdr(IRR_W, IRR_H);
+      this.uniforms.tIrradiance.value = this.irrRT.texture;
       this.uniforms.tTransmittance.value = this.transRT.texture;
       this.uniforms.tMultiScat.value = this.msRT.texture;
       this.uniforms.tSkyView.value = this.skyRT.texture;
       this.transMat = mat(TRANS_FRAG, this.uniforms);
       this.msMat = mat(MS_FRAG, this.uniforms);
       this.skyMat = mat(SKYVIEW_FRAG, this.uniforms);
+      this.irrMat = mat(IRR_FRAG, this.uniforms);
       this._fs = makeFullscreen();
       this.buildLUTs();
       this.ready = true;
@@ -472,6 +537,7 @@ export class AtmosphereModel {
     const prev = r.getRenderTarget();
     this._fs.render(r, this.transMat, this.transRT);
     this._fs.render(r, this.msMat, this.msRT);
+    this._fs.render(r, this.irrMat, this.irrRT);
     r.setRenderTarget(prev);
     this.lutDirty = false;
   }
@@ -543,8 +609,8 @@ export class AtmosphereModel {
   }
 
   dispose() {
-    for (const t of [this.transRT, this.msRT, this.skyRT]) t?.dispose();
-    for (const m of [this.transMat, this.msMat, this.skyMat]) m?.dispose();
+    for (const t of [this.transRT, this.msRT, this.skyRT, this.irrRT]) t?.dispose();
+    for (const m of [this.transMat, this.msMat, this.skyMat, this.irrMat]) m?.dispose();
     this._fs?.dispose();
   }
 }

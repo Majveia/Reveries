@@ -87,7 +87,7 @@ export default class Ocean {
     if (!gdata) gdata = bakeGlobal(this._terrain(), w.seaLevel, this.gw, this.gh);
     this.tGlobal = new THREE.DataTexture(toHalf(gdata), this.gw, this.gh, THREE.RedFormat, THREE.HalfFloatType);
     Object.assign(this.tGlobal, { wrapS: THREE.RepeatWrapping, wrapT: THREE.ClampToEdgeWrapping, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter, generateMipmaps: false, needsUpdate: true });
-    this.tLocal = new THREE.DataTexture(new Uint16Array(4), 2, 2, THREE.RedFormat, THREE.HalfFloatType);
+    this.tLocal = new THREE.DataTexture(new Uint16Array(8), 2, 2, THREE.RGFormat, THREE.HalfFloatType);
     Object.assign(this.tLocal, { magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter, generateMipmaps: false, needsUpdate: true });
     this.localCenter = new THREE.Vector2(1e9, 1e9);
     this.localPending = false;
@@ -203,6 +203,7 @@ export default class Ocean {
       uAnchor: { value: this.anchor }, uT1: { value: this.T1 }, uT2: { value: this.T2 },
       tGlobal: { value: this.tGlobal }, tLocal: { value: this.tLocal }, uLocal: { value: new THREE.Vector4(0, 0, 1, 0) },
       uSwash: { value: lava ? 0.05 : 0.22 }, uWaveScale: { value: 1 },
+      uSurf: { value: new THREE.Vector4(1, 30, TAU / 8.5, lava ? 0 : 1) },
       uCapU: { value: new THREE.Vector3(0, 1, 0) }, uCapE: { value: new THREE.Vector3(1, 0, 0) }, uCapN: { value: new THREE.Vector3(0, 0, 1) },
       uCapD0: { value: 1 }, uCapDmax: { value: 1000 }, uRings: { value: this.rings }, uSegs: { value: this.segs },
       tDetail: { value: this.tDetail }, tPlates: { value: this.tPlates || this.tDetail },
@@ -269,7 +270,7 @@ export default class Ocean {
     const msg = { n, A: this.anchor.toArray(), T1: this.T1.toArray(), T2: this.T2.toArray(), U: this.anchorU.toArray(), Rs: this.seaRadius, cx, cz, extent: ext };
     const apply = (data) => {
       const t = this.tLocal;
-      if (t.image.width !== n) { t.dispose(); this.tLocal = new THREE.DataTexture(toHalf(data), n, n, THREE.RedFormat, THREE.HalfFloatType); Object.assign(this.tLocal, { magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter, generateMipmaps: false, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping }); this.uniforms.tLocal.value = this.tLocal; }
+      if (t.image.width !== n) { t.dispose(); this.tLocal = new THREE.DataTexture(toHalf(data), n, n, THREE.RGFormat, THREE.HalfFloatType); Object.assign(this.tLocal, { magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter, generateMipmaps: false, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping }); this.uniforms.tLocal.value = this.tLocal; }
       else t.image.data = toHalf(data);
       this.tLocal.needsUpdate = true;
       this.uniforms.uLocal.value.set(cx, cz, 1 / (2 * ext), 1);
@@ -302,6 +303,7 @@ export default class Ocean {
     u.uWaveScale.value = this.isLava ? 1 : 0.85 + 0.5 * ws;
     u.uDetail.value.z = this.isLava ? 0.1 : 0.16 + 0.12 * ws;
     u.uDetail.value.w = time;
+    u.uSurf.value.x = 0.55 + 0.9 * ws;
 
     // cap: the visible sea disc
     const ref = Math.abs(nadir.y) < 0.95 ? _v.set(0, 1, 0) : _v.set(1, 0, 0);

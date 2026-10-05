@@ -17,7 +17,7 @@
 
 import * as THREE from 'three';
 import { buildShip } from './Models.js';
-import { Flame, Trail, Plasma } from './VFX.js';
+import { Flame, Trail, Plasma, GlowSprite, BlobShadow } from './VFX.js';
 
 const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep, lerp = THREE.MathUtils.lerp;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -56,7 +56,18 @@ export class Ship {
       model.group.add(f.mesh);
       return f;
     });
-    this.vortex = model.wingtips.map(() => new Trail(72, { width: 0.18, color: [0.9, 0.94, 1.0], minStep: 3 }));
+    // nozzle glow sprites: the bell reads white-hot from any angle, and seeds the bloom
+    this.glows = model.nozzles.map((n, i) => {
+      const g = new GlowSprite(i ? [0.45, 0.6, 1.0] : [1.0, 0.55, 0.25], n.r * 4.2);
+      g.mesh.position.copy(n.pos);
+      model.group.add(g.mesh);
+      return g;
+    });
+    this._coreA = new THREE.Color(1.0, 0.86, 0.7); this._edgeA = new THREE.Color(1.0, 0.38, 0.1);
+    this._coreS = new THREE.Color(0.75, 0.9, 1.0); this._edgeS = new THREE.Color(0.25, 0.45, 1.0);
+    this.shadow = new BlobShadow();
+    this._sprayAcc = 0;
+    this.vortex = model.wingtips.map(() => new Trail(26, { width: 0.05, grow: 16, color: [0.9, 0.94, 1.0], minStep: 2, erode: 0.8 }));
     this.contrail = new Trail(96, { width: 1.4, color: [1, 1, 1], minStep: 6, additive: false });
     this.plasma = new Plasma(6.5);
     this.object3d.add(this.plasma.mesh);
@@ -67,6 +78,7 @@ export class Ship {
     scene.add(this.object3d);
     for (const t of this.vortex) scene.add(t.mesh);
     scene.add(this.contrail.mesh);
+    scene.add(this.shadow.mesh);
   }
 
   /** Park on the ground at dir, nose along `forward`. */
@@ -317,16 +329,31 @@ export class Ship {
     const ap = this.sys.apParams || {};
     const fwd = _v3.copy(Z).applyQuaternion(this.quaternion);
     const pitchAng = Math.asin(clamp(fwd.dot(up), -1, 1));
-    const wantClimb = clamp(((ap.alt ?? 90) - this.alt) / 400, -0.25, 0.25);
+    // clearance over whatever is below (terrain, roofs or the sea surface)
+    const g = this.world.groundAt(this.position, _g);
+    const clear = this.position.length() - Math.max(g.radius, g.water ? g.waterRadius : -Infinity);
+    const wantClimb = clamp(((ap.alt ?? 90) - clear) / 250, -0.25, 0.25);
     this.thrSet = ap.throttle ?? 0.85;
     return { pitchIn: clamp((wantClimb - pitchAng) * 3, -0.6, 0.6), yawIn: ap.yaw ?? 0.18, rollIn: 0, vert: 0, boost: !!ap.boost };
   }
 
   _fx(dt, t, driven) {
     const sys = this.sys, M = this.model;
-    const thr = this.landed ? (driven ? 0.06 : 0) : clamp(this.throttle, 0.1, 1);
-    this.flames.forEach((f, i) => f.set(i ? thr * 0.8 : thr, this.boost, t + i * 3.1));
-    M.hotMat.color.setRGB(1.0, 0.5, 0.25).multiplyScalar(this.landed && !driven ? 0.25 : 1.5 + thr * 4 + this.boost * 6);
+    const thr = this.landed ? (driven ? 0.06 : 0) : clamp(this.throttle, 0.25, 1);
+    const sp = this.space;
+    this.flames.forEach((f, i) => {
+      f.set(i ? thr * 0.85 : thr, this.boost, t + i * 3.1);
+      // dense air: hot orange afterburner; vacuum: blue ion plume
+      if (i === 0) { f.uniforms.uCore.value.copy(this._coreA).lerp(this._coreS, sp); f.uniforms.uEdge.value.copy(this._edgeA).lerp(this._edgeS, sp); }
+    });
+    const cold = this.landed && !driven;
+    const hotI = cold ? 0.18 : 2.5 + thr * 9 + this.boost * 12;
+    M.hotMat.color.setRGB(lerp(1, 0.7, sp), lerp(1, 0.85, sp), 1).multiplyScalar(hotI);
+    this.glows.forEach((g, i) => {
+      g.mesh.visible = !cold;
+      g.uniforms.uI.value = (0.6 + thr * 1.6 + this.boost * 2.0) * (i ? 0.8 : 1);
+      if (i === 0) g.uniforms.uColor.value.setRGB(lerp(1.0, 0.45, sp), lerp(0.55, 0.65, sp), lerp(0.25, 1.0, sp));
+    });
     // gear animation (rotate up into the belly)
     const gt = this.gearT;
     M.gear.visible = gt > 0.02;
@@ -351,6 +378,39 @@ export class Ship {
     _p.set(0, 0.06, -7).applyMatrix4(obj.matrixWorld);
     if (this.landed) this.contrail.reset(); else this.contrail.push(_p, Math.max(contrailI, sys.forceContrail || 0));
     this.contrail.uniforms.uLight.value.copy(sys.ambientLight).multiplyScalar(1.3);
+    // ground effect: rooster-tail spray over water / dust over land, and a soft contact shadow
+    const w = this.world;
+    const g = w.groundAt(this.position, _g);
+    const top = Math.max(g.radius, g.water ? g.waterRadius : -Infinity);
+    const upN = _n.copy(this.position).normalize();
+    const clear = this.position.length() - top;
+    const sh = this.shadow;
+    sh.mesh.visible = clear < 45 && !this.landed;
+    if (sh.mesh.visible) {
+      sh.mesh.position.copy(upN).multiplyScalar(top + 0.15);
+      const fw = _v2.copy(Z).applyQuaternion(this.quaternion);
+      _m.lookAt(_v3.set(0, 0, 0), _v.copy(fw).addScaledVector(upN, -fw.dot(upN)).normalize().negate(), upN);
+      sh.mesh.quaternion.setFromRotationMatrix(_m);
+      const k = 1 + clear * 0.08;
+      sh.mesh.scale.set(9 * k, 1, 12 * k);
+      sh.uniforms.uI.value = 0.55 * clamp(1 - clear / 45, 0, 1) * (g.water ? 0.6 : 1) * (0.3 + 0.7 * w.daylight);
+    }
+    if (!this.landed && clear < 28 && this.speed > 25) {
+      const P = g.water ? sys.spray : sys.dust;
+      const rate = clamp(this.speed / 120, 0, 1.6) * (1 - clear / 28) * (g.water ? 160 : 70) * sys.fxScale * (1 + this.boost);
+      this._sprayAcc += rate * dt;
+      const fw = _v2.copy(this.velocity).addScaledVector(upN, -this.velocity.dot(upN)).normalize();
+      const lf = _v3.crossVectors(upN, fw).normalize();
+      const dc = sys.dustColor;
+      while (this._sprayAcc >= 1) {
+        this._sprayAcc -= 1;
+        const side = Math.random() < 0.5 ? -1 : 1, back = 4 + Math.random() * 8;
+        _p.copy(this.position).addScaledVector(upN, -clear + 0.2).addScaledVector(fw, -back).addScaledVector(lf, side * (0.3 + Math.random() * 1.2));
+        const vel = _v.copy(fw).multiplyScalar(this.speed * (0.1 + Math.random() * 0.12)).addScaledVector(lf, side * (2 + Math.random() * 5)).addScaledVector(upN, g.water ? 6 + Math.random() * 9 : 1 + Math.random() * 3);
+        if (g.water) P.emit(_p, vel, 0.9 + Math.random() * 0.9, 0.5, 2.6 + Math.random() * 2, 0.9, 0.94, 0.98, 0.5, t, true);
+        else P.emit(_p, vel, 1.8 + Math.random() * 1.5, 1.0, 5 + Math.random() * 4, dc.r, dc.g, dc.b, 0.3, t, false);
+      }
+    }
     // re-entry plasma sheath, oriented along the velocity
     const pl = this.plasma;
     pl.mesh.visible = this.reentry > 0.02;
@@ -366,6 +426,8 @@ export class Ship {
 
   dispose() {
     for (const f of this.flames) f.dispose();
+    for (const g of this.glows) g.dispose();
+    this.shadow.dispose(); this.shadow.mesh.removeFromParent();
     for (const tr of this.vortex) { tr.dispose(); tr.mesh.removeFromParent(); }
     this.contrail.dispose(); this.contrail.mesh.removeFromParent();
     this.plasma.dispose();

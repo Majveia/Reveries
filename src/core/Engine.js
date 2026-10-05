@@ -160,7 +160,7 @@ export class Engine {
       this.level = lvl; this.levelName = name; this.addr = { ...addr };
       this.ui.info(null); this.ui.prompt(null); this.ui.telemetry(null);
       this.ui.setLocation(lvl.crumbs || this.universe.crumbs(addr));
-      if (lvl.grade) this.postfx.setGrade(lvl.grade, 0); else this.postfx.resetGrade(0);
+      this.postfx.resetGrade(0); if (lvl.grade) this.postfx.setGrade(lvl.grade, 0); // reset first: no grade keys leak between levels
       lvl.onResize?.(window.innerWidth, window.innerHeight);
       lvl.enter?.(prevName);
       this._updateURL(name, addr);

@@ -13,7 +13,7 @@ export function palette(A, rng) {
   const P = A?.palette || {};
   void rng;
   return {
-    concrete: ['#b5a690', '#a89a84', '#bfae94', '#9d907c', '#c4b49a'].map(col),
+    concrete: ['#9c9080', '#8c8274', '#a69882', '#857a6c', '#ab9c86', '#7c7266'].map(col),
     adobe: ['#c49a72', '#b88c66', '#cfa77e', '#a98060'].map(col),
     dark: col('#3a332c'), black: col('#0c0b0a'),
     stone: col('#a2927a'), stoneDark: col('#7d6e5a'), wood: col('#5a4430'), trim: col('#c8b89a'), iron: col('#1c1a18'),
@@ -38,6 +38,7 @@ function slab(ctx, lot, w, d, H) {
   const c = rng.pick(pal.concrete).clone().multiplyScalar(rng.range(0.92, 1.04));
   plinth(ctx, w, d, lot, 0.4, M.CONCRETE, c.clone().multiplyScalar(0.9), 0.4);
   const fh = rng.range(3.6, 4.4);
+  if (H > 34) return colossalSlab(ctx, w, d, H, c);
   const battered = rng.chance(0.55);
   const inset = battered ? H * rng.range(0.05, 0.11) : 0;
   B.mat(M.CONCRETE, rng.float(), W.SLIT, fh).color(c).ext(1, 0, 0, 0);
@@ -72,6 +73,54 @@ function slab(ctx, lot, w, d, H) {
     ctx.beacons.push({ position: new THREE.Vector3(w * 0.3 - inset, H + 7.2, -d * 0.2 + inset).applyMatrix4(ctx.M), color: col('#ff3020'), scale: 0.7, phase: 2 + rng.float() });
   }
   return H;
+}
+
+/** Villeneuve scale: blank battered faces, a human door for scale, deep slot galleries glowing from within, a cantilevered crown. */
+function colossalSlab(ctx, w, d, H, c) {
+  const { rng, pal } = ctx, B = ctx.B;
+  const inset = H * rng.range(0.06, 0.12);
+  B.mat(M.CONCRETE, rng.float(), W.NONE, 4).color(c).ext(1, 0, F.NOWIN, 0);
+  B.frustumBox(-w / 2, -d / 2, w / 2, d / 2, 0.4, H, inset, { base: 0.4, top: true });
+  const faceZ = (y) => d / 2 - inset * (y - 0.4) / (H - 0.4);
+  const faceX = (y) => w / 2 - inset * (y - 0.4) / (H - 0.4);
+  // horizontal slot galleries: a dark recess band with a thin hot line of light inside
+  const n = rng.int(2, 4);
+  for (let i = 0; i < n; i++) {
+    const y = H * (0.28 + 0.55 * (i / Math.max(1, n - 1))) + rng.range(-2, 2);
+    const sw = (faceX(y) * 2) * rng.range(0.45, 0.8), sh = rng.range(1.0, 1.8);
+    const z = faceZ(y);
+    B.mat(M.CONCRETE, 0.2, 0, 3).color(pal.black).ext(0.3, 0, F.NOWIN, 0);
+    B.box(-sw / 2, y, z - 0.6, sw / 2, y + sh, z + 0.08, { base: y, top: false, sides: [true, false, false, false] });
+    B.mat(M.CONCRETE, 0.3, 0, 3).color(c.clone().multiplyScalar(0.8)).ext(0.6, 0, F.NOWIN, 0);
+    B.box(-sw / 2 - 0.6, y - 0.5, z - 0.2, sw / 2 + 0.6, y, z + 0.9, { base: y - 0.5 }); // sill lip
+    if (rng.chance(0.75)) {
+      B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(rng.range(0.25, 0.6)));
+      const lw = sw * rng.range(0.15, 0.6), lx = rng.range(-sw / 2 + lw / 2, sw / 2 - lw / 2);
+      B.box(lx - lw / 2, y + 0.15, z - 0.5, lx + lw / 2, y + 0.45, z + 0.1, { base: y + 0.15, top: false, sides: [true, false, false, false] });
+    }
+    // a few side slits on the short faces
+    const xs = faceX(y);
+    B.mat(M.CONCRETE, 0.2, 0, 3).color(pal.black).ext(0.3, 0, F.NOWIN, 0);
+    B.box(xs - 0.6, y, -d * 0.2, xs + 0.08, y + sh * 2.5, -d * 0.2 + 0.9, { base: y, top: false });
+  }
+  // a human-scale door at the foot (scale cue) and a lit lobby slit
+  const dz = d / 2 + 0.02;
+  B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.black).ext(0.3, 0, F.NOWIN, 0);
+  B.box(-1.2, 0.4, dz - 0.8, 1.2, 4.6, dz, { base: 0.4, top: false, sides: [true, false, false, false] });
+  B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(0.55));
+  B.box(-0.9, 0.4, dz - 0.6, 0.9, 3.2, dz + 0.02, { base: 0.4, top: false, sides: [true, false, false, false] });
+  glow(ctx, 0, 2.4, dz + 0.8, pal.lamp, 0.9, rng.float());
+  // cantilevered crown slab with a deep shadow gap
+  const tw = faceX(H) + rng.range(2, 5), td = faceZ(H) + rng.range(2, 5);
+  B.mat(M.CONCRETE, 0.2, 0, 3).color(pal.dark).ext(0.5, 0, F.NOWIN, 0);
+  B.box(-tw + 2.2, H, -td + 2.2, tw - 2.2, H + 1.6, td - 2.2, { base: H, top: false });
+  B.mat(M.CONCRETE, rng.float(), 0, 3).color(c.clone().multiplyScalar(0.93)).ext(1, 0, F.NOWIN, 0);
+  B.box(-tw, H + 1.6, -td, tw, H + 4.4, td, { base: H + 1.6 });
+  // roof mast with a red beacon
+  B.mat(M.METAL, 0.3, 0, 3).color(pal.metal).ext(1, 0, F.NOWIN, 0);
+  B.cylinder(tw * 0.5, -td * 0.3, 0.2, 0.1, H + 4.4, H + 16, { segs: 5 });
+  ctx.beacons.push({ position: new THREE.Vector3(tw * 0.5, H + 16.2, -td * 0.3).applyMatrix4(ctx.M), color: col('#ff3020'), scale: 0.9, phase: 2 + rng.float() });
+  return H + 4.4;
 }
 
 function ziggurat(ctx, lot, w, d, steps, stepH) {
@@ -143,9 +192,12 @@ export function building(ctx, lot) {
     const w = lot.w * 0.92, d = lot.d * 0.92;
     let H;
     if (rng.chance(0.25) && Math.min(w, d) > 16) H = ziggurat(ctx, lot, w, d, rng.int(3, 4), rng.range(6, 9));
-    else H = slab(ctx, lot, w, d, (core ? rng.range(18, 52) : rng.range(12, 26)) * (lot.plaza ? 1.2 : 1));
+    else H = slab(ctx, lot, w, d, (core ? (rng.chance(0.55) ? rng.range(48, 110) : rng.range(20, 34)) : rng.range(12, 26)) * (lot.plaza ? 1.2 : 1));
     ctx.collider(0, H / 2, 0, w / 2, H / 2, d / 2, false);
     ctx.footprints.push({ lot, h: H });
+  } else if (lot.zone > 0.55 && rng.chance(0.3)) {
+    // open sand courtyards thin the periphery: low walls only
+    ctx.footprints.push({ lot, h: 1 });
   } else adobe(ctx, lot);
 }
 
@@ -227,37 +279,56 @@ export function wall(ctx, wl, gates) {
 function citadel(ctx, x, z, yaw) {
   const { pal, rng } = ctx;
   ctx.useTile('landmark');
-  const S = 110;
+  const S = 128;
   const fp = ctx.frame.footprint(x, z, S, S, yaw, 5);
   ctx.place(x, z, fp.min, yaw);
   const B = ctx.B;
   const c = pal.concrete[0];
-  // lower mass: a vast battered platform
-  const h1 = 56, in1 = 20;
-  B.mat(M.CONCRETE, rng.float(), W.NONE, 5).color(c).ext(1, 0, F.NOWIN, 0);
-  B.frustumBox(-S / 2, -S / 2, S / 2, S / 2, -2, h1, in1, { base: -2 });
-  // the great door: a tall dark recess at the foot of the front face, lit from within
-  B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.dark).ext(0.35, 0, F.NOWIN, 0);
-  B.box(-6, -2, S / 2 - 3, 6, 26, S / 2 + 0.3, { top: false, base: -2, sides: [true, false, false, false] });
-  B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(0.3));
-  B.box(-4.5, -2, S / 2 - 2.6, 4.5, 12, S / 2 + 0.35, { top: false, base: -2, sides: [true, false, false, false] });
-  // shadow recess
-  const S2 = S - in1 * 2 - 6;
-  B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.dark).ext(0.4, 0, F.NOWIN, 0);
-  B.box(-S2 / 2, h1, -S2 / 2, S2 / 2, h1 + 3, S2 / 2, { top: false });
-  // upper mass with slit galleries
-  const h2 = 38;
-  B.mat(M.CONCRETE, rng.float(), W.SLIT, 5).color(c.clone().multiplyScalar(0.96)).ext(1, 0, 0, 0);
-  B.frustumBox(-S2 / 2 - 2, -S2 / 2 - 2, S2 / 2 + 2, S2 / 2 + 2, h1 + 3, h1 + 3 + h2, 5, { base: h1 + 3, front: F.FRONT });
-  // fins along the upper mass sides
-  B.mat(M.CONCRETE, rng.float(), 0, 3).color(c.clone().multiplyScalar(0.92)).ext(1, 0, F.NOWIN, 0);
-  for (let i = 0; i < 9; i++) {
-    const x = -S2 / 2 + 4 + i * ((S2 - 8) / 8);
-    for (const sz of [-1, 1]) B.boxC(x, h1 + 3, sz * (S2 / 2 + 1.5), 1.2, h2 - 6, 3.0);
+  // a true ziggurat: six battered tiers, each with a shadowed terrace gap and slot galleries
+  let y = -2, sw = S;
+  const tiers = [24, 19, 16, 14, 12, 10];
+  for (let i = 0; i < tiers.length; i++) {
+    const h = tiers[i], ins = h * 0.16;
+    const cc = c.clone().multiplyScalar(1 - i * 0.025);
+    B.mat(M.CONCRETE, rng.float(), W.NONE, 5).color(cc).ext(1, 0, F.NOWIN, 0);
+    B.frustumBox(-sw / 2, -sw / 2, sw / 2, sw / 2, y, y + h, ins, { base: y });
+    // a dark recessed gallery on every second tier
+    if (i % 2 === 1) {
+      const gz = sw / 2 - ins * 0.55;
+      B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.black).ext(0.3, 0, F.NOWIN, 0);
+      for (const r of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        const cs = Math.cos(r), sn = Math.sin(r);
+        const gw = sw * 0.62;
+        if (Math.abs(cs) > 0.5) B.box(-gw / 2, y + h * 0.42, cs * gz - 0.5, gw / 2, y + h * 0.42 + 1.6, cs * gz + 0.5, { top: false });
+        else B.box(sn * gz - 0.5, y + h * 0.42, -gw / 2, sn * gz + 0.5, y + h * 0.42 + 1.6, gw / 2, { top: false });
+      }
+      B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(0.35));
+      B.box(-sw * 0.12, y + h * 0.42 + 0.2, gz + 0.45, sw * 0.12, y + h * 0.42 + 0.6, gz + 0.55, { top: false, sides: [true, false, false, false] });
+    }
+    y += h;
+    sw = sw - ins * 2 - 7;
+    // terrace shadow step
+    B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.dark).ext(0.45, 0, F.NOWIN, 0);
+    B.box(-sw / 2, y, -sw / 2, sw / 2, y + 1.2, sw / 2, { top: false, base: y });
+    y += 1.2;
   }
-  const y = h1 + 3 + h2;
+  // the great door: a tall dark recess at the foot of the front face, lit from within
+  B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.black).ext(0.3, 0, F.NOWIN, 0);
+  B.box(-6, -2, S / 2 - 3, 6, 20, S / 2 + 0.3, { top: false, base: -2, sides: [true, false, false, false] });
+  B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(0.3));
+  B.box(-4.5, -2, S / 2 - 2.6, 4.5, 10, S / 2 + 0.35, { top: false, base: -2, sides: [true, false, false, false] });
+  // crowning sanctum with fins
+  const S2 = Math.max(18, sw * 0.7), h2 = 16;
+  B.mat(M.CONCRETE, rng.float(), W.NONE, 5).color(c.clone().multiplyScalar(0.9)).ext(1, 0, F.NOWIN, 0);
+  B.frustumBox(-S2 / 2, -S2 / 2, S2 / 2, S2 / 2, y, y + h2, 2, { base: y });
+  for (let i = 0; i < 5; i++) {
+    const fx = -S2 / 2 + 2 + i * ((S2 - 4) / 4);
+    for (const sz of [-1, 1]) B.boxC(fx, y, sz * (S2 / 2 + 0.4), 0.9, h2 - 2, 2.0);
+  }
+  y += h2;
+  const h1 = 24;
   // ramp/stair up the front face
-  stair(ctx, -6, 6, S / 2 + 30, S / 2 - 4, -1, 22, M.CONCRETE, c.clone().multiplyScalar(0.92));
+  stair(ctx, -6, 6, S / 2 + 34, S / 2 - 4, -1, h1 - 2, M.CONCRETE, c.clone().multiplyScalar(0.92));
   // monumental portico: colossal square pillars along the front
   B.mat(M.CONCRETE, 0.3, 0, 3).color(c).ext(1, 0, F.NOWIN, 0);
   for (let i = 0; i < 8; i++) {

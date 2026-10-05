@@ -49,12 +49,12 @@ export class Bike {
     this.overWater = false; this.groundH = 0;
     this.sleeping = false;
     // VFX
-    this.flame = new Flame({ radius: 0.15, length: 1.3, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0] });
+    this.flame = new Flame({ radius: 0.15, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.28 });
     this.flame.mesh.position.copy(model.nozzles[0].pos);
     this.body.add(this.flame.mesh);
     this.glow = new GroundGlow([0.3, 0.8, 1.0]);
-    this.glow.mesh.scale.set(2.6, 1, 5.2);
-    this.lightTrail = new Trail(28, { width: 0.025, color: [1.0, 0.12, 0.06], minStep: 1.0 });
+    this.glow.mesh.scale.set(3.4, 1, 5.6);
+    this.lightTrail = new Trail(28, { width: 0.025, color: [1.0, 0.12, 0.06], minStep: 1.0, erode: 0 });
     this._emitAcc = 0;
   }
 
@@ -243,7 +243,7 @@ export class Bike {
     if (this.glow.mesh.visible) {
       this.glow.mesh.position.copy(up).multiplyScalar(top + 0.06);
       this.glow.mesh.quaternion.copy(this.quaternion);
-      this.glow.uniforms.uI.value = (0.7 + this.throttle * 0.6) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.6 : 1) * (0.6 + 0.6 * (1 - w.daylight));
+      this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * (0.45 + 1.5 * (1 - w.daylight));
       this.glow.uniforms.uTime.value = t;
     }
     // tail-light ribbon at speed (Akira light trails)
@@ -255,7 +255,7 @@ export class Bike {
     // dust / spray
     if (sp > 6 && hgt < 4) {
       const P = this.overWater ? sys.spray : sys.dust;
-      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 70 : 55) * (1 + this.boost) * sys.fxScale;
+      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 80 : 70) * (1 + this.boost * 2.2) * sys.fxScale;
       this._emitAcc += rate * dt;
       const fwd = this.heading, left = _v2.crossVectors(up, fwd).normalize();
       const dc = sys.dustColor;
@@ -267,7 +267,8 @@ export class Bike {
         const vel = _v3.copy(fwd).multiplyScalar(-sp * 0.12 - Math.random() * 3).addScaledVector(left, side * (2 + Math.random() * 4)).addScaledVector(up, this.overWater ? 4 + Math.random() * 5 : 0.6 + Math.random() * 1.6);
         vel.addScaledVector(this.velocity, 0.35);
         if (this.overWater) P.emit(_p, vel, 0.8 + Math.random() * 0.7, 0.25, 1.4 + Math.random(), 0.85, 0.9, 0.95, 0.55, t, true);
-        else P.emit(_p, vel, 1.6 + Math.random() * 1.6, 0.5, 3.0 + Math.random() * 2.5, dc.r, dc.g, dc.b, 0.32, t, false);
+        else if (Math.random() < 0.3) P.emit(_p, vel.addScaledVector(up, 1.5 + Math.random() * 2), 0.5 + Math.random() * 0.5, 0.06, 0.12, dc.r * 0.55, dc.g * 0.7, dc.b * 0.45, 0.9, t, true); // grass / grit kicked up
+        else P.emit(_p, vel, 1.6 + Math.random() * 1.8, 0.6, 3.5 + Math.random() * 3.0, dc.r, dc.g, dc.b, 0.36, t, false);
       }
     }
   }

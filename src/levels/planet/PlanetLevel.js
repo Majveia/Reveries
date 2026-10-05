@@ -68,7 +68,7 @@ export default class PlanetLevel {
     const A = this.aesthetic;
     this.grade = {
       exposure: 1.0, contrast: 1.04, saturation: 1.04, bloomStrength: 0.05, vignette: 0.26, grain: 0.03, chroma: 0.0018, temperature: 0, tint: 0,
-      look: this.planet.aesthetic || 'filmic', ao: 1.0, aoRadius: 2.2, aoDistance: 450, // PostFX: per-aesthetic film look + GTAO
+      look: this.planet.aesthetic || 'filmic', ao: 1.0, aoRadius: 2.2, aoDistance: 450, autoExposure: 0.7, // PostFX: per-aesthetic film look + GTAO + eye adaptation
       ...(A?.grade || {}),
     };
   }
@@ -130,8 +130,7 @@ export default class PlanetLevel {
 
   _updateLights() {
     try {
-      if (this.engine.shotMode && (this._lt = (this._lt || 0) + 1) <= 8) { const gl = this.engine.renderer.getContext(); gl.finish(); const t0 = performance.now(); this.lighting.update(); gl.finish(); console.warn('[atmo] lights ms', Math.round(performance.now() - t0)); }
-      else this.lighting.update();
+      this.lighting.update();
     }
     catch (e) { if (!this._lightErr) { this._lightErr = true; console.error('[planet] lighting:', e); } }
   }

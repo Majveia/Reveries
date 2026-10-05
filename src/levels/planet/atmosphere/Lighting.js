@@ -70,9 +70,11 @@ export class PlanetLighting {
     this.starColor = new THREE.Color(sc[0], sc[1], sc[2]);
     const sun = new THREE.DirectionalLight(this.starColor.clone(), 3.2);
     sun.castShadow = true;
-    const sm = q.shadowMapSize;
+    // one wide, texel-snapped frustum pushed ahead of the camera: ~0.14 m texels near the player,
+    // long raking shadows across a few hundred metres of valley at golden hour
+    const sm = q.pick(1024, 2048, 3072, 4096);
     sun.shadow.mapSize.set(sm, sm);
-    this.shadowRadius = q.pick(60, 90, 130, 170);
+    this.shadowRadius = q.pick(70, 140, 220, 300);
     const s = this.shadowRadius;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 6000 });
     sun.shadow.bias = -0.00025;
@@ -232,7 +234,7 @@ export class PlanetLighting {
       const A = L.aesthetic, g = A?.palette?.glow?.[0];
       this._bio = A && g && (/pandora|eywa/i.test(A.name || '') || (A.kinds || []).includes('jungle')) ? new THREE.Color(g) : null;
     }
-    if (this._bio && m.present) m.uniforms.uNightGlow.value.addScaledVector(_bioV.set(this._bio.r, this._bio.g, this._bio.b), 0.006 * this.night);
+    // (bio-glow no longer lifts the sky dome: the zenith stays OLED black; it lights the cloud bases instead)
 
     // ---- key light ------------------------------------------------------------
     const sun = this.sun;
@@ -256,7 +258,7 @@ export class PlanetLighting {
     const camDir = L.camera.getWorldDirection(_v3);
     camDir.addScaledVector(up, -camDir.dot(up));
     if (camDir.lengthSq() > 1e-6) camDir.normalize();
-    const center = _c3.copy(focus).addScaledVector(camDir, R * 0.45);
+    const center = _c3.copy(focus).addScaledVector(camDir, R * 0.6);
     // snap to shadow texels in light space
     const lightPos = _c4.copy(this.keyDir).multiplyScalar(3000);
     _m4.lookAt(lightPos, _c5.set(0, 0, 0), Math.abs(this.keyDir.y) > 0.99 ? _c6.set(1, 0, 0) : _c6.set(0, 1, 0));

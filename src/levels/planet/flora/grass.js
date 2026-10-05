@@ -67,8 +67,8 @@ function flowerGeometry() {
 // flower spike (lupine / goldenrod raceme): stem + crossed floret quads along
 // the upper stem. aPart: 0 stem, 1 floret; aT: anchor height along the stem.
 function spikeGeometry(K = 6) {
-  const pos = [], part = [], tt = [], idx = [];
-  for (let s = 0; s <= 2; s++) { const t = s / 2; pos.push(-0.5, t, 0, 0.5, t, 0); part.push(0, 0); tt.push(t, t); }
+  const pos = [], part = [], tt = [], idx = [], q = [];
+  for (let s = 0; s <= 2; s++) { const t = s / 2; pos.push(-0.5, t, 0, 0.5, t, 0); part.push(0, 0); tt.push(t, t); q.push(0, 0, 0, 0); }
   idx.push(0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4);
   for (let k = 0; k < K; k++) {
     const t = 0.5 + 0.5 * (k / (K - 1));
@@ -78,7 +78,7 @@ function spikeGeometry(K = 6) {
       const ca = Math.cos(a + c * 1.5708) * sz, sa = Math.sin(a + c * 1.5708) * sz;
       const b = pos.length / 3;
       pos.push(ox - ca, -sz, oz - sa, ox + ca, -sz, oz + sa, ox + ca, sz, oz + sa, ox - ca, sz, oz - sa);
-      part.push(1, 1, 1.5, 1.5); tt.push(t, t, t, t);
+      part.push(1, 1, 1.5, 1.5); tt.push(t, t, t, t); q.push(-1, -1, 1, -1, 1, 1, -1, 1);
       idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
     }
   }
@@ -86,6 +86,7 @@ function spikeGeometry(K = 6) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
   g.setAttribute('aT', new THREE.Float32BufferAttribute(tt, 1));
+  g.setAttribute('aQ', new THREE.Float32BufferAttribute(q, 2));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(0.5), 3));
   g.setIndex(idx);
   return g;
@@ -98,6 +99,8 @@ attribute vec4 aDat;   // yaw, height, width, packed colour
 attribute float aPart;
 #ifdef SPIKE
 attribute float aT;
+attribute vec2 aQ;
+varying vec2 vQ;
 #endif
 uniform vec3 uStemCol;
 uniform float uHeadSize;
@@ -148,6 +151,7 @@ const BLADE_BODY = /* glsl */ `
   float part = aPart;
 #ifdef SPIKE
   float t = aT;
+  vQ = aQ;
 #else
   float t = part > 0.5 ? 1.0 : position.y;
 #endif
@@ -186,10 +190,13 @@ const BLADE_BODY = /* glsl */ `
   } else { vGCol = uStemCol * mix(0.45, 1.0, t); vGlow = 0.0; }
   vTrans = 0.6;
 #else
-  float ao = mix(0.32, 1.0, smoothstep(0.0, 0.85, t));
+  float ao = mix(0.42, 1.0, smoothstep(0.0, 0.85, t));
   vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
   vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * (0.86 + 0.28 * rnd);
-  vGlow = uGlow * smoothstep(0.6, 1.0, t) * step(0.55, rnd);
+  // glowing blades come in patches (a few metres across), not as uniform frost
+  vec3 gpc = floor((uAnchor + base) * 0.3);
+  float gpatch = smoothstep(0.55, 0.85, fract(sin(dot(gpc, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
+  vGlow = uGlow * smoothstep(0.55, 1.0, t) * step(0.6, rnd) * gpatch;
   vTrans = t * t;
 #endif
   float back = pow(max(dot(normalize(toC), uKeyDir), 0.0), 5.0);
@@ -205,10 +212,19 @@ function makeBladeMaterial(U, flower, spike = false) {
     sh.vertexShader = BLADE_VERT + sh.vertexShader
       .replace('#include <beginnormal_vertex>', BLADE_BODY)
       .replace('#include <begin_vertex>', 'vec3 transformed = p;');
-    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
-      .replace('#include <color_fragment>', 'diffuseColor.rgb = vGCol;')
-      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize( vNormal );')
-      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.75) * vGlow * (0.25 + 2.5 * uNight);\n#include <opaque_fragment>');
+    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n#ifdef SPIKE\nvarying vec2 vQ;\n#endif\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `diffuseColor.rgb = vGCol;
+#ifdef SPIKE
+  // florets are five-lobed blossoms cut from their quads, brighter at the heart
+  float fr = length(vQ);
+  if (fr > 1e-3) {
+    float fa = atan(vQ.y, vQ.x);
+    if (fr > 0.5 + 0.5 * pow(abs(cos(fa * 2.5)), 0.7)) discard;
+    diffuseColor.rgb *= 0.78 + 0.32 * smoothstep(0.9, 0.1, fr);
+  }
+#endif`)
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
+      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#include <opaque_fragment>');
   }, flower ? (spike ? 'flora-spike' : 'flora-flower') : 'flora-grass');
 }
 

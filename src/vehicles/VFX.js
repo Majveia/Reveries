@@ -21,12 +21,12 @@ float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
 
 // ------------------------------------------------------------------------------------------
 export class Flame {
-  constructor({ radius = 0.4, length = 3, core = [1.0, 0.85, 0.7], edge = [1.0, 0.35, 0.08], boost = [0.45, 0.6, 1.0] } = {}) {
+  constructor({ radius = 0.4, length = 3, core = [1.0, 0.85, 0.7], edge = [1.0, 0.35, 0.08], boost = [0.45, 0.6, 1.0], gain = 1 } = {}) {
     const g = new THREE.CylinderGeometry(radius * 0.08, radius, 1, 24, 12, true);
     g.translate(0, 0.5, 0);
     g.rotateX(-Math.PI / 2); // tip toward -Z
     this.uniforms = {
-      uTime: { value: 0 }, uThrottle: { value: 0 }, uBoost: { value: 0 }, uSeed: { value: Math.random() * 10 },
+      uTime: { value: 0 }, uThrottle: { value: 0 }, uBoost: { value: 0 }, uSeed: { value: Math.random() * 10 }, uGain: { value: gain },
       uCore: { value: new THREE.Color(...core) }, uEdge: { value: new THREE.Color(...edge) }, uBoostCol: { value: new THREE.Color(...boost) },
     };
     this.material = new THREE.ShaderMaterial({
@@ -47,7 +47,7 @@ export class Flame {
       fragmentShader: /* glsl */`
         ${NOISE}
         varying float vA; varying float vF; varying vec3 vL;
-        uniform float uTime, uThrottle, uBoost, uSeed;
+        uniform float uTime, uThrottle, uBoost, uSeed, uGain;
         uniform vec3 uCore, uEdge, uBoostCol;
         void main(){
           float a = vA;                              // 0 at the nozzle → 1 at the tip
@@ -58,11 +58,11 @@ export class Flame {
           // Mach diamonds: bright knots along the hot core, fading downstream
           float dia = 0.55 + 0.45*pow(max(0.0, sin(a*30.0 - uTime*3.0)), 6.0) * (1.0 - a);
           float n = vnoise(vec3(vL.xy*7.0, vL.z*4.0 - uTime*36.0 + uSeed));
-          float I = body * (sheath*0.12 + core*dia) * (0.6 + 0.6*n);
+          float I = body * (sheath*0.35 + core*dia*1.6) * (0.6 + 0.6*n);
           vec3 c = mix(uEdge, uCore, clamp(core*(1.3 - a), 0.0, 1.0));
           c = mix(c, uBoostCol + vec3(0.12)*core, uBoost*0.7);
-          float e = 0.12 + uThrottle*0.9 + uBoost*1.1;
-          gl_FragColor = vec4(c * I * e * 1.1 * smoothstep(0.0, 0.06, a + 0.01), 1.0);
+          float e = 0.3 + uThrottle*2.6 + uBoost*3.0;
+          gl_FragColor = vec4(c * I * e * 2.2 * uGain * smoothstep(0.0, 0.06, a + 0.01), 1.0);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);
@@ -160,7 +160,8 @@ export class Particles {
 
 // ------------------------------------------------------------------------------------------
 export class Trail {
-  constructor(n = 64, { width = 0.4, color = [1, 1, 1], additive = true, minStep = 2 } = {}) {
+  constructor(n = 64, { width = 0.4, color = [1, 1, 1], additive = true, minStep = 2, grow = 2.4, erode = 0.35 } = {}) {
+    this.erode = erode;
     this.n = n; this.minStep = minStep;
     this.pts = Array.from({ length: n }, () => new THREE.Vector3());
     this.w = new Float32Array(n);
@@ -173,33 +174,34 @@ export class Trail {
     const idx = [];
     for (let i = 0; i < n - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     g.setIndex(idx);
-    this.uniforms = { uColor: { value: new THREE.Color(...color) }, uWidth: { value: width }, uTime: { value: 0 }, uLight: { value: new THREE.Color(1, 1, 1) } };
+    this.uniforms = { uColor: { value: new THREE.Color(...color) }, uWidth: { value: width }, uGrow: { value: grow }, uErode: { value: erode }, uTime: { value: 0 }, uLight: { value: new THREE.Color(1, 1, 1) } };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       vertexShader: /* glsl */`
         attribute vec3 aNext; attribute vec3 aSide;
-        uniform float uWidth;
+        uniform float uWidth, uGrow;
         varying float vU; varying float vS; varying float vA;
         void main(){
           vec4 a = modelViewMatrix*vec4(position,1.0);
           vec4 b = modelViewMatrix*vec4(aNext,1.0);
           vec3 d = b.xyz - a.xyz; if (dot(d,d) < 1e-8) d = vec3(0.0,0.0,1.0);
           vec3 side = normalize(cross(d, a.xyz));
-          float w = uWidth * (0.6 + aSide.y*2.4);
+          float w = uWidth * (0.6 + aSide.y*uGrow);
           a.xyz += side * aSide.x * w;
           gl_Position = projectionMatrix*a;
           vU = aSide.y; vS = aSide.x; vA = aSide.z;
         }`,
       fragmentShader: /* glsl */`
         ${NOISE}
-        uniform vec3 uColor, uLight; uniform float uTime;
+        uniform vec3 uColor, uLight; uniform float uTime, uErode;
         varying float vU; varying float vS; varying float vA;
         void main(){
-          float edge = 1.0 - vS*vS;
-          float n = 0.65 + 0.35*vnoise(vec3(vU*40.0, vS*2.0, uTime*0.5));
+          float edge = exp(-vS*vS*3.2) - 0.04;
+          float nn = vnoise(vec3(vU*26.0, vS*3.0, uTime*0.7)) * 0.6 + vnoise(vec3(vU*70.0, vS*7.0, uTime*1.3)) * 0.4;
+          float n = mix(1.0, smoothstep(0.15 + vU*0.5, 0.9, nn + 0.35), uErode);
           float fade = smoothstep(0.0, 0.05, vU) * pow(1.0 - vU, 1.4);
-          gl_FragColor = vec4(uColor*uLight, 1.0) * (edge*edge*n*fade*vA);
+          gl_FragColor = vec4(uColor*uLight, 1.0) * (max(edge, 0.0)*n*fade*vA);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);
@@ -364,6 +366,69 @@ export class GroundGlow {
     this.mesh = new THREE.Mesh(g, this.material);
     this.mesh.renderOrder = 2;
     this.mesh.frustumCulled = false;
+  }
+  dispose() { this.mesh.geometry.dispose(); this.material.dispose(); }
+}
+
+// ------------------------------------------------------------------------------------------
+/** Camera-facing additive glow sprite (nozzle bloom seed visible from any angle). */
+export class GlowSprite {
+  constructor(color = [1.0, 0.6, 0.3], size = 1) {
+    const g = new THREE.PlaneGeometry(1, 1);
+    this.uniforms = { uColor: { value: new THREE.Color(...color) }, uI: { value: 1 }, uSize: { value: size }, uAxis: { value: new THREE.Vector3(0, 0, -1) } };
+    this.material = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: /* glsl */`
+        uniform float uSize; uniform vec3 uAxis;
+        varying vec2 vQ; varying float vView;
+        void main(){
+          vec4 c = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          vec3 ax = normalize(normalMatrix * uAxis);
+          vView = max(0.0, dot(ax, normalize(-c.xyz)));   // 1 = looking up the nozzle
+          vQ = position.xy * 2.0;
+          c.xy += position.xy * uSize * (0.55 + 0.45 * vView);
+          c.z += uSize * 0.35;                              // pull toward the camera past the bell lip
+          gl_Position = projectionMatrix * c;
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor; uniform float uI;
+        varying vec2 vQ; varying float vView;
+        void main(){
+          float r = length(vQ);
+          float core = exp(-r*r*18.0);
+          float halo = exp(-r*r*4.5) * 0.35;
+          vec3 c = mix(uColor, vec3(1.0), core*0.8);
+          gl_FragColor = vec4(c * (core*3.0 + halo) * uI * (0.35 + 0.65*vView), 1.0);
+        }`,
+    });
+    this.mesh = new THREE.Mesh(g, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 6;
+  }
+  dispose() { this.mesh.geometry.dispose(); this.material.dispose(); }
+}
+
+/** Soft contact shadow / blob decal projected on the ground under a low vehicle. */
+export class BlobShadow {
+  constructor() {
+    const g = new THREE.PlaneGeometry(1, 1); g.rotateX(-Math.PI / 2);
+    this.uniforms = { uI: { value: 0.5 } };
+    this.material = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: /* glsl */`
+        uniform float uI; varying vec2 vUv;
+        void main(){
+          vec2 q = (vUv - 0.5) * 2.0;
+          float d = dot(q, q);
+          gl_FragColor = vec4(0.0, 0.0, 0.0, exp(-d*3.5) * uI);
+        }`,
+    });
+    this.mesh = new THREE.Mesh(g, this.material);
+    this.mesh.renderOrder = 1;
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
   }
   dispose() { this.mesh.geometry.dispose(); this.material.dispose(); }
 }

@@ -124,7 +124,8 @@ export class CameraRig {
 
     if (this.view === 'first') {
       // eye on the animated head; attenuate the bob (subtle, never nauseating)
-      if (!this.initialized) { this.eyeSmooth.copy(p.eye); this.initialized = true; }
+      // (re)seed on first use, after a teleport / snap, and whenever posed for a shot
+      if (!this.initialized || p.freeze || this.eyeSmooth.distanceToSquared(p.eye) > 4) { this.eyeSmooth.copy(p.eye); this.initialized = true; }
       const rel = _v.copy(p.eye).sub(this.eyeSmooth);
       // follow the horizontal motion tightly, the vertical bob softly
       const vert = rel.dot(up);

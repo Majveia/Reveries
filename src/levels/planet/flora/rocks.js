@@ -10,6 +10,7 @@ import { CellLayer } from './stream.js';
 import { patchMaterial } from './shaders.js';
 import { Random, seedFrom } from '../../../core/Random.js';
 import { SimplexNoise } from '../../../core/Noise.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const CELL = 48;
 const _dir = [0, 0, 0];
@@ -17,13 +18,17 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quater
 const Y = new THREE.Vector3(0, 1, 0);
 
 function rockGeometry(rng, kind) {
-  const geo = new THREE.IcosahedronGeometry(1, kind === 'pebble' ? 2 : 4);
+  // indexed (welded) sphere so deformed rocks get smooth normals, not facets
+  const ico = new THREE.IcosahedronGeometry(1, kind === 'pebble' ? 3 : 4);
+  ico.deleteAttribute('normal'); ico.deleteAttribute('uv');
+  const geo = mergeVertices(ico, 1e-5); ico.dispose();
   const nz = new SimplexNoise(Math.floor(rng.float() * 1e9));
   const pos = geo.getAttribute('position');
   const sx = 0.8 + rng.float() * 0.6, sy = kind === 'slab' ? 0.35 + rng.float() * 0.2 : 0.55 + rng.float() * 0.35, sz = 0.7 + rng.float() * 0.5;
   const strataDir = new THREE.Vector3(rng.float() - 0.5, 1.5, rng.float() - 0.5).normalize();
   const cut = [];
-  for (let k = 0; k < 4; k++) cut.push({ n: new THREE.Vector3(rng.float() - 0.5, (rng.float() - 0.3) * 0.8, rng.float() - 0.5).normalize(), d: 0.62 + rng.float() * 0.25 });
+  const ncut = kind === 'pebble' ? 3 : 6 + Math.floor(rng.float() * 3);
+  for (let k = 0; k < ncut; k++) cut.push({ n: new THREE.Vector3(rng.float() - 0.5, (rng.float() - 0.3) * 0.8, rng.float() - 0.5).normalize(), d: 0.58 + rng.float() * 0.25 });
   const p = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     p.fromBufferAttribute(pos, i);
@@ -34,7 +39,7 @@ function rockGeometry(rng, kind) {
     r *= 1 - 0.035 * Math.abs((s - Math.floor(s)) - 0.5);
     p.multiplyScalar(r);
     // fracture planes: flat faces like split stone
-    for (const c of cut) { const d = p.dot(c.n); if (d > c.d) p.addScaledVector(c.n, -(d - c.d) * 0.85); }
+    for (const c of cut) { const d = p.dot(c.n); if (d > c.d) p.addScaledVector(c.n, -(d - c.d) * 0.93); }
     p.set(p.x * sx, p.y * sy, p.z * sz);
     if (p.y < -0.15) p.y = -0.15 + (p.y + 0.15) * 0.25; // flattened, buried base
     pos.setXYZ(i, p.x, p.y + 0.12, p.z);
@@ -57,11 +62,12 @@ function rockGeometry(rng, kind) {
 }
 
 const ROCK_VERT = /* glsl */ `
-varying vec3 vRW; varying vec3 vRN; varying vec3 vRUp;
+varying vec3 vRW; varying vec3 vRN; varying vec3 vRUp; varying float vRY;
 uniform vec3 uAnchor;
 `;
 const ROCK_FRAG = /* glsl */ `
-varying vec3 vRW; varying vec3 vRN; varying vec3 vRUp;
+varying vec3 vRW; varying vec3 vRN; varying vec3 vRUp; varying float vRY;
+uniform vec3 uGround;
 uniform vec3 uRockA; uniform vec3 uRockB; uniform vec3 uMossCol; uniform float uMoss; uniform float uGlowMoss; uniform float uNight;
 float rk_h(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float rk_n(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -75,7 +81,7 @@ function rockMaterial(U) {
   return patchMaterial(mat, U, (sh) => {
     sh.vertexShader = ROCK_VERT + sh.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
   vec4 rkW = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
-  vRW = transformed * length(instanceMatrix[0].xyz) + fract((instanceMatrix[3].xyz + uAnchor) * 0.0137) * 97.0; vRN = normalize(mat3(modelMatrix * instanceMatrix) * objectNormal); vRUp = normalize(rkW.xyz + uAnchor);`);
+  vRW = transformed * length(instanceMatrix[0].xyz) + fract((instanceMatrix[3].xyz + uAnchor) * 0.0137) * 97.0; vRN = normalize(mat3(modelMatrix * instanceMatrix) * objectNormal); vRUp = normalize(rkW.xyz + uAnchor); vRY = position.y;`);
     sh.fragmentShader = ROCK_FRAG + sh.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
   vec3 rp = vRW;
@@ -88,8 +94,23 @@ function rockMaterial(U) {
   float upk = dot(normalize(vRN), vRUp);
   float moss = uMoss * smoothstep(0.15, 0.65, upk + (g1 - 0.5) * 0.7);
   rc = mix(rc, uMossCol * (0.7 + 0.5 * g2), moss);
+  // soil creep: the buried base takes the colour of the ground around it
+  float soil = smoothstep(0.32, 0.02, vRY + (g1 - 0.5) * 0.22) * (1.0 - moss * 0.5);
+  rc = mix(rc, uGround * (0.75 + 0.4 * g2), soil * 0.85);
   diffuseColor.rgb *= rc;
   float rkMoss = moss;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  // procedural bump (screen-space derivatives): chisel marks, grain and pits
+  {
+    float bh = rk_f(rp * 2.3) * 0.55 + rk_n(rp * 9.0) * 0.3 + rk_n(rp * 23.0) * 0.15;
+    bh -= 0.35 * smoothstep(0.75, 0.9, rk_n(rp * 4.1 + 2.0));
+    vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
+    float dhx = dFdx(bh), dhy = dFdy(bh);
+    vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx);
+    float det = dot(dpx, r1);
+    vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+    normal = normalize(abs(det) * normal - grad * 0.09 * (1.0 - rkMoss * 0.6));
+  }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.78 + 0.2 * g2, 0.95, rkMoss);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += uMossCol * vec3(0.4, 1.6, 2.2) * uGlowMoss * rkMoss * smoothstep(0.55, 0.9, g2) * (0.15 + 2.5 * uNight);');
   }, 'flora-rock');
@@ -111,7 +132,7 @@ export class Rocks {
     this.U = {
       uAnchor: fl.uniforms.uAnchor, uNight: fl.uniforms.uNight,
       uRockA: { value: rc.clone().multiplyScalar(0.85) }, uRockB: { value: rc.clone().lerp(new THREE.Color('#a8a296'), 0.35) },
-      uMossCol: { value: new THREE.Color(P.mossCol || '#4e6e2c') }, uMoss: { value: P.moss || 0 }, uGlowMoss: { value: P.glowMoss || 0 },
+      uMossCol: { value: new THREE.Color(P.mossCol || '#4e6e2c') }, uGround: { value: new THREE.Color((fl.aesthetic?.palette?.ground || ['#6a5a44'])[0]).multiplyScalar(0.8) }, uMoss: { value: P.moss || 0 }, uGlowMoss: { value: P.glowMoss || 0 },
     };
     this.mat = rockMaterial(this.U);
     const rng = new Random(seedFrom(fl.seed, 'rocks'));

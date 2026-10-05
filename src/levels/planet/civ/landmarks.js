@@ -28,7 +28,9 @@ export function rockLathe(B, cx, cz, profile, o = {}) {
       const ca = Math.cos(a), sa = Math.sin(a);
       const ii = i % segs;
       const aa = (ii / segs) * TAU;
-      const n = noise.noise3(Math.cos(aa) * rmean * fq, y * fq, Math.sin(aa) * rmean * fq) + 0.5 * noise.noise3(Math.cos(aa) * rmean * fq * 2.7, y * fq * 2.7 + 9, Math.sin(aa) * rmean * fq * 2.7);
+      const ys = o.yStretch ?? 1;
+      let n = noise.noise3(Math.cos(aa) * rmean * fq, y * fq * ys, Math.sin(aa) * rmean * fq) + 0.5 * noise.noise3(Math.cos(aa) * rmean * fq * 2.7, y * fq * 2.7 * ys + 9, Math.sin(aa) * rmean * fq * 2.7);
+      if (o.detail) n += o.detail * noise.noise3(Math.cos(aa) * rmean * fq * 7.3, y * fq * 7.3 * ys + 3, Math.sin(aa) * rmean * fq * 7.3);
       const rr = Math.max(0.01, r * (1 + amp * n));
       const yy = y + ampY * n * (o.ampYScale ?? 1);
       row.push(new THREE.Vector3(cx + Math.cos(aa) * rr, yy, cz + Math.sin(aa) * rr));
@@ -83,18 +85,18 @@ export function floatingIsland(ctx, x, z, alt, R) {
   B.mat(M.ROCK, 0.31, 0, 3).color(rock).ext(1, 0, F.NOWIN, 0);
   const prof = [];
   const depth = R * 1.25;
-  const N = 14;
+  const N = 30;
   for (let j = 0; j <= N; j++) {
     const t = j / N; // 0 bottom … 1 top
     const r = R * (t < 0.9 ? Math.pow(t / 0.9, 0.42) * 1.03 : 1.03 - (t - 0.9) * 0.3);
     prof.push([Math.max(0.5, r), -depth * Math.pow(1 - t, 1.15) - 3]);
   }
-  rockLathe(B, 0, 0, prof, { segs: 44, amp: 0.16, fq: 0.03, ampY: 7, seed: 11 });
-  for (let k = 0; k < 6; k++) {
-    const a = rng.range(0, TAU), rr = R * rng.range(0.35, 0.7);
+  rockLathe(B, 0, 0, prof, { segs: 120, amp: 0.2, fq: 0.035, ampY: 6, seed: 11, yStretch: 0.3, detail: 0.35 });
+  for (let k = 0; k < 14; k++) {
+    const a = rng.range(0, TAU), rr = R * rng.range(0.3, 0.8);
     const lx = Math.cos(a) * rr, lz = Math.sin(a) * rr, lr = R * rng.range(0.18, 0.3);
     const ld = depth * rng.range(0.55, 0.95);
-    rockLathe(B, lx, lz, [[0.4, -ld], [lr * 0.55, -ld * 0.8], [lr, -ld * 0.45], [lr * 1.05, -10], [lr * 0.9, -2]], { segs: 16, amp: 0.25, fq: 0.07, seed: 20 + k });
+    rockLathe(B, lx, lz, [[0.4, -ld], [lr * 0.3, -ld * 0.93], [lr * 0.55, -ld * 0.8], [lr * 0.8, -ld * 0.62], [lr, -ld * 0.45], [lr * 1.05, -ld * 0.25], [lr * 1.05, -10], [lr * 0.9, -2]], { segs: 28, amp: 0.3, fq: 0.07, seed: 20 + k, yStretch: 0.35, detail: 0.3 });
   }
   // grass rim
   const moss2 = moss.clone().multiplyScalar(1.1);
@@ -163,14 +165,15 @@ export function floatingIsland(ctx, x, z, alt, R) {
   }
   // hanging roots below the island
   B.mat(M.WOOD, 0.4, 0, 3).color(col('#4a3a2c'));
-  for (let k = 0; k < 40; k++) {
+  for (let k = 0; k < 30; k++) {
     const a = rng.range(0, TAU), r0 = R * rng.range(0.1, 0.9);
     const tProf = Math.pow(Math.min(1, r0 / (R * 1.03)), 1 / 0.42) * 0.9;
     const ytop = -depth * Math.pow(1 - tProf, 1.15) - 3 + 4;
     const len = rng.range(25, 90);
     const pts = [];
     for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 5 + k) * 2.5 * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 4 + k) * 2.5 * t)); }
-    B.tube(pts, rng.range(0.3, 0.9), 4);
+    B.tube(pts, rng.range(0.7, 1.9), 7);
+    if (rng.chance(0.6)) { const q = pts.slice(2).map((p, i) => p.clone().add(new THREE.Vector3(Math.sin(i + k) * 1.5, -i * 1.2, Math.cos(i * 1.3 + k) * 1.5))); B.tube(q, rng.range(0.35, 0.8), 5); }
   }
   // waterfall ribbons spilling from the rim
   B.mat(M.WATERFALL, 0.2, 0, 3).color(col('#dfe8ea')).ext(1, 4, F.NOWIN, 0);

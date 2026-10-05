@@ -107,9 +107,13 @@ void main(){
   float r2 = dot(c, c);
   if (r2 > 1.0) discard;
   float a = atan(c.y, c.x);
-  float lobes = 1.0 + 0.35 * sin(a * 3.0 + vSeed * 20.0) * sqrt(r2);
-  float f = exp(-r2 * 4.5 * lobes) - 0.011;
-  gl_FragColor = vec4(vColor * max(f, 0.0), 1.0);
+  float s1 = vSeed * 40.0, s2 = fract(vSeed * 7.31) * 30.0;
+  float n = floor(3.0 + fract(vSeed * 3.7) * 5.0);
+  float lobes = 1.0 + (0.3 * sin(a * n + s1) + 0.18 * sin(a * (n + 2.0) - s2) + 0.12 * sin(a * 2.0 + s2)) * sqrt(r2) * 1.6;
+  float f = exp(-r2 * 4.5 * max(lobes, 0.3)) - 0.011;
+  float lum = dot(vColor, vec3(0.3, 0.5, 0.2));
+  vec3 c0 = mix(vColor, vec3(lum) * vec3(0.9, 0.95, 1.1), exp(-r2 * 30.0) * 0.55);
+  gl_FragColor = vec4(c0 * max(f, 0.0), 1.0);
 }`;
 
 // Nested wrap-around local star boxes
@@ -147,15 +151,16 @@ void main(){
   float l = aRnd.w;
   float T, L;
   float pick = fract(aRnd.w * 71.3);
-  if (pick < fy * 0.35) { T = mix(9000.0, 28000.0, l * l); L = mix(3.0, 60.0, l * l * l); }
-  else if (pick < 0.06) { T = mix(3300.0, 4300.0, l); L = mix(4.0, 30.0, l); }    // red giants
-  else { T = mix(3300.0, 7200.0, pow(l, 1.6)); L = mix(0.05, 1.6, pow(l, 3.0)); }
+  float lf = fract(aRnd.w * 517.3);
+  if (pick < fy * 0.35) { T = mix(9000.0, 28000.0, l * l); L = min(3000.0, 4.0 * pow(1.0 - lf * 0.999, -1.25)); }
+  else if (pick < 0.07) { T = mix(3300.0, 4500.0, l); L = min(1500.0, 6.0 * pow(1.0 - lf * 0.999, -0.9)); }    // red giants
+  else { T = mix(3300.0, 7600.0, pow(l, 1.6)); L = min(60.0, 0.12 * pow(1.0 - lf * 0.9995, -1.0)); }
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   float flux = L * uBright * uS * uS / (dist * dist + 1e-12);
   flux = uSat * (1.0 - exp(-flux / uSat));
   flux *= exp(-galTau(uCamPos, p, 2, 0.0));
-  float px = clamp(1.0 + sqrt(flux) * uPxScale, 1.25, 24.0);
+  float px = clamp(1.0 + sqrt(flux) * uPxScale, 1.0, 26.0);
   gl_PointSize = px;
   vSharp = px;
   vRc = 0.45 + 0.07 * px;
@@ -173,7 +178,7 @@ void main(){
   float isH = step(abs(aIdx - uHover), 0.5), isS = step(abs(aIdx - uSel), 0.5), isHome = step(abs(aIdx - uHome), 0.5);
   float vis = 1.0 - smoothstep(uNear * 0.5, uNear, d);
   vAlpha = max(vis * 0.45, max(isH, isS));
-  vAlpha = max(vAlpha, isHome * 0.85);
+  vAlpha = max(vAlpha, isHome * 0.85 * (1.0 - smoothstep(uNear * 2.5, uNear * 5.0, d)));
   vSel = max(isH, isS);
   vRing = 1.0;
   gl_PointSize = uPx * (1.0 + 0.6 * vSel);
@@ -226,7 +231,9 @@ export class Stars {
     let o = 0;
     const R = P.R;
     for (let i = 0; i < n; i++) {
-      const s = U.galaxySample(g, rng);
+      let s = U.galaxySample(g, rng);
+      // galaxySample clamps r at 1.15 R: resample instead of piling stars onto a hard rim
+      for (let k = 0; k < 8 && s.r >= R * 1.149; k++) s = U.galaxySample(g, rng);
       pos[o * 3] = s.x; pos[o * 3 + 1] = s.y; pos[o * 3 + 2] = s.z;
       const bulge = s.arm === 0 && s.r < R * 0.22 && Math.abs(s.y) > -1;
       const u = rng.float();
@@ -246,20 +253,31 @@ export class Stars {
     const crng = new Random(seedFrom(g.seed, 'clusters'));
     const hiiPos = [], hiiCol = [], hiiSize = [];
     let made = 0, guard = 0;
-    while (made < nClusters && guard++ < nClusters * 40) {
+    const budget = nClusters * perCluster;
+    let used = 0;
+    const sub = [];
+    while (made < nClusters && used < budget && guard++ < nClusters * 40) {
       const s = U.galaxySample(g, crng);
-      if (g.type !== 'irregular' && g.arms > 0 && s.arm < 0.7) continue;
-      if (s.r < R * 0.08) continue;
-      const spread = crng.range(0.006, 0.03);
-      for (let k = 0; k < perCluster; k++) {
-        pos[o * 3] = s.x + crng.gaussian(0, spread); pos[o * 3 + 1] = s.y * 0.3 + crng.gaussian(0, spread * 0.5); pos[o * 3 + 2] = s.z + crng.gaussian(0, spread);
-        const T = crng.range(10000, 32000), L = crng.logRange(3, 200);
+      if (g.type !== 'irregular' && g.arms > 0 && s.arm < 0.8) continue;
+      if (s.r < R * 0.08 || s.r >= R * 1.149) continue;
+      // fractal (Larson-like) clump hierarchy: complex -> sub-clumps -> star knots;
+      // sizes follow a power-law mass function (a few giant complexes, many small ones)
+      const cnt = Math.min(budget - used, Math.max(6, Math.round(10 * Math.pow(1 - crng.float() * 0.995, -0.75))));
+      const spread = 0.012 * Math.pow(cnt / 10, 0.5) * crng.range(0.7, 1.4);
+      sub.length = 0;
+      const nSub = 2 + crng.int(0, 4);
+      for (let k = 0; k < nSub; k++) sub.push([crng.gaussian(0, spread), crng.gaussian(0, spread * 0.3), crng.gaussian(0, spread)]);
+      for (let k = 0; k < cnt; k++) {
+        const sc = sub[crng.int(0, nSub - 1)];
+        const kn = spread * (crng.chance(0.7) ? 0.12 : 0.4);
+        pos[o * 3] = s.x + sc[0] + crng.gaussian(0, kn); pos[o * 3 + 1] = s.y * 0.3 + sc[1] + crng.gaussian(0, kn * 0.5); pos[o * 3 + 2] = s.z + sc[2] + crng.gaussian(0, kn);
+        const T = crng.range(10000, 32000), L = Math.min(2000, 4 * Math.pow(1 - crng.float() * 0.999, -1.2));
         bbColor(T, tmp);
         col[o * 4] = tmp[0] * 255; col[o * 4 + 1] = tmp[1] * 255; col[o * 4 + 2] = tmp[2] * 255; col[o * 4 + 3] = lumCode(L);
-        o++;
+        o++; used++;
       }
       // a blue haze around the association
-      hiiPos.push(s.x, s.y * 0.3, s.z); hiiCol.push(0.45, 0.62, 1.0, 0.35); hiiSize.push(spread * 5);
+      hiiPos.push(s.x, s.y * 0.3, s.z); hiiCol.push(0.42, 0.6, 1.0, 0.22 * Math.sqrt(cnt / 10)); hiiSize.push(spread * 3.5);
       made++;
     }
     const geo = new THREE.BufferGeometry();
@@ -267,7 +285,7 @@ export class Stars {
     geo.setAttribute('aCol', new THREE.BufferAttribute(col.subarray(0, o * 4), 4, true));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 2);
     this.starMat = this._mat(STAR_VERT, STAR_FRAG, {
-      uBright: { value: 0.35 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
+      uBright: { value: 1.15 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
       uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 },
     });
     this.field = new THREE.Points(geo, this.starMat);
@@ -276,24 +294,36 @@ export class Stars {
 
     // HII knots: complexes of pink blobs on the arm ridges
     const hrng = new Random(seedFrom(g.seed, 'hii'));
-    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(350, 600, 900, 1100);
+    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(160, 260, 380, 460);
     let hm = 0; guard = 0;
-    while (hm < nHII && guard++ < nHII * 60) {
+    while (hm < nHII && guard++ < nHII * 80) {
       const s = U.galaxySample(g, hrng);
-      if (g.arms > 0 && s.arm < 0.88) continue;
-      if (s.r < R * 0.1) continue;
-      if (hrng.chance(0.45)) continue;   // gaps: star formation is patchy along the arm
-      const sub = hrng.int(1, 5);
-      const size = hrng.logRange(0.01, 0.06) * (hrng.chance(0.06) ? 2.4 : 1);
+      if (g.arms > 0 && s.arm < 0.9) continue;
+      if (s.r < R * 0.1 || s.r >= R * 1.149) continue;
+      // taper toward the arm tips: sparse XUV knots instead of a dotted rim
+      if (hrng.float() < THREE.MathUtils.smoothstep(s.r, R * 0.55, R * 1.0) * 0.85) continue;
+      if (hrng.chance(0.4)) continue;
+      // dN/dL ∝ L^-2: a few giant complexes (30 Dor / NGC 604 class), many faint knots
+      const big = Math.pow(1 - hrng.float() * 0.98, -1.0);
+      const size = Math.min(0.11, 0.008 * Math.pow(big, 0.7));
+      const bright = Math.min(6, 0.35 * Math.pow(big, 0.55)) * g.starFormation;
+      // beads on a string: 1-4 knots chained along the arm direction
+      const th = Math.atan2(s.z, s.x) + Math.PI / 2 + hrng.gaussian(0, 0.35);
+      const chain = 1 + hrng.int(0, 3);
       const y0 = s.y * 0.25;
-      for (let k = 0; k < sub; k++) {
-        hiiPos.push(s.x + hrng.gaussian(0, size * 0.9), y0 + hrng.gaussian(0, size * 0.15), s.z + hrng.gaussian(0, size * 0.9));
-        const pinkish = hrng.float();
-        hiiCol.push(1.0, 0.16 + pinkish * 0.14, 0.26 + pinkish * 0.2, hrng.logRange(0.4, 2.2) * g.starFormation);
-        hiiSize.push(size * hrng.range(0.5, 1.2));
+      for (let c = 0; c < chain; c++) {
+        const off = (c - (chain - 1) / 2) * size * hrng.range(1.4, 2.6);
+        const cx = s.x + Math.cos(th) * off, cz = s.z + Math.sin(th) * off;
+        const subN = 1 + hrng.int(0, 3);
+        for (let k = 0; k < subN; k++) {
+          hiiPos.push(cx + hrng.gaussian(0, size * 0.6), y0 + hrng.gaussian(0, size * 0.15), cz + hrng.gaussian(0, size * 0.6));
+          const pinkish = hrng.float();
+          hiiCol.push(1.0, 0.16 + pinkish * 0.12, 0.2 + pinkish * 0.14, bright * hrng.range(0.4, 1.1) / subN * 1.6);
+          hiiSize.push(size * hrng.range(0.5, 1.15));
+        }
+        // hot white-blue core (the ionizing cluster)
+        hiiPos.push(cx, y0, cz); hiiCol.push(0.8, 0.86, 1.0, bright * 0.9); hiiSize.push(size * 0.3);
       }
-      // hot white-blue core (the ionizing cluster)
-      hiiPos.push(s.x, y0, s.z); hiiCol.push(0.85, 0.85, 1.0, 1.2); hiiSize.push(size * 0.35);
       hm++;
     }
     if (hiiPos.length) {
@@ -301,14 +331,14 @@ export class Stars {
       hg.setAttribute('position', new THREE.Float32BufferAttribute(hiiPos, 3));
       hg.setAttribute('aCol', new THREE.Float32BufferAttribute(hiiCol, 4));
       hg.setAttribute('aSize', new THREE.Float32BufferAttribute(hiiSize, 1));
-      this.blobMat = this._mat(BLOB_VERT, BLOB_FRAG, { uProj: { value: 500 }, uGain: { value: 1.2 }, uMaxPx: { value: 160 } });
+      this.blobMat = this._mat(BLOB_VERT, BLOB_FRAG, { uProj: { value: 500 }, uGain: { value: 0.8 }, uMaxPx: { value: 160 } });
       this.blobs = new THREE.Points(hg, this.blobMat);
       this.blobs.frustumCulled = false;
       this.group.add(this.blobs);
     }
 
     // nested local star fields
-    const nLocal = q.pick(6000, 12000, 20000, 30000);
+    const nLocal = E.shotMode ? 110000 : q.pick(20000, 45000, 80000, 120000);
     const lrng = new Random(seedFrom(g.seed, 'local'));
     const rnd = new Float32Array(nLocal * 4);
     for (let i = 0; i < rnd.length; i++) rnd[i] = lrng.float();
@@ -325,7 +355,7 @@ export class Stars {
       // density reference: keep ~all points in a dense arm, fewer in sparse regions
       m.uniforms.uDensRef.value = 1.2;
       // brightness tuned so a typical star at the box's typical distance is ~equally visible on every layer
-      m.uniforms.uBright.value = 0.1;
+      m.uniforms.uBright.value = 0.06;
       const pts = new THREE.Points(lg, m);
       pts.frustumCulled = false;
       this.locals.push(pts);
@@ -392,7 +422,11 @@ export class Stars {
   update(camera, height) {
     const proj = height / (2 * Math.tan((camera.fov * Math.PI) / 360));
     if (this.blobMat) this.blobMat.uniforms.uProj.value = proj;
-    for (const l of this.locals) l.material.uniforms.uCamPos.value.copy(camera.position);
+    const zoom = this.level.rig ? this.level.rig.distance : 1;
+    for (const l of this.locals) {
+      l.material.uniforms.uCamPos.value.copy(camera.position);
+      l.visible = zoom < 4.0 && Math.abs(camera.position.y) < 3.0 && camera.position.length() > 0.004; // near the hole the lensed analytic sky takes over
+    }
     const s = Math.max(1, height / 720);
     this.starMat.uniforms.uMaxPx.value = 18 * s;
     if (this.markMat) this.markMat.uniforms.uPx.value = 18 * s;

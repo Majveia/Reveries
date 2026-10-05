@@ -335,3 +335,37 @@ export function plantTrees(ctx, n, kinds, colors, foliageBlob, maxZone = 0.95) {
     planted++;
   }
 }
+
+/**
+ * Catenary strings of lanterns / festival lights across a road (glow sprites
+ * on a sagging curve between the facades). colors: array of THREE.Color.
+ */
+export function lanternStrings(ctx, road, every, colors, o = {}) {
+  const pts = road.pts, f = ctx.frame, plan = ctx.plan;
+  const maxR = (plan.builtRadius || 300) * (o.core ?? 0.6);
+  const n = o.n ?? 7, sag = o.sag ?? 1.1, h = o.h ?? 5.6, scale = o.scale ?? 0.5;
+  let s = 0, next = every * 0.5, k = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
+    const L = Math.hypot(bx - ax, bz - az); if (L < 1e-3) continue;
+    while (next < s + L) {
+      const t = (next - s) / L;
+      const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+      next += every;
+      if (Math.hypot(x - plan.center[0], z - plan.center[1]) > maxR) continue;
+      const nx = -(bz - az) / L, nz = (bx - ax) / L;
+      const half = road.w / 2 + (o.overhang ?? 1.2);
+      const y0 = Math.max(f.hAt(x + nx * half, z + nz * half), f.hAt(x - nx * half, z - nz * half)) + h;
+      if (f.wet(x, z)) continue;
+      for (let j = 0; j < n; j++) {
+        const u = (j + 0.5) / n * 2 - 1;
+        const px = x + nx * half * u, pz = z + nz * half * u;
+        const py = y0 - sag * (1 - u * u);
+        const c = colors[(j + k) % colors.length];
+        ctx.glows.push({ position: f.point(px, pz, py), color: c, scale: scale * (0.85 + 0.3 * ctx.rng.float()), phase: ctx.rng.float() });
+      }
+      k++;
+    }
+    s += L;
+  }
+}

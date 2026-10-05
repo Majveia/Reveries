@@ -35,5 +35,61 @@ export function bakeLocal(T, sea, m) {
       out[j * n + i] = T.height(px / l, py / l, pz / l) - sea;
     }
   }
+  return withShoreDistance(out, n, (2 * extent) / n);
+}
+
+/**
+ * Interleave [height, signed distance to the shoreline (m, + over water)] —
+ * the coordinate the surf rolls along. Two-pass chamfer (3-4) distance
+ * transform with a sub-texel seed at the shoreline, then a light blur so the
+ * breaker crests follow smoothed (refracted) contours instead of octagons.
+ */
+export function withShoreDistance(h, n, cell) {
+  const N = n * n, INF = 1e9;
+  const d = new Float32Array(N);
+  // seed: texels touching the opposite side get the interpolated zero crossing
+  const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i, a = h[k], wet = a < 0;
+    let best = INF;
+    for (const [di, dj] of nb) {
+      const ii = i + di, jj = j + dj;
+      if (ii < 0 || jj < 0 || ii >= n || jj >= n) continue;
+      const b = h[jj * n + ii];
+      if ((b < 0) !== wet) best = Math.min(best, Math.abs(a) / Math.max(Math.abs(a - b), 1e-4));
+    }
+    d[k] = best < INF ? best : INF;
+  }
+  const W1 = 1, W2 = Math.SQRT2;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i; let v = d[k];
+    if (i > 0) v = Math.min(v, d[k - 1] + W1);
+    if (j > 0) { v = Math.min(v, d[k - n] + W1); if (i > 0) v = Math.min(v, d[k - n - 1] + W2); if (i < n - 1) v = Math.min(v, d[k - n + 1] + W2); }
+    d[k] = v;
+  }
+  for (let j = n - 1; j >= 0; j--) for (let i = n - 1; i >= 0; i--) {
+    const k = j * n + i; let v = d[k];
+    if (i < n - 1) v = Math.min(v, d[k + 1] + W1);
+    if (j < n - 1) { v = Math.min(v, d[k + n] + W1); if (i < n - 1) v = Math.min(v, d[k + n + 1] + W2); if (i > 0) v = Math.min(v, d[k + n - 1] + W2); }
+    d[k] = v;
+  }
+  // no shoreline in the window: far from any coast
+  for (let k = 0; k < N; k++) { if (d[k] > 1e8) d[k] = 4 * n; if (h[k] >= 0) d[k] = -d[k]; }
+  // separable 5-tap blur (twice)
+  const tmp = new Float32Array(N);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      let s = 0, w = 0;
+      for (let o = -2; o <= 2; o++) { const ii = Math.min(n - 1, Math.max(0, i + o)); const ww = 3 - Math.abs(o); s += d[j * n + ii] * ww; w += ww; }
+      tmp[j * n + i] = s / w;
+    }
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      let s = 0, w = 0;
+      for (let o = -2; o <= 2; o++) { const jj = Math.min(n - 1, Math.max(0, j + o)); const ww = 3 - Math.abs(o); s += tmp[jj * n + i] * ww; w += ww; }
+      d[j * n + i] = s / w;
+    }
+  }
+  const out = new Float32Array(N * 2);
+  for (let k = 0; k < N; k++) { out[k * 2] = h[k]; out[k * 2 + 1] = d[k] * cell; }
   return out;
 }

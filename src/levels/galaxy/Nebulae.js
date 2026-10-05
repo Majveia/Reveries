@@ -26,59 +26,87 @@ const FRAG = /* glsl */ `
 precision highp float;
 ${COLOR_GLSL}
 uniform sampler3D uNoise;
-uniform vec3 uCenter; uniform float uRadius, uSeed, uKind, uRot, uSteps, uGain, uFade, uScale;
+uniform vec3 uCenter; uniform float uRadius, uSeed, uKind, uRot, uSteps, uGain, uFade, uScale, uFrameJ;
 uniform vec2 uRes;
 varying vec3 vWorld;
 
 vec4 nz(vec3 p){ return texture(uNoise, p); }
 mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 const vec3 STAR = vec3(0.0, 0.42, 0.0);
+const mat3 RT = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);   // 2nd lattice: breaks tiling
 
-// returns (gas, dust)
-vec2 field(vec3 x){
-  float r = length(x);
-  vec3 sp = vec3(uSeed);
-  float edge = 1.0 - smoothstep(0.6, 1.0, r);
-  vec3 w = nz(x * 0.6 + sp).rgb - 0.5;
-  vec3 xw = x + w * 0.28;
-  float gasN = nz(xw * 1.1 + sp * 1.3).r;
-  float gasF = nz(xw * 3.3 + sp).g;
-  float gas = edge * (0.25 + gasN * 0.9) * (0.35 + gasF);
-  float dust = 0.0;
-  if (uKind < 1.5) {
-    // cosmic cliffs / pillars: an eroded dust wall below a turbulent skyline,
-    // the hot cluster above it carves the cavity (Carina, Eagle)
-    float h1 = nz(vec3(xw.x * 0.7, 0.13, xw.z * 0.7) + sp).r - 0.5;
-    float h2 = nz(vec3(xw.x * 2.1, 0.57, xw.z * 2.1) + sp).b - 0.5;
-    float h3 = nz(vec3(xw.x * 5.5, 0.91, xw.z * 5.5) + sp).g - 0.5;
-    float sky = -0.12 + h1 * 0.75 + h2 * 0.32 + h3 * 0.1;
-    if (uKind < 0.5) {
-      float cl = nz(vec3(xw.x * 1.5, 0.33, xw.z * 1.5) + sp * 1.7).b;
-      sky += pow(cl, 9.0) * 1.4 - 0.18;          // a few tall columns rising toward the cluster
-    }
-    float hgt = sky - xw.y;
-    float wall = smoothstep(-0.015, 0.09, hgt);
-    float t1 = nz(xw * 3.6 + sp).g, t2 = nz(xw * 8.5 + sp * 0.5).r;
-    dust = wall * (0.3 + 2.2 * t1 * t2) * edge;
-    gas *= 0.45 + 1.2 * smoothstep(0.35, -0.05, -hgt) * smoothstep(-0.3, 0.0, -hgt);  // bright layer hugging the cliff top
-  } else if (uKind < 2.5) {
-    // shell / bubble with filaments
-    vec3 sd = x - STAR; float rs = length(sd);
-    float sh = exp(-pow((rs - 0.58 - (gasN - 0.5) * 0.25) / 0.09, 2.0));
-    gas = edge * (0.15 + sh * 2.2) * (0.4 + gasF);
-    dust = sh * smoothstep(0.55, 0.85, nz(xw * 3.0 + sp).b) * 1.5 + smoothstep(0.62, 0.9, nz(xw * 1.5 + sp).r) * edge;
-  } else {
-    // veil: thin ridged sheets
-    float rid = nz(xw * 1.6 + sp).b;
-    gas = edge * pow(rid, 6.0) * 4.0 + edge * 0.1;
-    dust = edge * smoothstep(0.6, 0.85, nz(xw * 2.2 + sp * 0.7).r) * 0.8;
+vec3 SP;
+// signed height above the dust skyline (>0 = inside the dust) for cliffs / pillars
+float cliffH(vec3 xw){
+  vec2 h = xw.xz;
+  float s = -0.26;   // (ridged channel B has mean ≈0.71, fbm R/G ≈0.48)
+  s += (nz(vec3(h * 0.13, 0.13) + SP).r - 0.5) * 2.6;                 // broad terrain
+  s += (nz(vec3(h * 0.42, 0.57) + SP).b - 0.71) * 0.9;                // ridged peaks
+  if (uKind < 0.5) {
+    float cl = nz(vec3(h * 0.27, 0.33) + SP * 1.7).b;
+    s += pow(smoothstep(0.8, 0.97, cl), 1.5) * 0.8;                  // columns rising toward the cluster
   }
-  // ionized cavity: little gas right around the cluster
-  gas *= smoothstep(0.05, 0.3, length(x - STAR));
-  return vec2(gas, dust);
+  // 3D erosion: knobs, overhangs, eroded globules (two rotated lattices)
+  s += (nz(xw * 0.9 + SP).b - 0.71) * 0.30;
+  s += (nz(RT * xw * 2.3 + SP).g - 0.5) * 0.16;
+  s += (nz(xw * 5.7 + SP * 0.3).b - 0.71) * 0.07;
+  s += (nz(RT * xw * 13.0).r - 0.5) * 0.035;
+  return s - xw.y;
+}
+vec3 warp(vec3 x){ return x + (nz(x * 0.17 + SP).rgb - 0.5) * 0.5; }
+float edgeF(vec3 x){ return 1.0 - smoothstep(0.78, 1.0, length(x)); }
+
+// dust density only (light march)
+float dustF(vec3 x){
+  vec3 xw = warp(x);
+  float e = edgeF(x);
+  if (uKind < 1.5) {
+    float hg = cliffH(xw);
+    return (smoothstep(0.0, 0.02, hg) * 1.2 + smoothstep(0.84, 0.96, nz(RT * xw * 0.8 + SP).b) * exp(-max(-hg, 0.0) * 6.0) * 0.25) * e;
+  } else if (uKind < 2.5) {
+    vec3 sd = x - STAR; float rs = length(sd);
+    float shd = (rs - 0.55) / 0.08; float sh = exp(-shd * shd);
+    return (sh * smoothstep(0.76, 0.92, nz(xw * 2.4 + SP).b) * 1.4 + smoothstep(0.66, 0.85, nz(RT * xw * 1.1 + SP).r) * 0.8) * e;
+  }
+  return smoothstep(0.62, 0.82, nz(xw * 1.4 + SP * 0.7).r) * 0.7 * e;
+}
+
+// returns (gas, dust, skin)
+vec3 field(vec3 x){
+  vec3 xw = warp(x);
+  float e = edgeF(x);
+  float gasN = nz(RT * xw * 0.22 + SP * 1.3).r;
+  float gasF = nz(xw * 1.3 + SP).g;
+  float gasW = nz(RT * xw * 3.1 + SP).b;
+  float gas = e * smoothstep(0.4, 0.62, gasN) * (0.15 + 1.6 * gasF * gasF) * (0.3 + 0.9 * gasW);
+  float dust = 0.0, skin = 0.0;
+  if (uKind < 1.5) {
+    float hg = cliffH(xw);
+    float wall = smoothstep(0.0, 0.02, hg);
+    dust = wall * (0.7 + 0.9 * nz(xw * 2.0 + SP).g) * e;
+    dust += smoothstep(0.84, 0.96, nz(RT * xw * 0.8 + SP).b) * exp(-max(-hg, 0.0) * 6.0) * 0.25 * e;
+    float above = -hg;
+    gas *= smoothstep(0.0, 0.12, above);
+    // photo-evaporating skin of ionized gas hugging the cliff surface
+    skin = e * smoothstep(-0.01, 0.015, above) * exp(-max(above, 0.0) / 0.045) * (0.5 + gasW);
+  } else if (uKind < 2.5) {
+    vec3 sd = x - STAR; float rs = length(sd);
+    float shd = (rs - 0.58 - (gasN - 0.5) * 0.4) / 0.07; float sh = exp(-shd * shd);
+    gas = e * sh * (0.4 + 1.6 * gasF) * 1.6 + gas * 0.3;
+    dust = dustF(x);
+  } else {
+    float rid = nz(xw * 1.6 + SP).b;
+    gas = e * pow(smoothstep(0.66, 1.0, rid), 3.0) * 4.0 + gas * 0.25;
+    dust = dustF(x);
+  }
+  // hot, diffuse OIII-bright cavity carved by the cluster's winds and UV
+  if (uKind < 1.5) gas += e * e * smoothstep(0.85, 0.2, length(x - STAR)) * (0.1 + 1.2 * gasF * gasF) * smoothstep(0.0, 0.15, -cliffH(xw)) * 0.22;
+  gas *= smoothstep(0.06, 0.3, length(x - STAR));   // ionized, cleared cavity right at the cluster
+  return vec3(gas, dust, skin);
 }
 
 void main(){
+  SP = vec3(uSeed);
   vec3 ro = cameraPosition, rd = normalize(vWorld - ro);
   vec3 oc = ro - uCenter;
   float b = dot(oc, rd), c = dot(oc, oc) - uRadius * uRadius, h = b * b - c;
@@ -88,46 +116,50 @@ void main(){
   if (t1 <= t0) discard;
   float N = uSteps;
   float dt = (t1 - t0) / N;
-  float jit = ign(gl_FragCoord.xy);
+  float jit = fract(ign(gl_FragCoord.xy) + uFrameJ);
   vec3 col = vec3(0.0);
   float T = 1.0;
-  vec3 cHa = vec3(1.0, 0.11, 0.08), cOIII = vec3(0.12, 0.55, 1.0), cSII = vec3(1.0, 0.38, 0.1), cDust = vec3(0.55, 0.32, 0.18);
-  float stepU = dt / uRadius; // step in unit-sphere coordinates
-  for (int i = 0; i < 96; i++) {
+  vec3 cHa = vec3(1.0, 0.09, 0.07), cOIII = vec3(0.05, 0.62, 1.0), cSII = vec3(1.0, 0.36, 0.08);
+  vec3 cStar = vec3(0.75, 0.85, 1.0);
+  float stepU = dt / uRadius;
+  vec3 rdl = rd; rdl.xz = rot(uRot) * rdl.xz;
+  for (int i = 0; i < 160; i++) {
     if (float(i) >= N) break;
     float t = t0 + (float(i) + jit) * dt;
     vec3 x = (ro + rd * t - uCenter) / uRadius;
     x.xz = rot(uRot) * x.xz;
-    vec2 f = field(x);
-    float gas = f.x, dust = f.y;
-    if (gas + dust < 0.004) continue;
+    vec3 f = field(x);
+    float gas = f.x, dust = f.y, skin = f.z;
+    if (gas + dust + skin < 0.003) continue;
     vec3 sd = STAR - x; float rs = length(sd);
     vec3 toS = sd / max(rs, 1e-4);
-    // one shadow tap toward the cluster: is this sample on the lit face of the dust?
-    float occ = field(x + toS * 0.07).y + 0.5 * field(x + toS * 0.18).y;
-    float lit = exp(-occ * 3.2) / (1.0 + rs * rs * 3.0);
-    float ion = smoothstep(0.7, 0.1, rs);
-    // gas: OIII-teal hot cavity near the cluster → Hα/SII red-pink outer envelope
-    vec3 gcol = mix(mix(cHa, vec3(1.0, 0.28, 0.42), 0.35), cOIII * 1.3, ion);
-    vec3 e = gas * lit * gcol * 0.8;
-    e += gas * cHa * 0.05 * (1.0 - ion);                     // diffuse recombination glow
-    // dust (JWST look): surfaces facing the cluster glow warm (PAH + scattered light),
-    // the ionization front itself is a thin bright yellow-white rim; shadowed dust stays dark
-    float front = exp(-occ * 7.0);
-    e += dust * lit * (cSII * 2.6 + vec3(1.0, 0.85, 0.6) * front * 4.5);
-    e += dust * cDust * 0.06;
-    float sigma = dust * 14.0 + gas * 0.25;
-    float a = exp(-sigma * stepU * 2.0);
-    col += T * e * (1.0 - a) / max(sigma, 1e-3);
+    // short light march toward the cluster (dust only): shadows, rays, lit faces
+    float occ = dustF(x + toS * 0.025) * 0.025 + dustF(x + toS * 0.07) * 0.045 + dustF(x + toS * 0.16) * 0.09 + dustF(x + toS * 0.32) * 0.16;
+    float tr = exp(-occ * 45.0);
+    float I = tr / (0.25 + rs * rs * 2.5);
+    float ion = smoothstep(0.75, 0.15, rs);
+    // Henyey-Greenstein forward scattering (g = 0.6)
+    float cth = dot(rdl, -toS) * -1.0;
+    float hg = 0.0509 * (1.0 - 0.36) / pow(1.0 + 0.36 - 1.2 * cth, 1.5) * 12.566;
+    // gas: hot OIII cavity around the cluster, Hα/SII envelope further out
+    vec3 gcol = mix(mix(cHa, vec3(1.0, 0.25, 0.4), 0.25), cOIII, ion);
+    vec3 e = gas * I * gcol * 1.05;
+    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.35) * 2.6;               // ionization front
+    float sigD = dust * 55.0;
+    // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
+    e += sigD * I * vec3(1.0, 0.55, 0.3) * 0.15 * (0.35 + hg);
+    e += sigD * vec3(0.9, 0.42, 0.24) * 0.025 * (0.3 + ion);                      // diffuse nebular light on shadowed dust
+    float sigma = sigD + gas * 0.35 + skin * 0.2;
+    float a = exp(-sigma * stepU);
+    col += T * e * (sigma > 1e-3 ? (1.0 - a) / sigma : stepU);
     T *= a;
-    if (T < 0.01) break;
+    if (T < 0.008) break;
   }
-  // the ionizing cluster itself
+  // the ionizing cluster's own glow
   vec3 sw = STAR; sw.xz = rot(-uRot) * sw.xz;
   vec3 sc = uCenter + sw * uRadius;
-  float bd = length(cross(sc - ro, rd));
-  float core = exp(-bd * bd / (uRadius * uRadius * 0.0004));
-  col += vec3(0.75, 0.85, 1.0) * core * 6.0 * T;
+  float bd = length(cross(sc - ro, rd)) / uRadius;
+  col += cStar * (exp(-bd * bd / 0.0003) * 1.4 + exp(-bd / 0.1) * 0.06) * T * step(0.0, dot(sc - ro, rd));
   col *= uGain * uFade;
   float alpha = (1.0 - T) * uFade;
   gl_FragColor = vec4(col, alpha);
@@ -150,7 +182,7 @@ export class Nebulae {
     this.list = list;
     this.enabled = false;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.5 : q.pick(0.35, 0.45, 0.5, 0.65);
+    this.scale = engine.shotMode ? 0.75 : q.pick(0.35, 0.45, 0.5, 0.6);
     this.scene = new THREE.Scene();
     this.stars = new THREE.Group();
     const sphere = new THREE.IcosahedronGeometry(1, 3);
@@ -162,8 +194,8 @@ export class Nebulae {
         blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
         uniforms: {
           uNoise: { value: noise3D }, uCenter: { value: n.pos.clone() }, uRadius: { value: n.radius }, uSeed: { value: (n.seed % 1) + n.index * 0.37 },
-          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 64 : q.pick(28, 40, 56, 72) },
-          uGain: { value: 1.5 }, uFade: { value: 1 }, uScale: { value: 1 }, uRes: { value: new THREE.Vector2() },
+          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 128 : q.pick(36, 52, 72, 96) },
+          uGain: { value: 1.6 }, uFade: { value: 1 }, uScale: { value: 1 }, uFrameJ: { value: 0 }, uRes: { value: new THREE.Vector2() },
         },
       });
       const mesh = new THREE.Mesh(sphere, m);
@@ -187,16 +219,26 @@ export class Nebulae {
   _buildClusters() {
     const pos = [], col = [];
     const tmp = [0, 0, 0];
+    const per = this.engine.quality.pick(500, 900, 1300, 1600);
+    const ax = new THREE.Vector3(0, 1, 0);
+    const v = new THREE.Vector3();
     for (const it of this.items) {
       const n = it.n;
       const rng = new Random(seedFrom(Math.floor(n.seed * 1000), 'neb-cluster', n.index));
-      const c = new THREE.Vector3(0, 0.42, 0);
-      c.applyAxisAngle(new THREE.Vector3(0, 1, 0), n.rot).multiplyScalar(n.radius).add(n.pos);
-      for (let k = 0; k < 70; k++) {
-        const s = n.radius * (k < 30 ? 0.05 : 0.22);
-        pos.push(c.x + rng.gaussian(0, s), c.y + rng.gaussian(0, s), c.z + rng.gaussian(0, s));
-        bbColor(rng.range(12000, 35000), tmp);
-        col.push(tmp[0] * 255, tmp[1] * 255, tmp[2] * 255, Math.round(Math.log2(rng.logRange(20, 600)) * 16 + 128));
+      for (let k = 0; k < per; k++) {
+        const core = k < per * 0.18;
+        if (core) v.set(rng.gaussian(0, 0.05), 0.42 + rng.gaussian(0, 0.04), rng.gaussian(0, 0.05));
+        else {
+          // embedded stars fill the cleared cavity above the dust skyline
+          do { v.set(rng.range(-0.9, 0.9), rng.range(0.0, 0.9), rng.range(-0.9, 0.9)); } while (v.lengthSq() > 0.8);
+        }
+        v.applyAxisAngle(ax, -n.rot).multiplyScalar(n.radius).add(n.pos);
+        pos.push(v.x, v.y, v.z);
+        const hot = core || rng.chance(0.35);
+        bbColor(hot ? rng.range(11000, 35000) : rng.range(3200, 7500), tmp);
+        // Salpeter-like: dN/dL ∝ L^-2 → a handful of very bright stars get the diffraction spikes
+        const L = Math.min(4000, (core ? 6 : 0.6) * Math.pow(1 - rng.float() * 0.999, -1.15));
+        col.push(tmp[0] * 255, tmp[1] * 255, tmp[2] * 255, Math.max(0, Math.min(255, Math.round(Math.log2(L) * 16 + 128))));
       }
     }
     this.clusterGeo = new THREE.BufferGeometry();
@@ -228,6 +270,7 @@ export class Nebulae {
     renderer.render(this.scene, ctx.camera);
     renderer.autoClear = ac;
     renderer.setClearColor(prevColor, prevA);
+    for (const it of this.items) it.mat.uniforms.uFrameJ.value = this.engine.shotMode ? 0 : ((this._f = ((this._f || 0) + 1) % 16) * 0.618) % 1;
     this.comp.uniforms.tInput.value = input;
     this.comp.uniforms.tNeb.value = this.rt.texture;
     this.comp.uniforms.uTexel.value.set(1 / w, 1 / h);

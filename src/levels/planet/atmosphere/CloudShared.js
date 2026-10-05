@@ -191,16 +191,11 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   if (h <= 0.0 || h >= 1.0 || wx.r < 0.02) return 0.0;
   float prof = cloudHeightProfile(h, wx.g);
   if (prof <= 0.0) return 0.0;
-  float base;
-  if (uCloudFlat > 0.5) {
-    // projected layer (orbit): smooth puffs from the weather map alone, no 3D noise (no moire)
-    base = 0.62 * prof;
-  } else {
-    vec3 q = P * uCloudShapeScale + uCloudWind;
-    vec4 n = cTex3D(tCloudShape, q, uCloud3DInfo.x);
-    float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
-    base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * prof;
-  }
+  // the volume never drops its shape noise (a 2D-coverage × profile field extrudes into vertical walls)
+  vec3 q = P * uCloudShapeScale + uCloudWind;
+  vec4 n = cTex3D(tCloudShape, q, uCloud3DInfo.x);
+  float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+  float base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * prof;
   // anvil-ish spread at the top of tall clouds; coverage threshold softened so cells are rounded families
   float cov = smoothstep(0.0, 1.0, wx.r) * mix(1.0, 1.0 + 0.6 * smoothstep(0.6, 1.0, h), wx.g);
   float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
@@ -215,6 +210,25 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   return max(c, 0.0) * (1.0 + wx.b * 0.8) * smoothstep(0.0, 0.15, h + 0.05);
 }
 float cloudDensity(vec3 P, float lod){ return cloudDensityW(P, cloudWeather(P), lod); }
+// Projected layer (seen from orbit): the weather coverage eroded on the sphere
+// by Perlin-Worley at two rotated scales plus Worley detail → cumulus fields,
+// cloud streets and wispy frayed edges. Returns density 0..1.
+const mat3 cRotA = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
+float cloudLayer2D(vec3 P, vec3 wx){
+  float cov = wx.r;
+  if (cov < 0.015) return 0.0;
+  vec3 q = normalize(P) * uCloudBase;
+  vec4 a = cTex3D(tCloudShape, q * (uCloudShapeScale * 0.42) + uCloudWind * 0.42, uCloud3DInfo.x);
+  vec4 b = cTex3D(tCloudShape, cRotA * q * (uCloudShapeScale * 1.3) + uCloudWind * 1.3 + 0.37, uCloud3DInfo.x);
+  float wa = a.g * 0.625 + a.b * 0.25 + a.a * 0.125;
+  float base = cRemap(a.r, wa - 1.0, 1.0, 0.0, 1.0) * 0.65 + (b.r * 0.6 + b.g * 0.4) * 0.35;
+  float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
+  if (c <= 0.0) return 0.0;
+  vec3 dn = cTex3D(tCloudDetail, cRotA * q * (uCloudDetailScale * 0.55) + uCloudWind * 2.0, uCloud3DInfo.y).rgb;
+  float df = dn.r * 0.5 + dn.g * 0.3 + dn.b * 0.2;
+  c = clamp(cRemap(c, df * 0.45, 1.0, 0.0, 1.0), 0.0, 1.0);
+  return c * (1.0 + wx.b * 0.6);
+}
 // Approximate shadow of the cloud layer on a point (sun at L).
 float cloudShadow(vec3 P, vec3 L){
   float Rm = mix(uCloudBase, uCloudTop, 0.35);
@@ -227,6 +241,10 @@ float cloudShadow(vec3 P, vec3 L){
   vec3 Q = P + L * t;
   vec3 wx = cloudWeather(Q);
   if (wx.r < 0.02) return 1.0;
+  if (uCloudFlat > 0.5) {
+    float c2 = cloudLayer2D(Q, wx);
+    return mix(1.0, exp(-c2 * c2 * 6.0), 0.85);
+  }
   float d0 = cloudDensityW(Q, wx, 1.0);
   vec3 Q2 = P + L * (t + (uCloudTop - uCloudBase) * 0.35);
   float d1 = cloudDensityW(Q2, wx, 1.0);

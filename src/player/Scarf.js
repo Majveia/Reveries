@@ -55,8 +55,8 @@ export class Scarf {
   constructor(material, quality = 2) {
     const rows = [12, 16, 20, 22][quality] ?? 20;
     this.ribbons = [
-      new Ribbon(3, 5, rows, 1.5, 0.19),
-      new Ribbon(3, 4, Math.round(rows * 0.6), 0.85, 0.15),
+      new Ribbon(3, 5, rows, 1.45, 0.23),
+      new Ribbon(3, 4, Math.round(rows * 0.6), 0.9, 0.18),
     ];
     this.object = new THREE.Group();
     this.object.name = 'explorer-scarf';

@@ -14,11 +14,26 @@ import { rockLathe } from './landmarks.js';
 const TAU = Math.PI * 2;
 const col = (h) => new THREE.Color(h);
 
+function lobe(B, x, y, z, r, sy, seed, segs, rings, amp) {
+  const prof = [];
+  for (let j = 0; j <= rings; j++) { const a = -Math.PI / 2 + (j / rings) * Math.PI; prof.push([Math.max(0.02, Math.cos(a) * r), y + Math.sin(a) * r * sy]); }
+  rockLathe(B, x, z, prof, { segs, amp, fq: 1.8 / r, seed });
+}
+/** A canopy mass: a core lobe crowded by smaller leaf clumps so the silhouette breaks up and self-shades. */
 function blob(B, x, y, z, r, color, seed, sy = 0.8) {
   B.mat(M.FOLIAGE, (seed * 0.137) % 1, 0, 3).color(color).ext(0.9, 0, F.NOWIN, 0);
-  const prof = [];
-  for (let j = 0; j <= 6; j++) { const a = -Math.PI / 2 + (j / 6) * Math.PI; prof.push([Math.max(0.02, Math.cos(a) * r), y + Math.sin(a) * r * sy]); }
-  rockLathe(B, x, z, prof, { segs: 9, amp: 0.2, fq: 1.8 / r, seed });
+  lobe(B, x, y, z, r * 0.82, sy, seed, 9, 6, 0.24);
+  const n = 7;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const el = Math.asin(1 - 2 * t * 0.85) ; // biased to the upper hemisphere
+    const az = i * 2.39996 + seed * 1.7;
+    const rr = r * (0.36 + 0.14 * ((seed * 7 + i * 3) % 5) / 5);
+    const px = x + Math.cos(az) * Math.cos(el) * r * 0.72, pz = z + Math.sin(az) * Math.cos(el) * r * 0.72, py = y + Math.sin(el) * r * sy * 0.72;
+    const c = color.clone().multiplyScalar(0.85 + 0.3 * (((seed * 13 + i * 7) % 10) / 10));
+    B.mat(M.FOLIAGE, ((seed + i) * 0.173) % 1, 0, 3).color(c).ext(0.95, 0, F.NOWIN, 0);
+    lobe(B, px, py, pz, rr, Math.max(0.6, sy), seed * 10 + i, 6, 4, 0.3);
+  }
 }
 
 function trunk(B, pts, r, color) {

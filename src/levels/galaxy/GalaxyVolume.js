@@ -23,7 +23,7 @@ ${GAL_GLSL}
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
-uniform float uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail;
+uniform float uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail, uYoungGain, uThick, uNucleus, uInside;
 uniform vec3 uColYoung, uColOld, uColHII, uColBulge, uColDustGlow;
 uniform vec2 uRes;
 varying vec2 vUv;
@@ -42,6 +42,15 @@ float gaussLine(vec3 o, vec3 d, float s, float t0, float t1){
   float b2 = max(dot(so, so) - dot(so, sd) * dot(so, sd) / L2, 0.0);
   float k = L / (s * 1.41421356);
   return exp(-b2 / (2.0 * s * s)) * s * 1.25331414 / L * (erfa((t1 - tc) * k) - erfa((t0 - tc) * k));
+}
+// bulge (flattened Gaussian mixture ~ Sersic n≈3) + compact nuclear star cluster, over [t0, t1]
+float bulgeLine(vec3 o, vec3 d, float t0, float t1){
+  float s = uBulgeScale;
+  return gaussLine(o, d, s * 0.012, t0, t1) * uNucleus
+       + gaussLine(o, d, s * 0.05, t0, t1) * 6.0
+       + gaussLine(o, d, s * 0.16, t0, t1) * 1.6
+       + gaussLine(o, d, s * 0.45, t0, t1) * 0.42
+       + gaussLine(o, d, s * 1.1, t0, t1) * 0.07;
 }
 vec2 slab(vec3 o, vec3 d, float h){
   if (abs(d.y) < 1e-6) return abs(o.y) < h ? vec2(0.0, 1e9) : vec2(1.0, 0.0);
@@ -63,25 +72,35 @@ void main(){
   vec2 ts = slab(ro, rd, H), tcyl = cyl(ro, rd, uExtent);
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
-  float T = 1.0;
-  float Tclose = 1.0;
-  float tClose = max(-dot(ro, rd), 0.0);
+  vec3 T = vec3(1.0);
+  const vec3 KRGB = vec3(0.72, 1.0, 1.32);   // wavelength-dependent extinction: lane edges redden
+  vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
+  float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
+  float inBulge = smoothstep(uBulgeScale * 1.5, uBulgeScale * 0.2, camR) * 0.7;
   if (t1 > t0) {
+    // bulge light in front of the dusty slab
+    col += bulgeLine(ro, rd, 0.0, t0) * cB;
     float N = uSteps;
-    float dt = (t1 - t0) / N;
     float jit = ign(gl_FragCoord.xy + uFrame * 5.588);
+    // inside the slab: geometric steps (fine near the camera, long far away) so the near
+    // dust resolves into rifts while the far disk still integrates into a band
+    bool inside = t0 <= 0.0;
+    float tmin = 0.012;
+    float span = t1 - t0;
+    float G = inside ? log(1.0 + span / tmin) : 0.0;
     float ta = t0;
-    bool gotClose = false;
     for (int i = 0; i < 160; i++) {
       if (float(i) >= N) break;
-      float tb = (i == int(N) - 1) ? t1 : min(t0 + (float(i) + 1.0 + (jit - 0.5) * 0.9) * dt, t1);
+      float u = min((float(i) + 1.0 + (jit - 0.5) * 0.9) / N, 1.0);
+      if (i == int(N) - 1) u = 1.0;
+      float tb = inside ? t0 + tmin * (exp(G * u) - 1.0) : t0 + span * u;
+      tb = min(tb, t1);
       vec3 pa = ro + rd * ta, pb = ro + rd * tb;
       vec3 pm = 0.5 * (pa + pb);
       float seg = tb - ta;
       float tm = 0.5 * (ta + tb);
       float lod = log2(max(tm * uPixAngle * 0.8, seg * 0.25) / uMapTexel);
       vec4 m = galMap(pm, max(lod, 0.0));
-      // close-range volumetric detail (3D noise) so the structure never looks like a decal
       float det = 1.0;
       if (uDetail > 0.0 && tm < 3.0) {
         vec4 n1 = texture(uNoise, pm * 1.7);
@@ -89,36 +108,29 @@ void main(){
         det = mix(1.0, (0.35 + 1.3 * n1.r) * (0.4 + 1.2 * n2.b), uDetail * (1.0 - smoothstep(0.8, 3.0, tm)));
       }
       float pY = galSeg(pa.y, pb.y, uHYoung), pO = galSeg(pa.y, pb.y, uHOld), pD = galSeg(pa.y, pb.y, uHDust);
-      float tau = m.b * pD * seg * uKappa * det;
-      vec3 cOld = mix(uColOld, vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
-      vec3 j = (m.r * uColYoung * pY + m.g * cOld * pO + m.a * uColHII * pD * 1.6 * det * smoothstep(0.08, 0.9, tm)) * uEmit;
-      // faint reddish scattered light from the dust itself
+      float pT = galSeg(pa.y, pb.y, uHOld * 2.6);
+      float tau = m.b * pD * seg * uKappa * mix(det, det * det * 1.3, uInside);
+      vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
+      vec3 j = (m.r * uColYoung * pY * uYoungGain + m.g * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 1.6 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit;
       float near = smoothstep(0.0, uNearFade, tm);
-      float tr = exp(-tau);
-      // emission and absorption co-located within the segment
-      vec3 add = j * seg * near * (tau > 1e-4 ? (1.0 - tr) / tau : 1.0);
+      vec3 tr = exp(-tau * KRGB);
+      vec3 add = j * seg * near * (tau > 1e-4 ? (1.0 - tr) / (tau * KRGB) : vec3(1.0));
+      // the bulge is integrated per segment so the midplane lane slices straight through it
+      float bn = mix(1.0, smoothstep(0.0, uNearFade * 1.5, tm), inBulge);
+      add += bulgeLine(ro, rd, ta, tb) * bn * cB * (tau > 1e-4 ? (1.0 - tr) / (tau * KRGB) : vec3(1.0));
       col += T * add;
-      if (!gotClose && tb >= tClose) { float f = clamp((tClose - ta) / max(seg, 1e-6), 0.0, 1.0); Tclose = T * mix(1.0, tr, f); gotClose = true; }
       T *= tr;
       ta = tb;
-      if (T < 0.003) break;
+      if (T.g < 0.002) break;
     }
-    if (!gotClose) Tclose = T;
+    col += T * bulgeLine(ro, rd, t1, 1e5) * cB;
+  } else {
+    float bn = mix(1.0, smoothstep(0.0, uNearFade * 1.5, max(-dot(ro, rd), 0.0)), inBulge);
+    col += bulgeLine(ro, rd, 0.0, 1e5) * cB * bn;
   }
-  // bulge: flattened Gaussian mixture ~ Sersic(n≈3) — analytic line integral
-  float s = uBulgeScale;
-  float bt0 = 0.0, bt1 = 1e5;
-  float b = gaussLine(ro, rd, s * 0.05, bt0, bt1) * 6.0
-          + gaussLine(ro, rd, s * 0.16, bt0, bt1) * 1.6
-          + gaussLine(ro, rd, s * 0.45, bt0, bt1) * 0.42
-          + gaussLine(ro, rd, s * 1.1, bt0, bt1) * 0.07;
-  // resolved-star fade near the camera (inside the bulge the light breaks into stars)
-  float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
-  b *= mix(1.0, smoothstep(0.0, uNearFade * 1.5, tClose), smoothstep(s * 1.5, s * 0.2, camR) * 0.7);
-  col += b * uBulgeAmp * uColBulge * uEmit * Tclose * uBulgeDim;
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
-  gl_FragColor = vec4(max(col, 0.0), T);
+  gl_FragColor = vec4(max(col, 0.0), clamp(dot(T, vec3(0.3, 0.45, 0.25)), 0.0, 1.0));
 }`;
 
 const COMP_FRAG = /* glsl */ `
@@ -139,8 +151,9 @@ export class GalaxyVolume {
     this.enabled = true;
     this.P = P;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.7 : q.pick(0.33, 0.4, 0.5, 0.6);
-    this.steps = q.pick(32, 44, 60, 80);
+    this.scale = engine.shotMode ? 0.85 : q.pick(0.33, 0.4, 0.5, 0.6);
+    this.baseScale = this.scale;
+    this.steps = engine.shotMode ? 110 : q.pick(32, 44, 60, 80);
     const mapSize = mapRT.width;
     this.march = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: MARCH_FRAG, depthTest: false, depthWrite: false,
@@ -151,10 +164,10 @@ export class GalaxyVolume {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
         uBulgeDim: { value: 1 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() },
-        uColYoung: { value: new THREE.Color(0.55, 0.72, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.62 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
+        uColYoung: { value: new THREE.Color(0.42, 0.6, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
-        uColDustGlow: { value: new THREE.Color(0.06, 0.025, 0.012) },
+        uColDustGlow: { value: new THREE.Color(0.014, 0.008, 0.006) },
       },
     });
     this.comp = new THREE.ShaderMaterial({

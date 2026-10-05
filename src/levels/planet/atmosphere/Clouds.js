@@ -36,7 +36,7 @@ uniform float uNear, uFar, uRev;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
 uniform vec3 uKeyDir, uKeyE;   // key light direction and TOA illuminance
-uniform vec3 uAmbSky, uAmbGround;
+uniform vec3 uCityGlow;       // settlement / bioluminescent glow lighting cloud bases from below (radiance)
 uniform vec3 uCloudAlbedo;
 uniform float uSteps, uLightSteps, uMaxDist, uFrame, uOrbitLod;
 uniform sampler2D tHistory;
@@ -45,6 +45,53 @@ uniform float uHistoryBlend;
 varying vec2 vUv;
 
 float hg(float c, float g){ float g2 = g * g; return 0.0795775 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5); }
+
+// Physically-derived ambient at a point of the cloud layer: sky irradiance from
+// the LUT for the sun and the moon at *this* position on the planet (so the
+// night hemisphere goes black and dusk clouds turn rose and amber).
+vec3 cloudSkyAmb(vec3 up, float r){
+  return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir));
+}
+
+// Orbit: one textured shell instead of a march (no extruded walls, no dither).
+vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
+  dOut = -1.0;
+  float Rm = mix(uCloudBase, uCloudTop, 0.3);
+  vec2 tm = raySphere(ro, rd, Rm);
+  if (tm.y <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+  float t = tm.x > 0.0 ? tm.x : tm.y;
+  if (t > sceneDist + 400.0) return vec4(0.0, 0.0, 0.0, 1.0);
+  vec3 P = ro + rd * t;
+  float r = length(P);
+  vec3 n = P / r;
+  vec3 wx = cloudWeather(P);
+  float c = cloudLayer2D(P, wx);
+  if (c <= 0.002) { dOut = t; return vec4(0.0, 0.0, 0.0, 1.0); }
+  // pseudo normal from the density gradient → relief, self-shadowed flanks
+  vec3 e1 = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+  vec3 e2 = cross(n, e1);
+  float eps = 700.0;
+  float cx = cloudLayer2D(P + e1 * eps, wx), cy = cloudLayer2D(P + e2 * eps, wx);
+  vec3 nn = normalize(n - (e1 * (cx - c) + e2 * (cy - c)) * 2.4);
+  float mu = abs(dot(rd, n));
+  float tau = pow(c, 1.5) * 22.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.22);
+  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.1, mu);
+  float muS = dot(n, uKeyDir);
+  vec3 Tl = transmittanceToLight(r + 600.0, muS);
+  float ndl = dot(nn, uKeyDir);
+  float cosV = dot(rd, uKeyDir);
+  float thick = 1.0 - exp(-tau * 0.35);
+  float shade = clamp(ndl * 0.8 + 0.2, 0.0, 1.0) * smoothstep(-0.12, 0.08, muS);
+  vec3 Ld = uKeyE * Tl * (shade * 0.30 * thick + hg(cosV, 0.7) * 0.5 * (1.0 - thick) + 0.04);
+  vec3 Sa = cloudSkyAmb(n, r) * PI * (0.35 + 0.25 * clamp(dot(nn, n), 0.0, 1.0));
+  vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.35 * wx.b);
+  vec2 ta = raySphere(ro, rd, uRt);
+  float a0 = max(ta.x, 0.0);
+  vec3 Lair, Tair;
+  atmoIntegrate(ro, rd, a0, max(t, a0 + 1.0), 6, 0, Lair, Tair);
+  dOut = t;
+  return vec4((col * Tair + Lair) * alpha, 1.0 - alpha);
+}
 
 vec4 marchClouds(out float dOut, out vec3 rdOut){
   dOut = -1.0;
@@ -66,6 +113,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   else if (r0 < uCloudTop) { t0 = 0.0; t1 = tBot.x > 0.0 ? tBot.x : tTop.y; }
   else { t0 = tTop.x; t1 = tBot.x > 0.0 ? tBot.x : tTop.y; }
   t0 = max(t0, 0.0);
+  if (uOrbitLod > 0.5) return projectedLayer(ro, rd, sceneDist, dOut);
   t1 = min(t1, min(sceneDist, uMaxDist));
   if (t1 <= t0) { return vec4(0.0, 0.0, 0.0, 1.0); }
 
@@ -127,7 +175,10 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     vec3 Sk = uKeyE * Tl * ms * powder * 3.14159;
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
     float ambOcc = exp(-d * sigma * shellH * 0.2 * (1.0 - h01));
-    vec3 Sa = mix(uAmbGround, uAmbSky, 0.25 + 0.75 * h01) * (0.22 + 0.78 * ambOcc) * 3.14159 * 0.25;
+    vec3 skyA = cloudSkyAmb(up, r);
+    float muSun = dot(up, uSunDir);
+    vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA) + uCityGlow;
+    vec3 Sa = mix(gndA, skyA, 0.25 + 0.75 * h01) * (0.22 + 0.78 * ambOcc) * PI * 0.25;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -274,7 +325,7 @@ export default class Clouds {
         tDepth: { value: null }, uFullRes: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uKeyE: { value: new THREE.Vector3() },
-        uAmbSky: { value: new THREE.Vector3() }, uAmbGround: { value: new THREE.Vector3() },
+        uCityGlow: { value: new THREE.Vector3() },
         uCloudAlbedo: { value: new THREE.Vector3(1, 1, 1) },
         uSteps: { value: 64 }, uLightSteps: { value: 6 }, uMaxDist: { value: 90000 }, uFrame: { value: 0 }, uOrbitLod: { value: 0 },
         tHistory: { value: null }, uPrevViewProj: { value: new THREE.Matrix4() }, uHistoryBlend: { value: 0 },
@@ -338,37 +389,41 @@ export default class Clouds {
     } else {
       mu.uKeyDir.value.copy(m.moonDir); mu.uKeyE.value.copy(m.moonE);
     }
-    if (light) {
-      mu.uAmbSky.value.set(light.skyColor.r, light.skyColor.g, light.skyColor.b);
-      mu.uAmbGround.value.set(light.groundColor.r, light.groundColor.g, light.groundColor.b);
-      // night: settlements light the cloud bases from below (sodium/lantern glow)
-      if (light.night > 0.05) {
-        if (this._cityGlow === undefined || (this._cgFrame = (this._cgFrame || 0) + 1) % 30 === 0) {
-          let g = 0;
-          const sz = { megacity: 3, city: 2, spaceport: 1.6, town: 1, village: 0.5, outpost: 0.25, ruins: 0 };
-          for (const site of this.world.sites || []) {
-            const d = site.position ? site.position.distanceTo(ctx.cameraPosition) : 1e9;
-            g += (sz[site.kind] ?? 0.5) * Math.exp(-d / 9000);
-          }
-          this._cityGlow = Math.min(g, 3);
+    mu.uCityGlow.value.set(0, 0, 0);
+    if (light && light.night > 0.05) {
+      // night: settlements within a few km light the cloud bases from below
+      if (this._cityGlow === undefined || (this._cgFrame = (this._cgFrame || 0) + 1) % 30 === 0) {
+        let g = 0;
+        const sz = { megacity: 3, city: 2, spaceport: 1.6, town: 1, village: 0.5, outpost: 0.25, ruins: 0 };
+        for (const site of this.world.sites || []) {
+          const d = site.position ? site.position.distanceTo(ctx.cameraPosition) : 1e9;
+          if (d < 4500) g += (sz[site.kind] ?? 0.5) * Math.exp(-d / 1500);
         }
-        const k = 0.0035 * this._cityGlow * light.night;
-        mu.uAmbGround.value.x += k; mu.uAmbGround.value.y += k * 0.62; mu.uAmbGround.value.z += k * 0.3;
+        this._cityGlow = Math.min(g, 2);
       }
+      if (!this._glowTint) {
+        const glow = this.level.aesthetic?.palette?.glow?.[0];
+        const bio = /pandora|eywa|nausicaa/i.test(this.level.planet.aesthetic || '');
+        this._glowTint = bio && glow ? new THREE.Color(glow) : new THREE.Color(1, 0.62, 0.3);
+      }
+      const k = 0.0012 * this._cityGlow * light.night;
+      mu.uCityGlow.value.set(this._glowTint.r, this._glowTint.g, this._glowTint.b).multiplyScalar(k);
     }
     const q = this.engine.quality;
     const alt = ctx.cameraPosition.length() - m.Rb;
-    const orbit = alt > this.topH * 1.6;
+    const orbit = alt > this.topH * 2.4;
     mu.uSteps.value = orbit ? q.pick(16, 24, 32, 40) : q.pick(32, 56, 84, 112);
     this.uniforms.uCloudFlat.value = orbit ? 1 : 0;
     mu.uLightSteps.value = orbit ? 3 : q.pick(3, 4, 6, 6);
     mu.uOrbitLod.value = orbit ? 1 : 0;
     mu.uMaxDist.value = orbit ? 4e5 : 7e4;
-    mu.uFrame.value = this.engine.shotMode ? 0 : (this._frame++ % 64);
-    // temporal accumulation (real time only): swap, reproject last frame's result
+    mu.uFrame.value = this._frame++ % 64;
+    // temporal accumulation (shots too: the jitter integrates over the rendered frames instead of dithering)
     const tmp = this.rtPrev; this.rtPrev = this.rt; this.rt = tmp;
     mu.tHistory.value = this.rtPrev.texture;
-    mu.uHistoryBlend.value = this.engine.shotMode || !this._historyValid ? 0 : 0.86;
+    if (this._wasOrbit !== orbit) this._historyValid = false;
+    this._wasOrbit = orbit;
+    mu.uHistoryBlend.value = !this._historyValid || orbit ? 0 : (this.engine.shotMode ? 0.78 : 0.86);
     ctx.fullscreen(this.marchMat, this.rt);
     this._historyValid = true;
     mu.uPrevViewProj.value.multiplyMatrices(ctx.camera.projectionMatrix, ctx.camera.matrixWorldInverse);

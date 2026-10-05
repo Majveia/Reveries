@@ -25,7 +25,9 @@ float fl_gust(vec3 wp, vec3 wd, float t) {
 /** Remove three's back-face normal flip (soft, volumetric foliage lighting). */
 export const NO_FLIP_NORMAL = /* glsl */ `
 #include <normal_fragment_begin>
+#ifndef FLAT_SHADED
 normal = normalize( vNormal );
+#endif
 `;
 
 /** Common uniforms object for flora materials (shares world uniforms by reference). */

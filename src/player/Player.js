@@ -22,6 +22,8 @@ import { CharShadow } from './CharShadow.js';
 import { Dust, ContactShadow, ShadowCatcher } from './FX.js';
 
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+/** THREE.Color has no addScaledVector: c += o·s */
+const addSc = (c, o, s) => { c.r += o.r * s; c.g += o.g * s; c.b += o.b * s; return c; };
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
 const _c = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
@@ -344,6 +346,7 @@ export default class Player {
     U.uTime.value = t;
     if (this.vehicle || level.mode !== 'onfoot') this.contact.object.visible = false;
     if (this.vehicle) {
+      this._teleOff = null;
       this._seatOnVehicle(dt);
       if (!level.freeCam) {
         const v = this.vehicle;
@@ -356,8 +359,12 @@ export default class Player {
     }
     if (level.mode !== 'onfoot') { this.group.visible = false; this.scarf.object.visible = false; return; }
     const ctl = this.ctl;
+    // on foot the HUD stays clean: drop any vehicle telemetry (ALT/THR) left behind
+    if (this._teleOff !== level.mode) { this._teleOff = level.mode; this.engine.ui.telemetry?.(null); }
     const fpView = this.cam.view === 'first' && !level.freeCam;
-    this.group.visible = true;
+    // first person: the eye sits where the helmet is, so the whole explorer is hidden
+    // (a per-vertex cut leaves a jagged collar ring in view); the visor pass sells the helmet
+    this.group.visible = !fpView;
     this.scarf.object.visible = !fpView;
     this.rig.meshes.visor.visible = !fpView;
     this.rig.meshes.collar.visible = !fpView;
@@ -511,7 +518,7 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.15);
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 0.95);
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.3 * Math.max(sp, 1.5);
@@ -580,12 +587,12 @@ export default class Player {
     const key = L?.keyColor ? _c2.copy(L.keyColor) : _c2.copy(sun.color).multiplyScalar(sun.intensity);
     const skyC = L?.skyColor || _c3.setRGB(0.3, 0.45, 0.7).multiplyScalar(w.daylight);
     // rim: key-tinted by day, sky-fed under overcast, a cool sliver of sky light at night
-    U.uRim.value.copy(key).multiplyScalar(0.22).addScaledVector(skyC, 0.9).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    addSc(U.uRim.value.copy(key).multiplyScalar(0.16), skyC, 0.5).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
     // character kicker: behind-side, on the sun's side of the frame (view space)
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    U.uKick.value.copy(key).multiplyScalar(0.28).addScaledVector(skyC, 1.1).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(0.24), skyC, 0.45).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
@@ -608,6 +615,8 @@ export default class Player {
   // =====================================================================================
   _endShotPose() {
     this.shotPose = null;
+    if (this._shotPivot != null) { this.cam.pivotHeight = this._shotPivot; this._shotPivot = null; }
+    this.cam.distance = 3.6; this.cam.shoulder = 0.38;
     this.anim.freezePhase = false;
     this.ctl.frozen = false;
   }
@@ -634,18 +643,23 @@ export default class Player {
     const turn = (v, a) => v.clone().applyAxisAngle(up, a);
     const cam = this.cam;
     cam.initialized = false;
+    if (this._shotPivot != null) { cam.pivotHeight = this._shotPivot; this._shotPivot = null; }
     if (name === 'character') {
       // mid-stride jog toward the settlement, seen over the right shoulder
       // 3/4 hero framing: the camera trails behind-left, the explorer sits on the left
       // third striding across the frame toward the settlement on the right third, visor
       // edge and scarf streaming back toward the lens.
-      this.shotPose = { state: 'ground', speed: 4.4, look: [0.32, 0.04] };
-      const camH = turn(siteDir, 0.3);
-      this.ctl.setFacing(turn(camH, -1.05));
+      // the explorer strides from the left third toward the settlement on the right: a
+      // 3/4 profile shows the visor glow, the scarf streams back across the left edge
+      this.shotPose = { state: 'ground', speed: 4.4, look: [-0.42, 0.06] };
+      const camH = turn(siteDir, 0.42);
+      this.ctl.setFacing(turn(camH, -1.4));
       this.anim.phase = 0.27;
       this.anim.freezePhase = true;
-      cam.view = 'third'; cam.distance = 3.3; cam.shoulder = 1.05;
-      cam.snap(this.ctl.pos, up, camH, -0.1);
+      cam.view = 'third'; cam.distance = 2.75; cam.shoulder = 0.95;
+      this._shotPivot = this._shotPivot ?? cam.pivotHeight;
+      cam.pivotHeight = 1.32;
+      cam.snap(this.ctl.pos, up, camH, -0.03);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, -0.05] };
       this.ctl.setFacing(siteDir);

@@ -44,6 +44,28 @@ void main(){
   }
 }`;
 
+// Bright foreground stars of our own galaxy's halo, drawn in the overlay (never dimmed by the
+// target galaxy) with a JWST-style six-spike PSF: they give every Hubble-like frame its scale.
+const FG_FRAG = /* glsl */ `
+varying vec3 vCol; varying vec4 vShape;
+void main(){
+  vec2 pc = (gl_PointCoord * 2.0 - 1.0) * vShape.x * 0.5;
+  float d = length(pc), R = vShape.x * 0.5;
+  if (d > R) discard;
+  float edge = 1.0 - d / R;
+  float f = exp(-d * d / 1.1) * 3.0 + exp(-d / 2.2) * 0.12;
+  float sp = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float a = 1.5708 + float(k) * 1.0472;
+    vec2 ax = vec2(cos(a), sin(a));
+    float across = abs(dot(pc, vec2(-ax.y, ax.x)));
+    sp += exp(-across * across * 1.4) * exp(-d / (R * 0.3));
+  }
+  sp += 0.3 * exp(-pc.y * pc.y * 1.4) * exp(-d / (R * 0.18));
+  f += sp * 0.5 * edge * edge;
+  gl_FragColor = vec4(vCol * f, 1.0);
+}`;
+
 export class DeepSky {
   constructor(engine, g) {
     const q = engine.quality;
@@ -57,7 +79,7 @@ export class DeepSky {
       pos.set([x, y, z], i * 3);
       if (i < nStars) {
         bbColor(rng.range(3200, 11000), tmp);
-        const b = 0.02 * Math.pow(rng.float(), 5) + 0.0025;
+        const b = Math.min(0.12, 0.004 * Math.pow(1 - rng.float() * 0.995, -0.9));
         col.set([tmp[0], tmp[1], tmp[2], b], i * 4);
         shp.set([2.2, 1, 0, 0], i * 4);
       } else {
@@ -77,10 +99,32 @@ export class DeepSky {
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false;
     this.points.renderOrder = -10;
+    // bright foreground stars (overlay)
+    const nFg = q.pick(24, 36, 50, 60);
+    const fp = new Float32Array(nFg * 3), fc = new Float32Array(nFg * 4), fs = new Float32Array(nFg * 4);
+    for (let i = 0; i < nFg; i++) {
+      const [x, y, z] = rng.unitVector();
+      fp.set([x, y, z], i * 3);
+      bbColor(rng.chance(0.3) ? rng.range(3000, 4200) : rng.range(5000, 16000), tmp);
+      const L = Math.min(40, Math.pow(1 - rng.float() * 0.97, -1.1));
+      fc.set([tmp[0], tmp[1], tmp[2], 0.05 * L], i * 4);
+      fs.set([Math.min(64, 9 + 7 * Math.sqrt(L)), 1, 0, 0], i * 4);
+    }
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.BufferAttribute(fp, 3));
+    fg.setAttribute('aCol', new THREE.BufferAttribute(fc, 4));
+    fg.setAttribute('aShape', new THREE.BufferAttribute(fs, 4));
+    this.fgMat = new THREE.ShaderMaterial({
+      vertexShader: VERT.replace('vCol = aCol.rgb * aCol.a / max(1.0, 0.25 * px * px);', 'vCol = aCol.rgb * aCol.a;'), fragmentShader: FG_FRAG,
+      uniforms: this.mat.uniforms,
+      blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, transparent: true,
+    });
+    this.fg = new THREE.Points(fg, this.fgMat);
+    this.fg.frustumCulled = false;
   }
   update(camera, height) {
     this.mat.uniforms.uDist.value = camera.far * 0.5;
     this.mat.uniforms.uPxScale.value = Math.max(1, height / 720);
   }
-  dispose() { this.points.geometry.dispose(); this.mat.dispose(); }
+  dispose() { this.points.geometry.dispose(); this.mat.dispose(); this.fg.geometry.dispose(); this.fgMat.dispose(); }
 }

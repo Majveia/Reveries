@@ -56,7 +56,7 @@ function drawNeedles(ctx, S, rng) {
     const dx = Math.cos(ang), dy = Math.sin(ang);
     ctx.strokeStyle = 'rgb(120,105,90)'; ctx.lineWidth = w;
     ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + dx * len, y0 + dy * len); ctx.stroke();
-    const n = Math.floor(len / 2.2);
+    const n = Math.floor(len / 1.5);
     for (let i = 2; i < n; i++) {
       const t = i / n, px = x0 + dx * len * t, py = y0 + dy * len * t;
       const nl = (1 - t * 0.55) * S * 0.07 * (0.8 + rng.float() * 0.4);
@@ -64,7 +64,7 @@ function drawNeedles(ctx, S, rng) {
         const na = ang + s * (0.95 + rng.float() * 0.3);
         const l = 0.55 + rng.float() * 0.4;
         const c = Math.round(255 * l);
-        ctx.strokeStyle = `rgb(${c},${c},${Math.round(c * 0.9)})`; ctx.lineWidth = 1.6;
+        ctx.strokeStyle = `rgb(${c},${c},${Math.round(c * 0.9)})`; ctx.lineWidth = 2.4;
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(na) * nl, py + Math.sin(na) * nl); ctx.stroke();
       }
     }
@@ -118,8 +118,8 @@ function drawStrands(ctx, S, rng) {
   // hanging strands with beads (willow / Tree-of-Souls / glowing vines)
   for (let i = 0; i < 26; i++) {
     const x = S * (0.08 + 0.84 * rng.float()), len = S * (0.55 + rng.float() * 0.42);
-    const l = 0.7 + rng.float() * 0.3, c = Math.round(255 * l);
-    ctx.strokeStyle = `rgb(${c},${c},${c})`; ctx.lineWidth = 1.6;
+    const l = 0.5 + rng.float() * 0.18, c = Math.round(255 * l);
+    ctx.strokeStyle = `rgb(${c},${c},${c})`; ctx.lineWidth = 3.2;
     ctx.beginPath(); ctx.moveTo(x, 0);
     const sw = (rng.float() - 0.5) * S * 0.08;
     ctx.quadraticCurveTo(x + sw, len * 0.5, x + sw * 0.4, len); ctx.stroke();

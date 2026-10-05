@@ -61,6 +61,21 @@ index, planet index). URL: `?scene=planet&g=0&s=0&p=2`.
    `{ enabled, render(renderer, inputTexture, outputTarget, ctx) }` where ctx has
    `depthTexture, camera, near, far, reversed, time, width, height, projInv,
    viewInv, cameraPosition, fullscreen(material, target)`.
+   Also `ctx.frame` and `ctx.jitter` (TAA sub-pixel NDC offset already baked
+   into this frame's projection and `projInv`).
+7. **PostFX grade keys** (levels pass a partial `grade`; it is reset to the
+   defaults on every level change, so keys never leak between levels). Beyond
+   exposure/tonemap/colour: `look` (film look by aesthetic id, e.g. `'ghibli'`,
+   `'dune'`, or `'filmic' 'cosmic' 'blockbuster' 'bleach' 'noir'`) + `lookStrength`;
+   `autoExposure` (0 = manual; planets 0.7) with `aeKey aeMin aeMax aeDarkComp`
+   and `purkinje` (night vision); `bloomStrength/Radius` (energy-conserving
+   veil) + `bloomHighlights` (glow of exposed highlights: windows, lava);
+   `flare`/`flareThreshold` (aperture ghosts + halo), `streak`/`streakTint`
+   (anamorphic); `ao`/`aoRadius`/`aoDistance` (GTAO, world units); `dof`,
+   `dofFocus` (0 = autofocus), `dofAperture`; `motionBlur` (shutter 0–1),
+   `motionBlurNear`; `sharpen`, `grain`, `chroma`, `halation`, `taa` (0 = FXAA).
+   Animate with `engine.postfx.setGrade(partial, seconds)`; call
+   `engine.postfx.resetHistory?.()` on hard camera cuts. Debug: `?pfx=ao|exposure|flare|nolut|noaa`.
 
 ## Level contract
 

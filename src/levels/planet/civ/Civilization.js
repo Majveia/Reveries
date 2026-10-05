@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { Settlement } from './Settlement.js';
 
-const _v = new THREE.Vector3(), _c = new THREE.Color();
+const _v = new THREE.Vector3(), _c = new THREE.Color(), _b = new THREE.Vector3();
 
 export default class Civilization {
   static order = 70;
@@ -87,6 +87,12 @@ export default class Civilization {
     const day = u.uCivDay.value;
     u.uCivSkyZ.value.set(P.zenith || '#3b7dd8').multiplyScalar(0.03 + 0.9 * day);
     u.uCivSkyH.value.set(P.horizon || '#d6ecff').lerp(_c.set('#ff9a5a'), (1 - day) * 0.6 * (1 - u.uCivNight.value * 0.8)).multiplyScalar(0.05 + 0.9 * Math.max(day, 0.25 * (1 - u.uCivNight.value)));
+    // warm light bounced off the sunlit ground (fills alleys and eave undersides)
+    const sun = this.level.sun;
+    if (u.uCivBounce && sun) {
+      const e = (sun.intensity ?? 1) * Math.max(0, y) * 0.32 * (1 - u.uCivNight.value * 0.9);
+      u.uCivBounce.value.set(sun.color.r, sun.color.g, sun.color.b).multiply(_b.set(0.3, 0.24, 0.17)).multiplyScalar(e);
+    }
     // world up at the site, in view space (for sky reflections)
     u.uCivUpV.value.copy(s.frame.up).transformDirection(this.level.camera.matrixWorldInverse);
   }
@@ -125,69 +131,118 @@ export default class Civilization {
     const Rb = Math.max(120, plan.builtRadius);
     const lm = s.ctx.landmarkSpots.find((l) => ['island', 'elevator', 'pagoda', 'monolith', 'tree', 'citadel', 'colossus', 'arch'].includes(l.kind)) || s.ctx.landmarkSpots[0];
     const sh = s.style.shot || {};
-    let best = null;
-    // classic composition: camera on the far side of town from the landmark, landmark rising behind the roofs
-    const a0 = lm ? Math.atan2(c[1] - lm.z, c[0] - lm.x) : 0;
-    const cand = lm ? Array.from({ length: 15 }, (_, k) => a0 + (k - 7) * 0.12) : Array.from({ length: 48 }, (_, k) => (k / 48) * Math.PI * 2);
-    for (const a of cand) {
-      const D = Rb * (sh.dist ?? 0.85) + 30;
-      const x = c[0] + Math.cos(a) * D, z = c[1] + Math.sin(a) * D;
-      const gh = f.hAt(x, z);
-      const ch = f.hAt(c[0], c[1]);
-      const elev = Math.max(gh, f.sea + 1) + (sh.height ?? (22 + Rb * 0.05));
-      const camY = Math.max(elev, ch + (sh.minAbove ?? 30));
-      // view direction (horizontal) from camera to center
-      const vx = c[0] - x, vz = c[1] - z;
-      const va = Math.atan2(vz, vx);
-      // sun azimuth relative to view: prefer the sun off to one side and a bit ahead (rim light) or behind
-      let da = Math.abs(((sunA - va + Math.PI * 3) % (Math.PI * 2)) - Math.PI); // 0 = sun ahead, π = behind
-      const sunScore = -Math.abs(da - (sh.sunAngle ?? 1.9));
-      // terrain occlusion along the line of sight
-      let occl = 0;
-      for (let i = 1; i < 12; i++) {
-        const t = i / 12;
-        const px = x + vx * t, pz = z + vz * t;
-        const ly = camY + (ch + 8 - camY) * t;
-        const g = f.hAt(px, pz);
-        if (g > ly) occl += (g - ly);
+    const ch = f.hAt(c[0], c[1]);
+    const R = f.R || 40000;
+    const aspect = this.level.camera.aspect || 16 / 9;
+    const TAU = Math.PI * 2;
+    const wrap = (a) => ((a % TAU) + TAU * 1.5) % TAU - Math.PI;
+    const lmTop = lm ? (lm.R ? lm.h + lm.R * 0.95 : lm.h) : 0;
+    const lmBot = lm ? (lm.R ? lm.h - lm.R * 1.3 : f.hAt(lm.x, lm.z)) : 0;
+    const fps = s.ctx.footprints || [];
+    const sunPref = sh.sunPref ?? 1.45; // sun ahead and to the side: rim light, long shadows toward the camera
+    // first terrain hit along a ray (plan space, curvature-corrected); returns [dist, groundH] or null
+    const march = (x0, z0, y0, yaw, pitch, maxS, steps) => {
+      const cx = Math.cos(yaw), cz = Math.sin(yaw), tp = Math.tan(pitch);
+      for (let i = 1; i <= steps; i++) {
+        const sd = (i / steps) ** 1.4 * maxS;
+        const g = f.hAt(x0 + cx * sd, z0 + cz * sd);
+        if (g > y0 + tp * sd + (sd * sd) / (2 * R)) return [sd, g];
       }
-      let lmScore = 0;
-      if (lm) lmScore = -Math.abs(((a - a0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * 1.2;
-      const wetCam = f.wet(x, z) ? -0.3 : 0;
-      const hill = Math.min(1.5, Math.max(0, (gh - ch) / 40));
-      const sc = sunScore * 1.0 + lmScore - occl * 0.08 + wetCam + hill * 0.5;
-      if (!best || sc > best.sc) best = { sc, x, z, camY, a };
+      return null;
+    };
+    const elevOf = (x0, z0, y0, x, z, y) => { const d = Math.hypot(x - x0, z - z0); return Math.atan2(y - y0 - (d * d) / (2 * R), d); };
+    let best = null;
+    const az = 36, dists = [0.55, 0.8, 1.05], heights = [0.45, 0.75, 1.15];
+    for (let k = 0; k < az; k++) {
+      const a = (k / az) * TAU;
+      for (const fd of dists) {
+        const D = Rb * (sh.dist ?? 0.85) * fd + 30;
+        const x = c[0] + Math.cos(a) * D, z = c[1] + Math.sin(a) * D;
+        const gh = f.hAt(x, z);
+        for (const fh of heights) {
+          const camY = Math.max(Math.max(gh, f.sea + 1) + (sh.height ?? 36) * fh, ch + 14);
+          // never inside or right against a building
+          let inside = false;
+          for (const fp of fps) {
+            const L = fp.lot; if (!L) continue;
+            const r = Math.max(L.w, L.d) * 0.6 + 6;
+            if (Math.abs(L.x - x) < r && Math.abs(L.z - z) < r && camY < (L.base ?? gh) + fp.h + 6) { inside = true; break; }
+          }
+          if (inside) continue;
+          const aC = Math.atan2(c[1] - z, c[0] - x);
+          const dC = Math.hypot(c[0] - x, c[1] - z);
+          let vfov, yaw, pitch, dA = 0, dL = dC;
+          const eTown = elevOf(x, z, camY, c[0], c[1], ch);
+          let sc = 0;
+          if (lm) {
+            const aL = Math.atan2(lm.z - z, lm.x - x);
+            dL = Math.hypot(lm.x - x, lm.z - z);
+            dA = wrap(aL - aC);
+            const eTop = elevOf(x, z, camY, lm.x, lm.z, lmTop);
+            const eBot = elevOf(x, z, camY, lm.x, lm.z, lmBot);
+            // landmark top near the upper frame line, town centre in the lower third
+            vfov = THREE.MathUtils.clamp((eTop - Math.min(eTown, eBot)) / 0.66, THREE.MathUtils.degToRad(sh.minFov ?? 38), THREE.MathUtils.degToRad(62));
+            pitch = eTop - 0.4 * vfov;
+            const over = (eTop - Math.min(eTown, eBot)) / 0.66 - vfov;
+            if (over > 0) sc -= over * 8;
+            const hf = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
+            // landmark on a third line, the town spreading toward the other side
+            yaw = aL - Math.sign(dA || 1) * hf / 6;
+            if (Math.abs(wrap(aC - yaw)) > hf * 0.42) sc -= 3;
+            sc -= Math.abs(Math.abs(dA) - hf * 0.18) * 2.0;
+            if (dL < dC * 0.85) sc -= 1.2; // the landmark should rise behind the roofs, not in front of them
+            // landmark base must be visible over the terrain
+            const toL = march(x, z, camY, aL, eBot + 0.004, dL * 0.97, 18);
+            if (toL) sc -= 1.5;
+          } else {
+            vfov = THREE.MathUtils.degToRad(42);
+            yaw = aC;
+            pitch = eTown + 0.2 * vfov;
+          }
+          // terrain occlusion over a 5x4 grid of screen rays: penalise hills/fins rising between camera and town
+          const hf = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
+          let block = 0;
+          for (const u of [-0.85, -0.42, 0, 0.42, 0.85]) {
+            for (const v of [-0.6, -0.15, 0.3, 0.75]) {
+              const hit = march(x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 1.2, 16);
+              if (hit && hit[0] < dC * 0.75 && hit[1] > Math.max(ch, gh) + 10) block++;
+            }
+          }
+          const frac = block / 20;
+          if (frac > 0.25) sc -= 6;
+          sc -= frac * 6;
+          const toC = march(x, z, camY, aC, eTown + 0.01, dC * 0.95, 16);
+          if (toC) sc -= 2;
+          // light: sun to the side and a little ahead
+          const da = Math.abs(wrap(sunA - yaw));
+          sc -= Math.abs(da - sunPref) * 1.3;
+          if (f.wet(x, z)) sc -= 0.4;
+          sc += Math.min(1, Math.max(0, (gh - ch) / 60)) * 0.4; // a natural vantage on a rise
+          sc -= Math.abs(fh - 0.75) * 0.6;
+          // the town should fill the frame: apparent size of the built area vs the field of view
+          const townAng = 2 * Math.atan(Rb * 0.8 / Math.max(dC, 1));
+          sc += Math.min(1, townAng / (vfov * aspect * 0.9)) * 3.0;
+          // a lower, grazing view overlaps roofs in depth; a bird's-eye view flattens the town
+          sc -= Math.max(0, -eTown - 0.2) * 4;
+          if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov };
+        }
+      }
+    }
+    if (!best) { // fallback: high above the centre
+      best = { x: c[0] + Rb, z: c[1], camY: ch + 120, yaw: Math.PI, pitch: -0.25, vfov: 0.8 };
     }
     const pos = f.point(best.x, best.z, best.camY);
-    // fit the town and the whole landmark into the frame
-    const ch = f.hAt(c[0], c[1]);
-    const pts = [f.point(c[0], c[1], ch), f.point(c[0], c[1], ch + (sh.lookUp ?? 12))];
-    if (lm && sh.frameLandmark !== false) {
-      const top = lm.R ? lm.h + lm.R * 0.95 : lm.h;
-      const bottom = lm.R ? lm.h - lm.R * 1.3 : f.hAt(lm.x, lm.z);
-      pts.push(f.point(lm.x, lm.z, top), f.point(lm.x, lm.z, bottom));
-    }
-    const fwd = new THREE.Vector3();
-    for (const p of pts) fwd.add(p.clone().sub(pos).normalize());
-    fwd.normalize();
     const up = f.upAt(best.x, best.z, new THREE.Vector3());
-    const right = fwd.clone().cross(up).normalize();
-    const camUp = right.clone().cross(fwd).normalize();
-    let lo = Infinity, hi = -Infinity, wmax = 0;
-    for (const p of pts) {
-      const d = p.clone().sub(pos);
-      const z = d.dot(fwd), yv = Math.atan2(d.dot(camUp), z), xv = Math.atan2(d.dot(right), z);
-      lo = Math.min(lo, yv); hi = Math.max(hi, yv); wmax = Math.max(wmax, Math.abs(xv));
-    }
-    const mid = (lo + hi) / 2;
-    const aim = fwd.clone().applyAxisAngle(right, mid);
-    const aspect = this.level.camera.aspect || 16 / 9;
-    const needV = Math.max(hi - lo, (wmax * 2) / aspect);
-    const fov = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(needV) * 1.22 + 3, sh.minFov ?? 32, 72);
-    const tgt = pos.clone().addScaledVector(aim, 100);
+    const east = new THREE.Vector3(1, 0, 0).addScaledVector(up, -up.x).normalize();
+    const south = up.clone().cross(east).multiplyScalar(-1).normalize();
+    if (south.z < 0) south.negate();
+    const fwd = east.multiplyScalar(Math.cos(best.yaw) * Math.cos(best.pitch))
+      .addScaledVector(south, Math.sin(best.yaw) * Math.cos(best.pitch))
+      .addScaledVector(up, Math.sin(best.pitch)).normalize();
+    const tgt = pos.clone().addScaledVector(fwd, 100);
     f.toWorld(pos, pos); f.toWorld(tgt, tgt);
     this.level.freeCam = { position: pos, target: tgt };
-    this.level.camera.fov = fov;
+    this.level.camera.fov = THREE.MathUtils.radToDeg(best.vfov);
     this.level.camera.updateProjectionMatrix();
     s.forceShadow();
   }
