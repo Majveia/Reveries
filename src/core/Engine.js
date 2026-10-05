@@ -199,7 +199,9 @@ export class Engine {
     p.set('scene', name);
     for (const k of ['g', 's', 'p']) if (addr[k] != null) p.set(k, addr[k]);
     for (const k of ['q', 'seed', 'debug']) if (this.params.has(k)) p.set(k, this.params.get(k));
-    history.replaceState(null, '', `${location.pathname}?${p.toString()}`);
+    // Sandboxed hosts (embedded viewers) may refuse history updates; deep
+    // links are a convenience, never a reason to fail a level transition.
+    try { history.replaceState(null, '', `${location.pathname}?${p.toString()}`); } catch { /* ignore */ }
   }
 
   _resize() {
