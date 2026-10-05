@@ -162,7 +162,7 @@ async function main() {
       const frames = parseInt(args.frames || '10', 10);
       await page.evaluate((n) => window.__REVERIES__.frames(n), frames);
       const file = outIsFile ? path.resolve(ROOT, out) : path.resolve(ROOT, out, `${scene}${args.p != null ? '-p' + args.p : ''}-${shot}${args.mobile ? '-mobile' : ''}.png`);
-      await page.screenshot({ path: file, type: 'png' });
+      await page.screenshot({ path: file, type: 'png', timeout: 240000 });
       results.push(file);
       console.log(`[shoot] ${shot} → ${path.relative(ROOT, file)}`);
     }
