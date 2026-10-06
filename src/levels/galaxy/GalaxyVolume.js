@@ -73,7 +73,7 @@ void main(){
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
   vec3 T = vec3(1.0);
-  const vec3 KRGB = vec3(0.72, 1.0, 1.32);   // wavelength-dependent extinction: lane edges redden
+  const vec3 KRGB = vec3(0.8, 1.0, 1.22);   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
@@ -113,8 +113,8 @@ void main(){
       // between them: the band breaks into Great-Rift silhouettes instead of a smooth haze
       float dIn = det;
       if (uInside > 0.0 && tm < 3.0) {
-        vec4 c1 = texture(uNoise, pm * 0.9 + 0.37);
-        vec4 c2 = texture(uNoise, pm * 4.0 + c1.xyz * 0.3);
+        vec4 c1 = texture(uNoise, pm * vec3(1.6, 3.0, 1.6) + 0.37);
+        vec4 c2 = texture(uNoise, pm * vec3(6.0, 9.0, 6.0) + c1.xyz * 0.3);
         float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
         dIn = mix(det * det * 1.3, (0.04 + cl * cl * 9.0) * (0.5 + c2.b), 1.0 - smoothstep(0.8, 2.0, tm));
       }
@@ -144,13 +144,25 @@ void main(){
 
 const COMP_FRAG = /* glsl */ `
 uniform sampler2D tInput, tVol; uniform vec2 uTexel;
+uniform mat4 uProjInv, uViewInv; uniform float uGrain, uGrainK;
 varying vec2 vUv;
+float h13(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
 void main(){
   // 4-tap tent upsample of the half-res volume (smooth, no blockiness)
   vec4 v = texture2D(tVol, vUv + uTexel * vec2(-0.5, -0.5)) + texture2D(tVol, vUv + uTexel * vec2(0.5, -0.5))
          + texture2D(tVol, vUv + uTexel * vec2(-0.5, 0.5)) + texture2D(tVol, vUv + uTexel * vec2(0.5, 0.5));
   v *= 0.25;
   vec3 c = texture2D(tInput, vUv).rgb;
+  if (uGrain > 0.0) {
+    // inside the disk the unresolved band breaks into myriad faint stars: a full-resolution,
+    // direction-locked (no swimming) sparkle field modulates the diffuse light (mean ≈ 1)
+    vec4 cp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+    vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
+    vec3 cell = floor(rd * uGrainK);
+    float h = h13(cell), h2 = h13(cell + 17.3);
+    float s = pow(h, 14.0) * 6.0 + pow(h2, 2.0) * 0.75;
+    v.rgb *= mix(1.0, 0.35 + s, uGrain);
+  }
   gl_FragColor = vec4(c * v.a + v.rgb, 1.0);
 }`;
 
@@ -181,7 +193,7 @@ export class GalaxyVolume {
     });
     this.comp = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false,
-      uniforms: { tInput: { value: null }, tVol: { value: null }, uTexel: { value: new THREE.Vector2() } },
+      uniforms: { tInput: { value: null }, tVol: { value: null }, uTexel: { value: new THREE.Vector2() }, uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uGrain: { value: 0 }, uGrainK: { value: 500 } },
     });
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.frame = 0;
@@ -201,6 +213,10 @@ export class GalaxyVolume {
     this.comp.uniforms.tInput.value = input;
     this.comp.uniforms.tVol.value = this.rt.texture;
     this.comp.uniforms.uTexel.value.set(1 / w, 1 / h);
+    const cu = this.comp.uniforms;
+    cu.uProjInv.value.copy(ctx.camera.projectionMatrixInverse); cu.uViewInv.value.copy(ctx.camera.matrixWorld);
+    cu.uGrain.value = this.march.uniforms.uInside.value * 0.5;
+    cu.uGrainK.value = ctx.height / (ctx.camera.fov * Math.PI / 180) * 1.0;
     ctx.fullscreen(this.comp, output);
   }
 

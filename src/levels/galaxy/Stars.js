@@ -35,8 +35,8 @@ float cloudTau(vec3 a, vec3 b){
   float L = length(b - a), t = 0.0;
   for (int k = 0; k < 4; k++) {
     vec3 pm = mix(a, b, (float(k) + 0.5) / 4.0);
-    vec4 c1 = textureLod(uNoise, pm * 0.9 + 0.37, 0.0);
-    vec4 c2 = textureLod(uNoise, pm * 4.0 + c1.xyz * 0.3, 0.0);
+    vec4 c1 = textureLod(uNoise, pm * vec3(1.6, 3.0, 1.6) + 0.37, 0.0);
+    vec4 c2 = textureLod(uNoise, pm * vec3(6.0, 9.0, 6.0) + c1.xyz * 0.3, 0.0);
     float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
     float pD = 0.5 / (uHDust * pow(cosh(clamp(pm.y / uHDust, -12.0, 12.0)), 2.0));
     t += galMap(pm, 0.0).b * pD * (0.04 + cl * cl * 9.0) * (0.5 + c2.b);
@@ -149,6 +149,7 @@ ${CLOUD_GLSL}
 attribute vec4 aRnd;     // xyz position in unit box, w = luminosity/keep random
 uniform float uS, uBright, uPxScale, uSat, uDensRef, uBulgeScale, uBulgeQ, uBulgeAmp, uHOldU, uHYoungU;
 uniform vec3 uCamPos;
+varying vec3 vColor; varying float vSharp, vRc;
 vec3 bb(float t){ // compact blackbody approx (linear)
   t = clamp(t, 1500.0, 30000.0) / 100.0;
   float r = t <= 66.0 ? 1.0 : clamp(1.2929 * pow(t - 60.0, -0.1332), 0.0, 1.0);
@@ -311,7 +312,7 @@ export class Stars {
     geo.setAttribute('aCol', new THREE.BufferAttribute(col.subarray(0, o * 4), 4, true));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 2);
     this.starMat = this._mat(STAR_VERT, STAR_FRAG, {
-      uBright: { value: 2.4 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
+      uBright: { value: 5.0 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
       uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 },
     });
     this.field = new THREE.Points(geo, this.starMat);

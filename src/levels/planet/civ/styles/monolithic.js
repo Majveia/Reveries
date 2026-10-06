@@ -13,7 +13,7 @@ export function palette(A, rng) {
   const P = A?.palette || {};
   void rng;
   return {
-    concrete: ['#9c9080', '#8c8274', '#a69882', '#857a6c', '#ab9c86', '#7c7266'].map(col),
+    concrete: ['#97938a', '#8a877f', '#a09c92', '#7f7c76', '#a8a398', '#76736d'].map(col),
     adobe: ['#c49a72', '#b88c66', '#cfa77e', '#a98060'].map(col),
     dark: col('#3a332c'), black: col('#0c0b0a'),
     stone: col('#a2927a'), stoneDark: col('#7d6e5a'), wood: col('#5a4430'), trim: col('#c8b89a'), iron: col('#1c1a18'),
@@ -30,8 +30,8 @@ export function roadMat(road, zone) {
   return zone < 0.5 ? G.FLAG : G.DIRT;
 }
 export const plazaMat = () => G.SANDSTONE;
-export const shotSun = 0.34;
-export const shot = { dist: 1.0, height: 45, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 2.05 };
+export const shotSun = 0.5;
+export const shot = { dist: 1.0, height: 45, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.85 };
 
 function slab(ctx, lot, w, d, H) {
   const { rng, pal } = ctx, B = ctx.B;

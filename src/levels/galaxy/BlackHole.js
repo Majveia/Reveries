@@ -33,10 +33,12 @@ uniform vec3 uHoleDir, uCoreCol;
 uniform vec2 uRes;
 varying vec2 vUv;
 const float TAU = 6.2831853;
-float gW = 1.0;   // source-plane star width factor: lens compression never makes a star sub-pixel
+float gW = 1.0;   // source-plane star width factor
+float gSinTh = 0.5;   // sin of the IMAGE angle from the hole (set per ray)
 
 // analytic star layer evaluated in the BENT direction: lensed stars stay crisp points
 // (arcs only where the true lens map stretches them), Einstein-ring images included.
+vec3 gTdir = vec3(0.0); float gMuT = 1.0;
 vec3 starLayer(vec3 dir, float scale, float dens, float pix){
   vec3 g = dir * scale;
   vec3 cell = floor(g);
@@ -44,13 +46,23 @@ vec3 starLayer(vec3 dir, float scale, float dens, float pix){
   float pick = hash13(cell + 7.0);
   if (pick < 1.0 - dens) return vec3(0.0);
   vec3 sp = (cell + 0.5 + (hsh - 0.5) * 0.7) / scale;
-  float ang = length(normalize(sp) - dir);
+  // point-lens tangential magnification: a source offset o along the tangential direction
+  // appears μt times larger in the image, so measure the star's distance in IMAGE space —
+  // lensed stars stay crisp points instead of smeared arcs (only true multiple images remain)
+  vec3 o = normalize(sp) - dir;
+  float ot = dot(o, gTdir);
+  vec3 orr = o - ot * gTdir;
+  float ang = sqrt(ot * ot * gMuT * gMuT + dot(orr, orr));
   float w = pix * 0.75 * gW;
   float mag = pow(hash13(cell + 3.1), 6.0) * 6.0 + 0.15;
   vec3 c = blackbody(mix(3200.0, 14000.0, hsh.y * hsh.y));
   return c * mag * exp(-ang * ang / (w * w));
 }
 vec3 background(vec3 dir){
+  vec3 cx = cross(uHoleDir, dir);
+  float sinB = length(cx);
+  gTdir = sinB > 1e-5 ? cx / sinB : vec3(0.0);
+  gMuT = clamp(gSinTh / max(sinB, 1e-4), 0.05, 60.0);
   vec3 vd = mat3(uView) * dir;
   vec4 clip = uProj * vec4(vd, 0.0);
   vec3 sky = starLayer(dir, 140.0, 0.022, uPix) + starLayer(dir, 380.0, 0.012, uPix) * 0.45;
@@ -109,6 +121,7 @@ vec3 trace(vec2 uv){
   vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
   vec3 p = uCam;
   vec3 v = rd;
+  gSinTh = length(cross(rd, uHoleDir));
   float r0 = length(p);
   float tca = -dot(p, v);
   vec3 cpt = p + v * tca;                 // closest approach of the straight line
@@ -122,7 +135,7 @@ vec3 trace(vec2 uv){
   if (r0 > uRint && (b > uRint || tca < 0.0)) {
     float a = (1.0 / b) * (1.0 - sObs / sqrt(sObs * sObs + b * b));
     float th = atan(b, max(tca, 1e-4)), k = min(a / max(th, 1e-4), 0.98);
-    gW = min(max(1.0 + k, 1.0 / max(1.0 - k, 0.02)) * 0.8, 5.0);
+    gW = 1.0;
     return background(bend(v, toBH, a));
   }
   if (r0 > uRint) {
@@ -156,7 +169,7 @@ vec3 trace(vec2 uv){
     if (T < 0.01) break;
     if (length(p) > uRint * 1.02 && dot(p, v) > 0.0) break;
   }
-  gW = 2.5;
+  gW = 1.0;
   if (!captured && T > 0.01) {
     // remaining deflection on the way out to infinity
     v = normalize(v);
@@ -197,7 +210,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 300 : q.pick(160, 220, 300, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.5 }, uTmax: { value: 5200 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.42 }, uTmax: { value: 4900 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

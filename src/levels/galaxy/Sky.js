@@ -70,7 +70,7 @@ export class DeepSky {
   constructor(engine, g) {
     const q = engine.quality;
     const rng = new Random(seedFrom(g.seed, 'deepsky'));
-    const nStars = q.pick(2500, 4000, 6000, 8000), nGal = q.pick(120, 200, 320, 400);
+    const nStars = q.pick(2500, 4000, 6000, 8000), nGal = q.pick(200, 320, 480, 600);
     const n = nStars + nGal;
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 4), shp = new Float32Array(n * 4);
     const tmp = [0, 0, 0];
@@ -79,12 +79,12 @@ export class DeepSky {
       pos.set([x, y, z], i * 3);
       if (i < nStars) {
         bbColor(rng.range(3200, 11000), tmp);
-        const b = Math.min(0.12, 0.004 * Math.pow(1 - rng.float() * 0.995, -0.9));
+        const b = Math.min(0.15, 0.006 * Math.pow(1 - rng.float() * 0.995, -0.9));
         col.set([tmp[0], tmp[1], tmp[2], b], i * 4);
         shp.set([2.2, 1, 0, 0], i * 4);
       } else {
         const ell = rng.chance(0.35);
-        col.set([1, 1, 1, rng.range(0.004, 0.02)], i * 4);
+        col.set([1, 1, 1, rng.range(0.012, 0.05)], i * 4);
         shp.set([rng.range(3, 9) * (rng.chance(0.06) ? 2.2 : 1), rng.range(0.2, 1), rng.range(0, Math.PI), ell ? 2 : 1], i * 4);
       }
     }
@@ -100,7 +100,7 @@ export class DeepSky {
     this.points.frustumCulled = false;
     this.points.renderOrder = -10;
     // bright foreground stars (overlay)
-    const nFg = q.pick(24, 36, 50, 60);
+    const nFg = q.pick(60, 90, 120, 140);
     const fp = new Float32Array(nFg * 3), fc = new Float32Array(nFg * 4), fs = new Float32Array(nFg * 4);
     for (let i = 0; i < nFg; i++) {
       const [x, y, z] = rng.unitVector();

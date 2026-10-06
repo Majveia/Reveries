@@ -83,7 +83,7 @@ export default class Civilization {
     const early = s.style?.lightsEarly ?? 0;
     u.uCivNight.value = 1 - ss(-0.06, 0.4 + early, y);
     u.uCivDay.value = ss(-0.1, 0.25, y);
-    u.uCivLitP.value = 0.06 + 0.66 * ss(0.44 + early, -0.04, y);
+    u.uCivLitP.value = 0.05 + 0.5 * ss(0.44 + early, -0.04, y);
     // sky colour for glass reflections follows the light
     const P = this.level.aesthetic?.palette || {};
     const day = u.uCivDay.value;
@@ -111,7 +111,7 @@ export default class Civilization {
   }
 
   /** Pick a time at the site where the sun's local elevation (sin) ≈ target, in the evening. */
-  _timeFor(s, target, from = 0.62, to = 0.92) {
+  _timeFor(s, target, from = 0.52, to = 0.92) {
     const w = this.level.world;
     let best = 0.75, bd = Infinity;
     for (let t = from; t <= to; t += 0.0025) {
@@ -126,9 +126,13 @@ export default class Civilization {
 
   _shotCity(s, o = {}) {
     const w = this.level.world, f = s.frame, plan = s.plan;
-    this._timeFor(s, o.night ? -0.2 : (s.style.shotSun ?? 0.14));
-    const sunL = f.sunLocal(w.sunDir, new THREE.Vector3());
-    const sunA = Math.atan2(sunL.z, sunL.x);
+    // the light is part of the composition: try the evening and the morning golden hour (same sun
+    // elevation, mirrored azimuth) and keep whichever lets the camera put the sun where the style wants it
+    const target = o.night ? -0.2 : (s.style.shotSun ?? 0.14);
+    const times = [this._timeFor(s, target)];
+    if (!o.night && !s.style.eveningOnly) times.push(this._timeFor(s, target, 0.06, 0.48));
+    const sunL = new THREE.Vector3();
+    let sunA = 0;
     const c = plan.center;
     const Rb = Math.max(120, plan.builtRadius);
     const lm = s.ctx.landmarkSpots.find((l) => ['island', 'elevator', 'pagoda', 'monolith', 'tree', 'citadel', 'colossus', 'arch'].includes(l.kind)) || s.ctx.landmarkSpots[0];
@@ -154,6 +158,10 @@ export default class Civilization {
     };
     const elevOf = (x0, z0, y0, x, z, y) => { const d = Math.hypot(x - x0, z - z0); return Math.atan2(y - y0 - (d * d) / (2 * R), d); };
     let best = null;
+    for (const tod of times) {
+    w.setTimeOfDay(tod, s.site.dir);
+    f.sunLocal(w.sunDir, sunL);
+    sunA = Math.atan2(sunL.z, sunL.x);
     const az = 36, dists = [0.55, 0.8, 1.05], heights = [0.45, 0.75, 1.15];
     for (let k = 0; k < az; k++) {
       const a = (k / az) * TAU;
@@ -211,14 +219,23 @@ export default class Civilization {
               if (hit && hit[0] < dC * 1.1 && hit[1] > Math.max(ch, gh) + 10) block++;
             }
           }
+          // massive terrain (karst pillars, cliffs) walling off the upper corners of the frame, even beyond the town
+          let wallC = 0;
+          for (const u of [-0.85, -0.5, 0.5, 0.85]) {
+            for (const v of [0.35, 0.8]) {
+              const hit = march(x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 2.6, 20);
+              if (hit && hit[1] > ch + 40) wallC++;
+            }
+          }
+          sc -= wallC * 0.9;
           const frac = block / 20;
-          if (frac > 0.2) sc -= 8;
-          sc -= frac * 8;
+          if (frac > 0.15) sc -= 8;
+          sc -= frac * 14;
           const toC = march(x, z, camY, aC, eTown + 0.01, dC * 0.95, 16);
           if (toC) sc -= 2;
           // light: sun to the side and a little ahead
           const da = Math.abs(wrap(sunA - yaw));
-          sc -= Math.abs(da - sunPref) * 1.3;
+          sc -= Math.abs(da - sunPref) * 2.0;
           if (f.wet(x, z)) sc -= 0.4;
           sc += Math.min(1, Math.max(0, (gh - ch) / 60)) * 0.4; // a natural vantage on a rise
           sc -= Math.abs(fh - 0.75) * 0.6;
@@ -227,10 +244,12 @@ export default class Civilization {
           sc += Math.min(1, townAng / (vfov * aspect * 0.9)) * 3.0;
           // a lower, grazing view overlaps roofs in depth; a bird's-eye view flattens the town
           sc -= Math.max(0, -eTown - 0.2) * 4;
-          if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov };
+          if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov, tod };
         }
       }
     }
+    }
+    w.setTimeOfDay(best?.tod ?? times[0], s.site.dir);
     if (!best) { // fallback: high above the centre
       best = { x: c[0] + Rb, z: c[1], camY: ch + 120, yaw: Math.PI, pitch: -0.25, vfov: 0.8 };
     }

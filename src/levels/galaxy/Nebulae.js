@@ -83,7 +83,7 @@ vec3 field(vec3 x){
   if (uKind < 1.5) {
     float hg = cliffH(xw);
     float wall = smoothstep(0.0, 0.02, hg);
-    dust = wall * (0.7 + 0.9 * nz(xw * 2.0 + SP).g) * e;
+    dust = wall * (0.7 + 0.9 * nz(xw * 2.0 + SP).g) * (0.55 + 0.9 * nz(RT * xw * 7.0 + SP).b * nz(xw * 17.0).g) * e;
     dust += smoothstep(0.84, 0.96, nz(RT * xw * 0.8 + SP).b) * exp(-max(-hg, 0.0) * 6.0) * 0.25 * e;
     float above = -hg;
     gas *= smoothstep(0.0, 0.12, above);
@@ -144,11 +144,11 @@ void main(){
     // gas: hot OIII cavity around the cluster, Hα/SII envelope further out
     vec3 gcol = mix(mix(cHa, vec3(1.0, 0.25, 0.4), 0.25), cOIII, ion);
     vec3 e = gas * I * gcol * 1.05;
-    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.35) * 2.6;               // ionization front
+    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.35) * 3.4;               // ionization front
     float sigD = dust * 55.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
     e += sigD * I * vec3(1.0, 0.55, 0.3) * 0.15 * (0.35 + hg);
-    e += sigD * vec3(0.9, 0.42, 0.24) * 0.025 * (0.3 + ion);                      // diffuse nebular light on shadowed dust
+    e += sigD * vec3(0.9, 0.42, 0.24) * 0.014 * (0.3 + ion);                      // diffuse nebular light on shadowed dust
     float sigma = sigD + gas * 0.35 + skin * 0.2;
     float a = exp(-sigma * stepU);
     col += T * e * (sigma > 1e-3 ? (1.0 - a) / sigma : stepU);

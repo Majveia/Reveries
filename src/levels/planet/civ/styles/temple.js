@@ -15,7 +15,7 @@ export function palette(A, rng) {
   void rng;
   return {
     walls: ['#e8e2d4', '#ddd6c6', '#e4dccb', '#d6cfbf'].map(col),
-    roofs: ['#3a3e3c', '#33383a', '#40423e', '#2e3436', '#4a4038'].map(col),
+    roofs: ['#4a4f4e', '#42484c', '#50524c', '#3c4446', '#5a5048'].map(col),
     lacquer: col('#8e1f18'), lacquer2: col('#6e1a14'), gold: col('#c8963a'),
     stone: col('#8f8b80'), stoneDark: col('#6a675e'), wood: col('#4a3324'), woodDark: col('#2c1f16'), trim: col('#d9d2c2'), iron: col('#1c1c1e'),
     lamp: col(P.lights || '#ffb85a'), lantern: col('#ff4a2a'), accent: col(P.accent || '#c8282a'),
@@ -33,9 +33,9 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.3;
-export const lightsEarly = 0.16; // lanterns lit in the mist of the late afternoon
-export const shot = { dist: 0.62, height: 64, sunAngle: 1.7, lmLift: 0.3, sunPref: 0.95 };
+export const shotSun = 0.4;
+export const lightsEarly = 0.34; // lanterns lit in the mist of the late afternoon
+export const shot = { dist: 0.56, height: 60, sunAngle: 1.7, lmLift: 0.3, sunPref: 1.8 };
 
 /** A timber hall: terrace, columns, lattice screens, curved roof (1–2 eaves). */
 function hall(ctx, w, d, lot, o = {}) {
@@ -195,7 +195,7 @@ function huiHouse(ctx, w, d, lot, core) {
   const yE = y0 + H;
   const rise = d * 0.34;
   // dual-pitch curved roof (hip with long ridge), modest flare
-  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 1.15, curve: 1.8, flare: 0.95, sweep: 0.5, segS: 7, segR: 4, thick: 0.22, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().multiplyScalar(0.8), ridgeW: 0.32, ridgeH: 0.4, hipK: 0.25, ornaments: false });
+  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 1.15, curve: 1.8, flare: 0.95, sweep: 0.5, segS: 7, segR: 4, thick: 0.22, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().lerp(col('#b4b0a4'), 0.45), ridgeW: 0.36, ridgeH: 0.4, hipK: 0.25, ornaments: false });
   // stepped horse-head firewalls on both gable ends
   if (rng.chance(core ? 0.75 : 0.45)) {
     for (const sx of [-1, 1]) {
@@ -306,6 +306,35 @@ export function pagoda(ctx, x, z, tiers = 9) {
   ctx.useTile(null);
   ctx.landmarkSpots.push({ x, z, h: fp.max + y + 11, kind: 'pagoda', title: 'The Nine-Storey Pagoda' });
   ctx.poiAt(x, z, fp.max + 3, 40, 'landmark', 'The Nine-Storey Pagoda');
+  return fp.max;
+}
+
+/** A pilgrims' stair of lanterns and stone landings zig-zagging down the cliff from a high shrine to the town. */
+function cliffStair(ctx, x, z, top) {
+  const f = ctx.frame, c = ctx.plan.center, pal = ctx.pal;
+  const bottom = Math.max(f.hAt(c[0], c[1]), f.sea + 1);
+  if (top - bottom < 24) return;
+  const a0 = Math.atan2(c[1] - z, c[0] - x);
+  const n = Math.min(70, Math.floor((top - bottom) / 3.2));
+  for (let i = 1; i < n; i++) {
+    const t = i / n, y = top - t * (top - bottom) - 1.5;
+    const a = a0 + Math.sin(t * Math.PI * 4.0) * 0.55;
+    let r = 10, found = false;
+    for (; r < 320; r += 1.5) if (f.hAt(x + Math.cos(a) * r, z + Math.sin(a) * r) < y) { found = true; break; }
+    if (!found) continue;
+    const px = x + Math.cos(a) * (r + 0.8), pz = z + Math.sin(a) * (r + 0.8);
+    ctx.place(px, pz, y, -a + Math.PI / 2);
+    const B = ctx.B;
+    B.mat(M.STONE, (i * 0.137) % 1, 0, 3).color(pal.stone).ext(0.9, 0, F.NOWIN, 0);
+    B.boxC(0, -0.45, 0, 2.6, 0.45, 2.0);
+    B.boxC(0, -3.2, 0, 1.4, 2.75, 1.0, { top: false });
+    if (i % 2 === 0) {
+      B.mat(M.LACQUER, 0.4, 0, 3).color(pal.woodDark).ext(1, 0, F.NOWIN, 0);
+      B.boxC(1.1, 0, 0.8, 0.12, 2.2, 0.12, { top: false });
+      paperLantern(ctx, 1.1, 1.75, 1.05, i % 6 === 0 ? pal.lamp : pal.lantern, 0.34);
+      glow(ctx, 1.1, 1.95, 1.05, i % 6 === 0 ? pal.lamp : pal.lantern, 1.5, (i * 0.618) % 1);
+    }
+  }
 }
 
 export function plaza(ctx, pz) {
@@ -394,7 +423,7 @@ export function landmark(ctx) {
   const { plan, rng } = ctx;
   // the pagoda on the highest nearby spot that is not too far
   const spot = plan.spots.find((s) => s.r > plan.builtRadius * 0.3 && s.r < plan.builtRadius * 0.95) || plan.spots.find((s) => s.r < plan.builtRadius * 1.4) || plan.spots[0];
-  if (spot) { pagoda(ctx, spot.x, spot.z, 11); ctx.occupy(spot.x, spot.z, 24); }
+  if (spot) { const top = pagoda(ctx, spot.x, spot.z, 11); ctx.occupy(spot.x, spot.z, 24); try { cliffStair(ctx, spot.x, spot.z, top); } catch (e) { console.warn('[civ] cliff stair', e); } }
   // the guardian at the end of the processional avenue
   const av = plan.mains?.[0];
   if (av && av.pts.length > 6) {

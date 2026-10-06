@@ -46,7 +46,7 @@ export default class SystemLevel {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0, 0, 0);
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.004, 8000);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.02, 8000);
 
     this.backdrop = new Backdrop(E, sys, this.galaxy);
     this.scene.add(this.backdrop.group);
@@ -101,10 +101,9 @@ export default class SystemLevel {
 
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.1, saturation: 1.12, blackPoint: 0.006, temperature: 0.0,
-      vignette: 0.34, vignetteSoftness: 0.6, grain: 0.012, chroma: 0.0016,
-      bloomStrength: 0.085, bloomRadius: 0.8, bloomThreshold: 0.0,
-      // PostFX.next keys (ignored by the current PostFX)
-      autoExposure: 0.0, flare: 0.3, flareThreshold: 8.0, streak: 0.04, halation: 0.05, look: 'filmic', lookStrength: 0.6,
+      vignette: 0.3, vignetteSoftness: 0.6, grain: 0.006, chroma: 0.0, sharpen: 0.12,
+      bloomStrength: 0.07, bloomRadius: 0.7, bloomThreshold: 0.0,
+      autoExposure: 0.0, flare: 0.16, flareThreshold: 10.0, streak: 0.03, halation: 0.04, look: 'cosmic', lookStrength: 0.5,
     };
     this.crumbs = U.crumbs(this.addr);
     this._update(0, 0);
@@ -156,6 +155,10 @@ export default class SystemLevel {
     if (cp.lengthSq() < minR * minR) { cp.setLength(minR); this.camera.lookAt(this.rig.target); }
 
     this._interact();
+    // Keep the projection in sync with the renderer's reversed-Z mode: PostFX restores a projection
+    // matrix saved before three flipped camera.reversedDepth on the first frame, which would leave a
+    // forward-Z matrix against a reversed depth test (far things drawn over near ones).
+    this.camera.updateProjectionMatrix();
     const sel = this.focus;
     if (!E.shotMode) E.ui.telemetry({ Time: warp ? `×${warp}` : 'paused', Day: Math.floor(this.days).toLocaleString(), ...(sel ? { Orbit: `${sel.planet.orbit.a.toFixed(2)} AU` } : {}) });
 
@@ -326,14 +329,17 @@ export default class SystemLevel {
     const L = this.layout;
     return {
       hero: async () => {
-        // high over the ringed giant's shoulder, looking sunward across the whole orrery
+        // beside the ringed giant at a ~115° phase angle: a lit crescent with open rings in the
+        // foreground, the star and the inner worlds strung along their orbits beyond it
         const sp = this.planets.find((x) => x.planet.rings) || this._planet(2);
         this.focus = null;
-        const P = sp.position, R = sp.ringOut || sp.R * 2;
-        const out = P.clone().normalize(), up = new THREE.Vector3(0, 1, 0);
-        const tan = new THREE.Vector3().crossVectors(up, out).normalize();
-        const cam = P.clone().addScaledVector(out, R * 2.6).addScaledVector(up, R * 2.3).addScaledVector(tan, R * 1.3);
-        const look = P.clone().multiplyScalar(0.42).addScaledVector(tan, -R * 3.0).addScaledVector(up, -R * 2.6);
+        const P = sp.position, R = sp.R;
+        const s = P.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
+        const t = new THREE.Vector3().crossVectors(up, s).normalize();
+        const ph = THREE.MathUtils.degToRad(100);
+        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.4).normalize();
+        const cam = P.clone().addScaledVector(dirC, R * 10.5);
+        const look = P.clone().lerp(new THREE.Vector3(0, 0, 0), 0.3).addScaledVector(up, -R * 1.2);
         this._poseCam(cam, look);
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
@@ -357,24 +363,28 @@ export default class SystemLevel {
         const sp = this._planet(2);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
-        const dir = s.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.75);
-        dir.y += 0.28;
-        this._poseDir(sp.position, sp.R * 3.1, dir);
+        const dir = s.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.5);
+        dir.y += 0.3;
+        this._poseDir(sp.position, sp.R * 2.9, dir);
       },
       belt: async () => {
         this.focus = null;
         const b = this.belts.find((x) => x.kind !== 'kuiper') || this.belts[0];
         if (!b) { this._pose(new THREE.Vector3(), this.extent, 0.4, 0.1); return; }
-        // the biggest boulder, backlit by the star
+        // a big boulder at ~75° phase (mostly lit, hard terminator), the star low in the frame corner,
+        // the belt streaming away toward it
         let best = b.instances[0];
         for (const it of b.instances) if (it.s > best.s) best = it;
         const pos = b.instancePosition(best, this.days, new THREE.Vector3());
-        const out = pos.clone().normalize();
-        const tan = new THREE.Vector3(-out.z, 0, out.x);
         const S = best.s;
-        const cam = pos.clone().addScaledVector(tan, S * 3.1).addScaledVector(out, S * 1.6).addScaledVector(new THREE.Vector3(0, 1, 0), S * 0.7);
+        const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
+        const t = new THREE.Vector3().crossVectors(up, s).normalize();
+        const ph = THREE.MathUtils.degToRad(138);
+        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.1).normalize();
+        const cam = pos.clone().addScaledVector(dirC, S * 4.6);
+        // aim between the rock (left) and the star (right) so the boulder is rim-lit against the glare
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
-        const look = cam.clone().addScaledVector(toRock.multiplyScalar(1.15).add(toStar).normalize(), S * 3.5);
+        const look = cam.clone().addScaledVector(toRock.add(toStar).normalize(), S * 4.0);
         this._poseCam(cam, look);
       },
     };

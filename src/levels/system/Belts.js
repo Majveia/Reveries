@@ -94,7 +94,7 @@ export class Belt {
     ];
     const sun = starColor.clone().multiplyScalar(1.4);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.42).lerp(new THREE.Color(0.2, 0.19, 0.18), kuiper ? 0 : 0.45) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 } },
+      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.62).lerp(new THREE.Color(0.3, 0.27, 0.24), kuiper ? 0 : 0.35) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 } },
       vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG,
     });
     this.instances = []; // CPU copy (for shots / picking)
@@ -156,10 +156,12 @@ export class Belt {
           vec3 V = normalize(cameraPosition - p), L = normalize(-p);
           float fwd = pow(max(dot(-V, L), 0.0), 6.0);
           float dist = -mv.z;
-          vC = uSun * (0.004 + 0.12 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04);
-          gl_PointSize = max(1.0, 1.6 * uDpr);
+          // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
+          float sz = clamp(70.0 / dist, 2.0, 5.0);
+          vC = uSun * (0.0022 + 0.07 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (2.6 / sz);
+          gl_PointSize = sz * uDpr;
         }`,
-      fragmentShader: /* glsl */`varying vec3 vC; void main(){ gl_FragColor = vec4(vC, 1.0); }`,
+      fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
     });
     const dust = new THREE.Points(dg, this.dustMat);

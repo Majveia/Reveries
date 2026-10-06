@@ -214,10 +214,14 @@ export default class Ocean {
       uDeep: { value: deep }, uShallow: { value: shallow }, uSSS: { value: sss },
       uAbsorb: { value: new THREE.Vector3(0.42, 0.075, 0.055) }, uBed: { value: sand.clone().multiplyScalar(0.5) },
       uMaxAmp: { value: this.maxAmp }, uFoam: { value: 0.62 }, uSparkle: { value: 1 }, uUnder: { value: 0 },
+      uBio: { value: new THREE.Vector4(0, 0, 0, 0) },
       uLava: { value: new THREE.Vector4(70, 0.35, 1.0, 14.0) },
       tSunVis: { value: null }, uSunVisM: { value: new THREE.Matrix4() }, uSunVisOn: { value: 0 }, uSunVisParams: { value: new THREE.Vector4() },
     };
     this._pal = { zenith: lin(pal.zenith, '#3b6dd8'), horizon: lin(pal.horizon, '#cfe4ff') };
+    // bioluminescent worlds: the surf glows at dusk and by night
+    const A = this.level.aesthetic;
+    this._bio = !lava && A && (A.flora === 'bioluminescent' || /biolum/.test(A.mood || '')) ? lin((pal.glow && pal.glow[0]) || pal.accent, '#38f6ff') : null;
     const m = new THREE.ShaderMaterial({
       vertexShader: OCEAN_VERT, fragmentShader: OCEAN_FRAG, uniforms: u,
       defines: Object.assign(lava ? { LAVA: 1 } : {}, { ODBG: +(this.engine.params?.get?.('odbg') || 0) }),
@@ -341,6 +345,10 @@ export default class Ocean {
     u.uSkyZenith.value.copy(this._pal.zenith).multiplyScalar(k);
     u.uSkyHorizon.value.copy(this._pal.horizon).multiplyScalar(k);
     u.uSparkle.value = this.engine.quality.level >= 1 ? 1 : 0;
+    if (this._bio) {
+      const night = 1 - THREE.MathUtils.smoothstep(w.daylight, 0.04, 0.55);
+      u.uBio.value.set(this._bio.r, this._bio.g, this._bio.b, 1.6 * night);
+    }
 
     // far terrain sun shadow (shared with the terrain material)
     const ter = this.level.sys?.terrain, tu = ter?.uniforms;
@@ -440,7 +448,7 @@ export default class Ocean {
     for (const c of cands) {
       const up = c.dir;
       w.setTimeOfDay(c.t, up);
-      for (const yawDeg of [-30, -18, -8, 0, 8, 18, 30]) {
+      for (const yawDeg of [-22, -14, -7, 0, 7, 14, 22]) {
         const yaw = THREE.MathUtils.degToRad(yawDeg);
         // look = sun azimuth rotated by yaw (water only: lava looks seaward)
         const baseDir = lava ? c.seaH : c.sunH;
@@ -463,7 +471,11 @@ export default class Ocean {
         const wf = water / n;
         const sunIn = lava ? 1 : Math.max(0, Math.cos(yaw));
         const edge = (landL > 0) !== (landR > 0) ? 1 : 0;
-        const score = wf * 8 + sunIn * 2.5 + edge * 1.5 - c.slope * 10 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
+        // the shoreline should run diagonally through the frame (beach on one
+        // side, open sea and sun on the other): ~40° between view and shore normal
+        const offShore = Math.acos(THREE.MathUtils.clamp(c.seaH.dot(fwd), -1, 1));
+        const diag = lava ? 0 : 1 - Math.min(1, Math.abs(offShore - 0.7) / 0.7);
+        const score = wf * 6 + sunIn * 3 + edge * 1.5 + diag * 2 - c.slope * 10 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
         if (!best || score > best.score) best = { score, c, fwd: fwd.clone() };
       }
     }
@@ -492,13 +504,16 @@ export default class Ocean {
     w.setTimeOfDay(best.c.t, up);
     let position = up.clone().multiplyScalar(R + best.c.h + camH);
     if (!lava) {
-      // stand in the surf a few metres off the beach (grass and dunes stay out
-      // of the frame): breakers roll toward the lens, backlit by the low sun
+      // wade into the surf a few metres off the beach (the dune grass stays
+      // behind the lens): breakers roll in around the camera, the shore sweeps
+      // away diagonally on one side, the glitter path runs out to a low sun
       const sh = best.c.seaH;
-      const pd = up.clone().multiplyScalar(R).addScaledVector(sh, 14).normalize();
-      if (w.heightAt(pd) < sea - 0.2) { up = pd; position = pd.clone().multiplyScalar(R + sea + camH + 0.6); }
+      for (const out of [12, 18, 8, 26]) {
+        const pd = up.clone().multiplyScalar(R).addScaledVector(sh, out).normalize();
+        if (w.heightAt(pd) < sea - 0.25) { up = pd; position = pd.clone().multiplyScalar(R + sea + 1.9); break; }
+      }
     }
-    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -17);
+    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -21);
     return { position, target, dir: up, time: best.c.t };
   }
 

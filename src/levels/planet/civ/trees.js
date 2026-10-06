@@ -117,7 +117,7 @@ const STYLE_TREES = {
   temple: { avenue: ['maple_red', 'maple_orange', 'pine'], garden: ['maple_red', 'maple_orange', 'pine', 'pine'], plaza: ['pine', 'maple_red'], tint: 0.1 },
   gothic: { avenue: ['golden', 'cypress'], garden: ['golden', 'golden', 'cypress'], plaza: ['golden'], tint: 0.12 },
   neon: { avenue: ['palm'], garden: ['palm'], plaza: ['palm'], tint: 0.08 },
-  monolithic: { avenue: ['palm'], garden: ['palm'], plaza: ['palm'], tint: 0.08, sparse: 0.35 },
+  monolithic: { avenue: ['palm'], garden: ['palm'], plaza: ['palm'], tint: 0.08, sparse: 0.2 },
   ruins: { avenue: ['cypress'], garden: ['cypress', 'round'], plaza: [], tint: 0.1, sparse: 0.4 },
 };
 

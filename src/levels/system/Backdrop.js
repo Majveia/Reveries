@@ -29,7 +29,7 @@ export class Backdrop {
     const right = new THREE.Vector3().crossVectors(this.normal, gc).normalize();
 
     // ---- stars ---------------------------------------------------------------
-    const n = engine.quality.pick(5000, 9000, 15000, 22000);
+    const n = engine.quality.pick(2600, 4200, 6000, 8000);
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), size = new Float32Array(n);
     const lut = []; for (let i = 0; i < 48; i++) lut.push(blackbodyColor(2600 * Math.pow(12, i / 47)));
     const v = new THREE.Vector3();
@@ -47,10 +47,12 @@ export class Backdrop {
       pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
       const t = Math.pow(rng.float(), 1.6); // cooler stars dominate
       const c = lut[Math.min(47, Math.floor((inBand ? t : t * 0.9) * 47))];
-      const m = Math.pow(rng.float(), 9); // brightness: few bright, many faint
-      const lum = 0.035 + 2.6 * m;
-      col[i * 3] = c[0] * lum; col[i * 3 + 1] = c[1] * lum; col[i * 3 + 2] = c[2] * lum;
-      size[i] = 1.0 + 2.6 * Math.sqrt(m);
+      // magnitudes: a handful of bright stars, a sea of faint ones (dN/dm ∝ 10^0.6m-ish)
+      const m = Math.pow(rng.float(), 14);
+      const lum = 0.018 + 0.05 * rng.float() + 3.2 * m;
+      const w = 0.45; // stellar colours are pale, not neon
+      col[i * 3] = (c[0] * (1 - w) + w) * lum; col[i * 3 + 1] = (c[1] * (1 - w) + w) * lum; col[i * 3 + 2] = (c[2] * (1 - w) + w) * lum;
+      size[i] = 1.0 + 1.8 * Math.sqrt(m);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -64,7 +66,7 @@ export class Backdrop {
         void main(){
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
-          float tw = 0.85 + 0.15 * sin(uTime * (1.3 + fract(position.x * 0.013) * 3.0) + position.y);
+          float tw = 0.96 + 0.04 * sin(uTime * (1.3 + fract(position.x * 0.013) * 3.0) + position.y);
           vCol = color * tw;
           gl_PointSize = max(1.0, aSize * 0.85) * uDpr;
         }`,

@@ -1,23 +1,28 @@
 // GLSL for planets seen from space: rocky worlds (baked continents from the
-// planet's own TerrainHeight + procedural detail, oceans with sun glint,
-// animated weather, night-side city networks, lava, ice), gas giants (zonal
-// jets, turbulent flow, vortex storms), atmospheres, rings and moons.
+// planet's own TerrainHeight + procedural detail, oceans with a broad sun
+// glint, a weather layer with cyclones, climatological bands and cloud
+// shadows, night-side city networks, lava, ice), gas giants (zonal jets,
+// shear-zone turbulence, festoons, vortex storms), Chapman-style atmospheres,
+// Saturn-like rings and moons.
 
 export const RING_GLSL = /* glsl */`
 float rHash(float x){ return fract(sin(x * 127.1) * 43758.5453); }
 float rNoise(float x){ float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(rHash(i), rHash(i + 1.0), f); }
-// Optical density of a Saturn-like ring system at normalised radius x (0 inner … 1 outer).
+// Optical depth of a Saturn-like ring system at normalised radius x (0 inner … 1 outer).
 float ringDensity(float x, float seed){
   if (x < 0.0 || x > 1.0) return 0.0;
   float d = 0.0;
-  d += smoothstep(0.0, 0.04, x) * (0.16 + 0.12 * x / 0.25) * (1.0 - smoothstep(0.24, 0.27, x));    // C ring (faint)
-  d += smoothstep(0.24, 0.28, x) * (0.72 + 0.25 * smoothstep(0.3, 0.55, x)) * (1.0 - smoothstep(0.585, 0.6, x)); // B ring (dense)
-  d += smoothstep(0.645, 0.665, x) * 0.62 * (1.0 - smoothstep(0.955, 0.97, x));                   // A ring
-  d *= 1.0 - 0.9 * exp(-pow((x - 0.885) / 0.0045, 2.0));                                          // Encke gap
-  d *= 1.0 - 0.5 * exp(-pow((x - 0.62) / 0.012, 2.0));                                            // inside Cassini division
-  d += exp(-pow((x - 0.993) / 0.0035, 2.0)) * 0.55;                                               // F ring
-  float fine = 0.62 + 0.24 * rNoise(x * 90.0 + seed) + 0.18 * rNoise(x * 420.0 + seed * 3.0) + 0.12 * rNoise(x * 1500.0 + seed);
-  return clamp(d * fine, 0.0, 1.0);
+  d += smoothstep(0.0, 0.05, x) * (0.10 + 0.16 * x / 0.25) * (1.0 - smoothstep(0.25, 0.27, x));  // C ring: faint, dusty
+  d += smoothstep(0.255, 0.29, x) * (0.62 + 0.36 * smoothstep(0.32, 0.52, x)) * (1.0 - smoothstep(0.575, 0.592, x)); // B ring: dense
+  d += smoothstep(0.64, 0.66, x) * (0.58 - 0.12 * smoothstep(0.8, 0.95, x)) * (1.0 - smoothstep(0.955, 0.965, x)); // A ring
+  d += smoothstep(0.592, 0.6, x) * (1.0 - smoothstep(0.62, 0.64, x)) * 0.06;                       // dusty Cassini division
+  d *= 1.0 - 0.92 * exp(-pow((x - 0.888) / 0.0035, 2.0));                                          // Encke gap
+  d *= 1.0 - 0.7 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
+  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.5;                                                  // F ring
+  // plateaus and ringlets at every scale
+  float fine = 0.66 + 0.2 * rNoise(x * 70.0 + seed) + 0.16 * rNoise(x * 260.0 + seed * 3.0) + 0.1 * rNoise(x * 900.0 + seed) + 0.06 * rNoise(x * 2600.0);
+  float plateau = 1.0 + 0.35 * smoothstep(0.55, 0.9, rNoise(x * 34.0 + seed * 7.0)) * step(x, 0.25);
+  return clamp(d * fine * plateau, 0.0, 1.0);
 }
 `;
 
@@ -42,7 +47,8 @@ float ringShadow(vec3 P, vec3 L, vec3 C, vec3 nR, float rIn, float rOut, float o
   if (t <= 0.0) return 1.0;
   vec3 Q = P + L * t;
   float x = (length(Q - C) - rIn) / (rOut - rIn);
-  return 1.0 - ringDensity(x, seed) * op * 0.92;
+  float tau = ringDensity(x, seed) * op * 2.2;
+  return exp(-tau / max(abs(dn), 0.08));
 }
 `;
 
@@ -62,7 +68,7 @@ uniform vec3 uSun; uniform vec3 uCenter; uniform float uRadius; uniform float uT
 uniform vec3 uWater; uniform vec3 uShallow; uniform vec3 uAtmo; uniform vec3 uLights; uniform vec3 uCloudCol; uniform vec3 uLava;
 uniform vec3 uG0; uniform vec3 uG1; uniform vec3 uG2; uniform vec3 uRock;
 uniform float uCloudCover; uniform float uCiv; uniform float uAtmoDensity; uniform float uRelief; uniform int uOct;
-uniform mat3 uSpin;  // object → world rotation (for cloud drift independent of spin)
+uniform mat3 uSpin;  // object → world rotation
 uniform vec3 uRingN; uniform float uRingIn, uRingOut, uRingOp, uRingSeed;
 varying vec3 vObj; varying vec3 vWN; varying vec3 vWP;
 
@@ -78,6 +84,45 @@ vec4 texEq(sampler2D t, vec3 d){
   return textureGrad(t, uv, dx, dy);
 }
 
+// Weather: domain-warped fbm, wound into cyclones, shaped by a climatology
+// (wet ITCZ, dry subtropical highs, stormy mid-latitudes), eroded into cumulus.
+float cloudField(vec3 d, int oct, bool detail){
+  vec3 c = rotY(d, uTime * 0.0035);
+  // cyclones: spiral the sampling space around a few lows (opposite spin per hemisphere)
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float la = (fi < 2.0 ? 1.0 : -1.0) * (0.55 + 0.35 * fract(uSeed * (0.37 + fi * 0.13)));
+    float lo = fract(uSeed * 0.171 + fi * 0.29) * 6.2832 + uTime * 0.002;
+    vec3 cc = vec3(cos(la) * cos(lo), sin(la), cos(la) * sin(lo));
+    float r = length(c - cc) / 0.32;
+    c = rotAxis(c, cc, sign(la) * 3.2 * exp(-r * r * 1.4) * (0.6 + 0.4 * r));
+  }
+  float lat = c.y, al = abs(lat);
+  vec3 p = c * 2.6 + uSeed * 0.37;
+  vec3 w = vec3(fbm(p * 1.1, 3), fbm(p * 1.1 + 5.2, 3), fbm(p * 1.1 + 9.7, 3));
+  vec3 q = p + w * 0.75;
+  q.y *= 1.6;                                   // zonal stretching: fronts lie along latitude circles
+  float n1 = fbm(q * 1.2, oct);
+  float clim = 0.14 * exp(-al * al / 0.006) - 0.2 * exp(-pow((al - 0.42) / 0.13, 2.0)) + 0.12 * exp(-pow((al - 0.8) / 0.14, 2.0));
+  float base = n1 + clim + (uCloudCover - 0.55) * 0.6;
+  float cov = sat((base + 0.02) * 2.6);
+  if (detail) {
+    float n2 = fbm(q * 4.2 + w * 1.4, 4);
+    float n3 = fbm(q * 13.0 + w * 2.0, 3);
+    // soft, graded density with texture inside the decks; billowy eroded margins
+    cov = sat((base + 0.12 * n2 + 0.02) * 2.6);
+    cov *= sat(0.62 + 0.55 * n2 + 0.3 * n3);
+    vec2 cu = worley(q * 18.0);
+    float cum = smoothstep(0.62, 0.1, cu.x);                // cumulus cells in the broken margins
+    float margin = smoothstep(-0.2, 0.0, base) * (1.0 - smoothstep(0.0, 0.25, base));
+    cov = max(cov, margin * cum * 0.55 * sat(0.6 + n3));
+    // fibrous cirrus streaks drawn out by the jets
+    float fib = fbm(vec3(q.x * 6.0, q.y * 20.0, q.z * 6.0) + w, 3);
+    cov = max(cov, smoothstep(0.15, 0.5, fib) * smoothstep(-0.12, 0.15, base) * 0.3);
+  }
+  return cov;
+}
+
 void main(){
   vec3 d = normalize(vObj);
   vec3 sd = d * 1.0 + uSeed;
@@ -86,12 +131,14 @@ void main(){
   float micro = fbm(sd * 90.0, 3);
 #ifdef HAS_MAP
   // domain-warp the lookup so texel-scale biome boundaries become organic
-  vec3 dw = normalize(d + vec3(detail, micro, fbm(sd * 31.0 + 5.0, 2)) * 0.007);
+  vec3 dw = normalize(d + vec3(fbm(sd * 9.0, 3), fbm(sd * 9.0 + 4.0, 3), fbm(sd * 9.0 + 8.0, 3)) * 0.012 + vec3(detail, micro, -detail) * 0.004);
   vec4 A = texEq(uAlbedo, dw);
   vec4 D = texEq(uData, dw);
   h = (D.r - 0.5) * 2.8 + detail * 0.10 + micro * 0.03;
   snow = D.g; cityPot = D.b; rough = D.a;
   alb = A.rgb;
+  // satellite-photo albedo: darker, richer land with macro variation
+  alb *= 0.72 + 0.2 * smoothstep(-0.5, 0.5, fbm(sd * 5.0 + 11.0, 3)) + 0.1 * detail;
 #else
   float cont = fbm(sd * 1.6, uOct) + 0.5 * fbm(sd * 4.0 + 3.0, 3) * 0.5;
   h = cont * 1.4 + detail * 0.25 + micro * 0.05;
@@ -107,9 +154,10 @@ void main(){
   float dunes = sin(dot(d, vec3(140.0, 31.0, 90.0)) + detail * 22.0) * 0.5 + 0.5;
   alb *= 0.9 + 0.16 * dunes * smoothstep(-0.2, 0.3, -h + 0.3);
   vec2 cr = worley(sd * 9.0);
-  float crater = smoothstep(0.05, 0.0, cr.x - 0.08) - smoothstep(0.16, 0.10, cr.x) * 0.0;
-  h += (smoothstep(0.32, 0.12, cr.x) * -0.25 + smoothstep(0.34, 0.3, cr.x) * smoothstep(0.26, 0.31, cr.x) * 0.25) * 0.5;
-  alb *= 1.0 - crater * 0.1;
+  vec2 cr2 = worley(sd * 23.0 + 3.0);
+  h += (smoothstep(0.32, 0.12, cr.x) * -0.25 + smoothstep(0.34, 0.3, cr.x) * smoothstep(0.26, 0.31, cr.x) * 0.3) * 0.5;
+  h += (smoothstep(0.3, 0.1, cr2.x) * -0.12 + smoothstep(0.33, 0.29, cr2.x) * smoothstep(0.25, 0.3, cr2.x) * 0.14) * 0.5;
+  alb *= 1.0 + 0.12 * smoothstep(0.12, 0.0, cr.x);   // bright young ejecta
 #endif
 #ifdef KIND_LAVA
   float cracks = 1.0 - abs(snoise(sd * 14.0 + detail * 1.5));
@@ -144,7 +192,20 @@ void main(){
   float ndl = max(dot(N, L), 0.0) * smoothstep(-0.12, 0.08, ndlG);
   float ndv = max(dot(Ng, V), 0.0);
   float tw = smoothstep(-0.25, 0.35, ndlG);   // twilight band
-  vec3 sunCol = uSun * mix(vec3(1.0, 0.5, 0.28), vec3(1.0), smoothstep(-0.06, 0.14, ndlG));
+  // sunlight reddens as it grazes through the air at the terminator
+  vec3 sunCol = uSun * mix(vec3(1.0, 0.45, 0.22), vec3(1.0), mix(1.0, smoothstep(-0.03, 0.14, ndlG), sat(uAtmoDensity * 1.5)));
+
+  // --- weather (computed first: it shades the ground) ---------------------------
+  float cloud = 0.0, cshadow = 1.0;
+#ifndef MOON
+  if (uCloudCover > 0.001) {
+    cloud = cloudField(d, uOct, true);
+    // cloud shadows: march toward the sun in object space
+    vec3 Lo = transpose(uSpin) * L;
+    float cs = cloudField(normalize(d + Lo * 0.012 / max(ndlG, 0.25)), 3, false);
+    cshadow = 1.0 - cs * 0.6;
+  }
+#endif
 
   vec3 col;
   if (ocean) {
@@ -157,60 +218,49 @@ void main(){
     col = alb * sunCol * ndl;
 #else
     float depth = sat(-h * 2.4);
-    vec3 w = mix(uShallow, uWater, sat(depth * 1.3 + 0.15));
-    col = w * sunCol * ndl;
+    vec3 w = mix(uShallow, uWater * 0.55, sat(depth * 1.3 + 0.15));
+    col = w * sunCol * max(ndlG, 0.0) * cshadow;
+    // broad sunglint (wind-roughened sea, Cox-Munk-ish) + a hot core
     vec3 H = normalize(L + V);
-    float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
-    float glint = pow(max(dot(Ng, H), 0.0), 220.0) * 18.0 + pow(max(dot(Ng, H), 0.0), 24.0) * 0.35;
-    col += sunCol * glint * smoothstep(0.0, 0.15, ndlG) * (0.3 + fres);
-    col += uAtmo * fres * 0.5 * tw * uAtmoDensity;
+    float nh = max(dot(Ng, H), 0.0);
+    float fres = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+    float glint = pow(nh, 90.0) * 6.0 + pow(nh, 900.0) * 30.0;
+    glint *= 0.6 + 0.4 * smoothstep(-0.3, 0.4, micro);
+    col += sunCol * glint * fres * 4.0 * smoothstep(0.0, 0.1, ndlG) * cshadow * (1.0 - cloud);
 #endif
   } else {
     // snow on peaks & poles
-    float sm = smoothstep(0.4, 0.62, snow + detail * 0.35 + micro * 0.15);
-    alb = mix(alb, vec3(0.86, 0.9, 0.95), sm);
-    alb *= 0.82 + 0.3 * (micro * 0.5 + 0.5) + 0.12 * detail;
-    col = alb * sunCol * ndl;
+    float sm = smoothstep(0.35, 0.75, snow + detail * 0.3 + micro * 0.12);
+    alb = mix(alb, vec3(0.82, 0.86, 0.92), sm);
+    alb *= 0.86 + 0.24 * (micro * 0.5 + 0.5) + 0.1 * detail;
+    col = alb * sunCol * ndl * cshadow;
   }
 
-  // --- weather ------------------------------------------------------------------
-  float cloud = 0.0;
+  // --- clouds -------------------------------------------------------------------
 #ifndef MOON
-  if (uCloudCover > 0.001) {
-    vec3 cw = d;                       // clouds co-rotate, plus their own slow drift
-    cw = rotY(cw, uTime * 0.004);
-    float lat = cw.y;
-    vec3 cp = cw * 2.2 + uSeed * 0.37;
-    vec3 warp = vec3(fbm(cp * 1.4, 3), fbm(cp * 1.4 + 5.2, 3), fbm(cp * 1.4 + 9.7, 3));
-    float n = fbm(cp * 2.0 + warp * 1.1 + vec3(uTime * 0.003, 0.0, 0.0), uOct);
-    float det = fbm(cp * 11.0 + warp * 2.5, 3);
-    n += 0.3 * det;
-    float bands = 0.12 * cos(lat * 9.0) + 0.1 * smoothstep(0.75, 0.95, abs(lat));
-    float base = n + bands;
-    cloud = smoothstep(0.42 - uCloudCover * 0.75, 0.6 - uCloudCover * 0.6, base);
-    cloud *= 0.7 + 0.3 * smoothstep(-0.3, 0.4, det + (base - 0.2));
-    float cl = cloud;
-    vec3 cloudLit = uCloudCol * uSun * sat((ndlG + 0.1) / 1.1) * 1.1;
-    cloudLit *= mix(vec3(1.0, 0.55, 0.35), vec3(1.0), smoothstep(-0.08, 0.12, ndlG));
-    col *= 1.0 - cl * 0.55;
-    col = mix(col, cloudLit, cl * 0.97);
+  if (cloud > 0.0) {
+    float wrap = sat((ndlG + 0.04) / 1.04);
+    vec3 cloudLit = uCloudCol * sunCol * (wrap * 0.75 + 0.25 * sqrt(wrap)) * (0.7 + 0.45 * sqrt(cloud)) * 1.1;
+    col = mix(col, cloudLit, cloud * 0.95);
   }
 #endif
 
   // --- night side: civilisation ------------------------------------------------
-  float night = smoothstep(0.05, -0.18, ndlG);
+  float night = smoothstep(0.04, -0.16, ndlG);
 #ifdef HAS_MAP
   if (uCiv > 0.5 && !ocean) {
-    float region = smoothstep(0.1, 0.45, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.35 - 0.25) * cityPot;
-    vec2 wc = worley(sd * 34.0);
-    float big = smoothstep(0.05, 0.45, snoise(sd * 11.0 + 3.0));
-    float cores = smoothstep(0.32, 0.0, wc.x) * big;
-    float suburbs = smoothstep(0.55, 0.1, wc.x) * big * smoothstep(0.2, 0.75, snoise(sd * 400.0) * 0.5 + 0.5);
-    float arteries = smoothstep(0.022, 0.0, wc.y - wc.x) * smoothstep(0.6, 0.2, wc.x) * 0.35;
-    float hamlets = smoothstep(0.86, 0.97, snoise(sd * 260.0)) * 0.5;
-    float lights = region * (cores * cores * 2.2 + suburbs * 0.7 + arteries + hamlets) * (uCiv - 1.0) * 0.6;
-    float flick = 0.9 + 0.1 * sin(uTime * 3.0 + wc.x * 60.0);
-    emis += uLights * lights * flick * night * 3.4 * (1.0 - cloud * 0.75);
+    // metropolitan regions follow the habitable lowlands and coasts
+    float region = smoothstep(0.3, 0.65, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.5 - 0.15) * smoothstep(0.05, 0.35, cityPot);
+    float coast = smoothstep(0.25, 0.0, h);
+    vec2 wc = worley(sd * 46.0);
+    float cores = smoothstep(0.16, 0.0, wc.x);                                    // city cores
+    float sprawl = smoothstep(0.42, 0.04, wc.x) * smoothstep(0.45, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
+    float roads = smoothstep(0.025, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x); // highways between cities
+    vec2 wt = worley(sd * 170.0 + 7.0);
+    float town = smoothstep(0.14, 0.0, wt.x) * smoothstep(0.2, 0.6, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
+    float lights = region * (cores * 2.2 + sprawl * 0.6 + roads * 0.45 + town * 0.7) * (0.45 + 0.55 * coast);
+    lights *= (uCiv - 1.0) * 0.6;
+    emis += uLights * lights * night * 2.2 * (1.0 - cloud * 0.85);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);
@@ -220,14 +270,13 @@ void main(){
   col *= ringShadow(vWP, L, uCenter, uRingN, uRingIn, uRingOut, uRingOp, uRingSeed);
 #endif
 
-  // --- atmosphere seen from above: aerial haze + bright scattering limb ----------
+  // --- aerial perspective seen from orbit (Chapman-like path through the air) ----
 #ifndef MOON
-  float rim = pow(1.0 - ndv, 3.0);
-  float lit = smoothstep(-0.3, 0.45, ndlG);
-  vec3 atm = uAtmo * uSun * (0.05 + rim * 1.3) * lit * uAtmoDensity;
-  col = col * (1.0 - 0.35 * rim * uAtmoDensity) + atm;
-  // sunset ring at the terminator
-  col += vec3(1.0, 0.38, 0.12) * uSun * rim * exp(-pow(ndlG / 0.14, 2.0)) * 0.6 * uAtmoDensity;
+  float path = uAtmoDensity * 0.09 / max(ndv, 0.06);
+  float haze = 1.0 - exp(-path);
+  float lit = smoothstep(-0.22, 0.4, ndlG);
+  vec3 air = uAtmo * uSun * lit * 1.1 + vec3(1.0, 0.4, 0.15) * uSun * exp(-pow((ndlG - 0.0) / 0.07, 2.0)) * 0.18 * uAtmoDensity;
+  col = col * (1.0 - haze * 0.75) + air * haze;
 #endif
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -239,13 +288,14 @@ uniform vec4 uStorm[3]; uniform int uStorms;
 uniform vec3 uRingN; uniform float uRingIn, uRingOut, uRingOp, uRingSeed;
 varying vec3 vObj; varying vec3 vWN; varying vec3 vWP;
 
-float turb(vec3 s){
-  // anisotropic: stretched along latitude circles like zonal flow
-  vec3 a = vec3(s.x * 3.0, s.y * 18.0, s.z * 3.0) + uSeed;
-  vec3 w = vec3(fbm(a * 0.7, 3), fbm(a * 0.7 + 4.1, 3), 0.0);
-  return fbm(a + w * 1.4 * uTurb, uOct);
+// zonal flow field: anisotropic turbulence, strongest in the shear zones between jets
+float flow(vec3 s, float shear){
+  vec3 a = vec3(s.x * 2.6, s.y * 13.0, s.z * 2.6) + uSeed;
+  vec3 w = vec3(fbm(a * 0.8, 3), fbm(a * 0.8 + 4.1, 3), fbm(a * 0.8 + 7.7, 3));
+  return fbm(a * 1.3 + w * (0.9 + 1.6 * shear) * uTurb * 2.0, uOct);
 }
-float jet(float lat){ return sin(lat * 13.0) * 0.6 + sin(lat * 5.0 + 1.0) * 0.4; }
+// band profile: one value per latitude (random-looking but smooth)
+float prof(float y, float k, float s){ return snoise(vec2(y * k, s)); }
 
 void main(){
   vec3 d = normalize(vObj);
@@ -255,65 +305,74 @@ void main(){
     if (i >= uStorms) break;
     vec4 st = uStorm[i];
     vec3 c = vec3(cos(st.x) * cos(st.y), sin(st.x), cos(st.x) * sin(st.y));
-    float r = acos(clamp(dot(d, c), -1.0, 1.0)) / st.z;
-    float sw = exp(-r * r * 1.6) * 5.0 * st.w;
-    sd = rotAxis(sd, c, sw);
+    float r = length(d - c) / st.z;
+    sd = rotAxis(sd, c, exp(-r * r * 1.6) * 5.0 * st.w);
   }
-  float lat = sd.y;
+  float lat0 = sd.y;
+  float jetv = sin(lat0 * 15.0 + uSeed) * 0.6 + sin(lat0 * 6.0 + 1.0) * 0.4;   // jet speed profile
+  float shear = abs(cos(lat0 * 15.0 + uSeed));                                // shear between jets
   // differential rotation with a two-phase flow so shear never runs away
-  float T = 90.0;
+  float T = 120.0;
   float p1 = fract(uTime / T), p2 = fract(uTime / T + 0.5);
   float wgt = abs(p1 * 2.0 - 1.0);
-  float j = jet(lat) * 0.02;
-  float n = mix(turb(rotY(sd, j * p1 * T)), turb(rotY(sd, j * p2 * T)), wgt);
-  float yb = lat + n * 0.014 * uTurb;
-  float b1 = 0.5 + 0.5 * sin(yb * 17.0 + 0.6 + 0.6 * sin(yb * 5.0));
-  float b2 = 0.5 + 0.5 * sin(yb * 41.0 + 2.0 + n * 0.6);
-  float b3 = 0.5 + 0.5 * sin(yb * 97.0 + n * 1.2);
-  vec3 c0 = mix(vec3(dot(uC0, vec3(0.3, 0.5, 0.2))), uC0, 0.65);
-  vec3 c1 = mix(vec3(dot(uC1, vec3(0.3, 0.5, 0.2))), uC1, 0.65);
-  vec3 c2 = mix(vec3(dot(uC2, vec3(0.3, 0.5, 0.2))), uC2, 0.55);
-  vec3 col = mix(c1, c0, smoothstep(0.2, 0.8, b1));
-  col = mix(col, c2, smoothstep(0.6, 0.95, b2) * 0.3);
-  col *= 0.93 + 0.1 * b3;
-  col *= 0.96 + 0.08 * (n * 0.5 + 0.5);
-  float fine = fbm(vec3(sd.x * 8.0, sd.y * 90.0, sd.z * 8.0) + uSeed + n * 1.5, 3);
-  col *= 0.96 + 0.07 * fine;
+  float j = jetv * 0.015;
+  float n = mix(flow(rotY(sd, j * p1 * T), shear), flow(rotY(sd, j * p2 * T), shear), wgt);
+  // latitude perturbed by the flow: band edges curl into festoons and eddies
+  float y = lat0 + n * (0.008 + 0.02 * shear) * (0.5 + uTurb);
+  float b1 = prof(y, 5.5, uSeed);
+  float b2 = prof(y, 17.0, uSeed + 3.0);
+  float b3 = prof(y, 48.0, uSeed + 7.0);
+  float b4 = prof(y, 140.0, uSeed + 11.0);
+  vec3 c0 = mix(vec3(dot(uC0, vec3(0.3, 0.5, 0.2))), uC0, 0.55);
+  vec3 c1 = mix(vec3(dot(uC1, vec3(0.3, 0.5, 0.2))), uC1, 0.55);
+  vec3 c2 = mix(vec3(dot(uC2, vec3(0.3, 0.5, 0.2))), uC2, 0.35);
+  vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
+  col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
+  col *= 0.93 + 0.05 * b3 + 0.025 * b4;
+  col *= 0.95 + 0.07 * n;
+  // small bright convective spots and dark barges in the shear zones
+  vec2 wv = worley(vec3(sd.x * 14.0, sd.y * 40.0, sd.z * 14.0) + uSeed + n * 0.6);
+  col *= 1.0 + 0.12 * smoothstep(0.25, 0.0, wv.x) * shear * uTurb * 2.0;
   // storms: tinted ovals with bright collars
   for (int i = 0; i < 3; i++) {
     if (i >= uStorms) break;
     vec4 st = uStorm[i];
     vec3 c = vec3(cos(st.x) * cos(st.y), sin(st.x), cos(st.x) * sin(st.y));
-    float r = acos(clamp(dot(d, c), -1.0, 1.0)) / st.z;
+    float r = length(d - c) / st.z;
     float core = smoothstep(1.0, 0.45, r + n * 0.15);
-    vec3 sc = i == 0 ? vec3(0.75, 0.32, 0.18) : vec3(0.95, 0.92, 0.88);
-    col = mix(col, sc * (0.8 + 0.3 * n), core * 0.75);
-    col += vec3(0.25, 0.22, 0.2) * exp(-pow((r - 1.0) / 0.15, 2.0)) * 0.6;
+    vec3 sc = i == 0 ? vec3(0.75, 0.36, 0.2) : vec3(0.95, 0.92, 0.88);
+    col = mix(col, sc * (0.8 + 0.3 * n), core * 0.7);
+    col += vec3(0.2, 0.18, 0.16) * exp(-pow((r - 1.0) / 0.15, 2.0)) * 0.5;
   }
-  // polar hoods
-  float pole = smoothstep(0.72, 0.95, abs(d.y));
-  col = mix(col, col * vec3(0.75, 0.82, 0.95) * 0.85, pole);
+  // polar hoods: cooler, hazier, with a hint of a hexagonal jet
+  float pole = smoothstep(0.7, 0.95, abs(d.y));
+  col = mix(col, mix(col, uAtmo * 0.5 + col * 0.4, 0.5), pole);
 
   vec3 Ng = normalize(vWN);
   vec3 L = normalize(-vWP);
   vec3 V = normalize(cameraPosition - vWP);
   float ndlG = dot(Ng, L);
   float ndv = max(dot(Ng, V), 0.0);
-  float diff = sat((ndlG + 0.06) / 1.06);
-  diff = diff * diff * (3.0 - 2.0 * diff) * 0.35 + max(ndlG, 0.0) * 0.65;
-  vec3 c = col * uSun * diff;
-  // limb darkening and hazy rim
-  c *= 0.55 + 0.45 * pow(ndv, 0.35);
-  float rim = pow(1.0 - ndv, 4.0);
-  c += uAtmo * uSun * rim * smoothstep(-0.2, 0.5, ndlG) * 0.5;
+  // deep atmosphere: soft terminator (light diffuses below the cloud deck)
+  float diff = sat((ndlG + 0.08) / 1.08);
+  diff = mix(diff * diff * (3.0 - 2.0 * diff), max(ndlG, 0.0), 0.6);
+  vec3 sunC = uSun * mix(vec3(1.0, 0.62, 0.4), vec3(1.0), smoothstep(-0.02, 0.2, ndlG));
+  vec3 c = col * sunC * diff;
+  // limb darkening and a thin high haze on the lit limb
+  c *= 0.5 + 0.5 * pow(ndv, 0.4);
+  float rim = pow(1.0 - ndv, 5.0);
+  c += uAtmo * uSun * rim * smoothstep(-0.1, 0.5, ndlG) * 0.22;
 #ifdef HAS_RINGS
   c *= ringShadow(vWP, L, uCenter, uRingN, uRingIn, uRingOut, uRingOp, uRingSeed);
-  // faint ringshine on the night side
-  c += col * uSun * 0.006 * smoothstep(0.1, -0.2, ndlG);
+  // ringshine: sunlight scattered off the rings faintly lights the night side
+  float rs = sat(abs(dot(Ng, uRingN))) * smoothstep(0.1, -0.3, ndlG);
+  c += col * uSun * 0.012 * rs;
 #endif
   gl_FragColor = vec4(c, 1.0);
 }`;
 
+// Thin atmosphere shell outside the planet: the limb glow. Column density along
+// the camera ray from the Chapman approximation of an exponential atmosphere.
 export const ATMO_FRAG = /* glsl */`
 uniform vec3 uSun; uniform vec3 uCenter; uniform float uR; uniform float uRa; uniform vec3 uAtmo; uniform float uDensity;
 varying vec3 vWP;
@@ -324,19 +383,23 @@ void main(){
   float tc = dot(oc, rd);
   vec3 P = ro + rd * max(tc, 0.0);
   float hgt = length(P - uCenter);
-  float H = (uRa - uR) * 0.28;
+  float Hs = (uRa - uR) * 0.22;
   float x = max(hgt - uR, 0.0);
-  float dens = exp(-x / H);
-  // path length through the shell grows toward the limb
-  float path = sqrt(max(uRa * uRa - hgt * hgt, 0.0)) / (uRa - uR) * 0.25;
-  float hit = smoothstep(uR * 0.985, uR * 1.001, hgt);
+  // optical depth ∝ exp(-x/H) · sqrt(2πRH)  (grazing column)
+  float tau = exp(-x / Hs) * sqrt(6.2832 * uR * Hs) / Hs * 0.05 * uDensity;
+  float hit = smoothstep(uR * 0.992, uR * 1.004, hgt);
   vec3 n = normalize(P - uCenter);
   vec3 L = normalize(-uCenter);
   float mu = dot(n, L);
-  float lit = smoothstep(-0.35, 0.25, mu);
-  float fwd = pow(max(dot(rd, L), 0.0), 10.0);
-  vec3 col = mix(vec3(1.0, 0.42, 0.16), uAtmo, smoothstep(-0.15, 0.35, mu));
-  vec3 c = col * uSun * dens * path * lit * (0.75 + 5.0 * fwd) * hit * uDensity;
+  float lit = smoothstep(-0.3, 0.3, mu);
+  float cosT = dot(rd, L);
+  float phaseR = 0.75 * (1.0 + cosT * cosT);
+  float g = 0.7;
+  float phaseM = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cosT, 1.5) * 0.08;
+  vec3 ray = mix(vec3(1.0, 0.4, 0.15), uAtmo, smoothstep(-0.12, 0.3, mu));
+  vec3 c = uSun * (ray * phaseR + vec3(1.0, 0.85, 0.7) * phaseM) * (1.0 - exp(-tau)) * lit * hit;
+  // backlit ring of light at the terminator (sunlight through the limb)
+  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -350,25 +413,41 @@ varying vec3 vWP; varying vec3 vLP;
 void main(){
   float r = length(vLP.xy);
   float x = (r - uIn) / (uOut - uIn);
+  // filter ringlets finer than a pixel (avoid moiré)
+  float fw = fwidth(x);
   float dens = ringDensity(x, uSeed);
+  if (fw > 0.002) dens = mix(dens, (ringDensity(x - fw * 0.5, uSeed) + ringDensity(x + fw * 0.5, uSeed) + dens) / 3.0, 0.8);
   if (dens < 0.003) discard;
   vec3 L = normalize(-vWP);
   vec3 V = normalize(cameraPosition - vWP);
   float sl = dot(uN, L), sv = dot(uN, V);
   bool litSide = sl * sv > 0.0;
-  // albedo varies ring to ring: dusty brown C ring, bright icy B ring
-  float tone = 0.75 + 0.35 * rNoise(x * 60.0 + uSeed) - 0.25 * (1.0 - smoothstep(0.2, 0.3, x));
-  vec3 alb = uCol * tone * mix(vec3(0.85, 0.75, 0.65), vec3(1.0), smoothstep(0.2, 0.5, x));
-  float opt = dens * uOp;
-  float I = litSide ? (0.35 + 0.95 * dens) * (0.5 + 0.6 * abs(sl)) : opt * (1.0 - opt) * 1.2 + 0.03;
-  // forward scattering by fine dust when looking toward the star
-  float fwd = pow(max(dot(-V, L), 0.0), 8.0);
-  I += fwd * (1.0 - dens) * 2.2 * dens;
+  float muL = max(abs(sl), 0.05), muV = max(abs(sv), 0.05);
+  float tau = dens * uOp * 2.2;
+  // albedo varies ring to ring: dusty brown C ring and Cassini division, bright icy B and A rings
+  float tone = 0.8 + 0.3 * rNoise(x * 55.0 + uSeed) - 0.3 * (1.0 - smoothstep(0.22, 0.3, x));
+  vec3 alb = uCol * tone * mix(vec3(0.78, 0.66, 0.54), vec3(1.0), smoothstep(0.2, 0.45, x));
+  // slant opacity: rings look denser when seen edge-on
+  float opV = 1.0 - exp(-tau / muV);
+  // single scattering of a particulate layer (lit face) / diffuse transmission (unlit face)
+  float I;
+  if (litSide) I = 0.9 * muL / (muL + muV) * (1.0 - exp(-tau * (1.0 / muL + 1.0 / muV))) / max(opV, 1e-3);
+  else {
+    float dm = muL - muV;
+    float tr = abs(dm) < 0.01 ? tau / muL * exp(-tau / muL) : muL / dm * (exp(-tau / muL) - exp(-tau / muV));
+    I = 0.9 * tr / max(opV, 1e-3) * 0.7;
+  }
+  I = max(I, 0.0);
+  // forward scattering by fine dust when looking toward the star (unlit side glows in thin rings)
+  float cosT = dot(-V, L);
+  float fwd = pow(max(cosT, 0.0), 12.0) * 3.0 * (1.0 - smoothstep(0.3, 0.8, dens));
   // planet shadow (soft penumbra)
   vec3 oc = uCenter - vWP;
   float tp = dot(oc, L);
   float dc = length(oc - L * tp);
-  float sh = tp > 0.0 ? smoothstep(uPR * 0.97, uPR * 1.03, dc) : 1.0;
-  vec3 c = alb * uSun * I * sh;
-  gl_FragColor = vec4(c * opt, opt);
+  float sh = tp > 0.0 ? smoothstep(uPR * 0.985, uPR * 1.02, dc) : 1.0;
+  vec3 c = alb * uSun * (I + fwd) * sh * 1.1;
+  // planetshine on the rings from the day side of the giant (faint, warm)
+  c += alb * uSun * 0.01 * (1.0 - sh);
+  gl_FragColor = vec4(c * opV, opV);
 }`;

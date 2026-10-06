@@ -228,7 +228,7 @@ export class SystemPlanet {
     og.setAttribute('position', new THREE.BufferAttribute(pts, 3));
     og.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
     this.orbitMat = new THREE.ShaderMaterial({
-      uniforms: { uPhase: { value: 0 }, uCol: { value: atmoDensity > 0.05 ? atmoCol.clone().lerp(new THREE.Color(1, 1, 1), 0.55) : new THREE.Color(0.8, 0.82, 0.9) }, uA: { value: 0.05 }, uHi: { value: 0 }, uDim: { value: 1 } },
+      uniforms: { uPhase: { value: 0 }, uCol: { value: atmoDensity > 0.05 ? atmoCol.clone().lerp(new THREE.Color(1, 1, 1), 0.55) : new THREE.Color(0.8, 0.82, 0.9) }, uA: { value: 0.035 }, uHi: { value: 0 }, uDim: { value: 1 } },
       vertexShader: /* glsl */`attribute float aPhase; varying float vP; varying float vD; varying float vE;
         void main(){ vP = aPhase; vec4 mv = modelViewMatrix * vec4(position, 1.0); vD = -mv.z;
           vE = abs(normalize(cameraPosition - (modelMatrix * vec4(position, 1.0)).xyz).y);

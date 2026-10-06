@@ -88,7 +88,7 @@ export class OceanFX {
         tInput: { value: null }, tDepth: { value: null }, tDetail: { value: ocean.tDetail },
         uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 }, uTime: w.uniforms.uTime, uRs: { value: ocean.seaRadius },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() }, uSunDir: w.uniforms.uSunDir,
-        uUnder: { value: 0 }, uHaze: { value: 0 }, uFume: { value: new THREE.Vector2(1 / 3800, 55) }, uGlow: { value: new THREE.Vector3(0.75, 0.085, 0.008) },
+        uUnder: { value: 0 }, uHaze: { value: 0 }, uFume: { value: new THREE.Vector2(1 / 6500, 50) }, uGlow: { value: new THREE.Vector3(0.75, 0.085, 0.008) },
         uAbsorb: { value: new THREE.Vector3(0.32, 0.075, 0.06) }, uScatter: { value: new THREE.Vector3(0.02, 0.16, 0.2) }, uLight: { value: new THREE.Vector3(1, 1, 1) },
       },
     });

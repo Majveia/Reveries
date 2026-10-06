@@ -29,7 +29,7 @@ export function roadMat(road, zone) {
 }
 export const plazaMat = (pz) => (pz.kind === 'main' ? G.FLAG : G.COBBLE);
 export const lampKind = 'iron';
-export const shotSun = 0.14;
+export const shotSun = 0.16;
 
 /** One house / tower / hall on a lot. */
 export function building(ctx, lot) {
@@ -423,4 +423,4 @@ export function landmark(ctx) {
   floatingIsland(ctx, x, z, alt, rng.range(80, 100));
 }
 
-export const shot = { dist: 0.95, height: 40, sunAngle: 1.8 };
+export const shot = { dist: 0.95, height: 40, sunAngle: 1.8, sunPref: 2.0 };

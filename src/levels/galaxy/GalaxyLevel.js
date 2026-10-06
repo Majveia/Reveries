@@ -227,6 +227,8 @@ export default class GalaxyLevel {
     // emission within ~1.5 kpc resolves into the point-star layers; dust keeps absorbing → rifts
     this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 1.6, inside);
     const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
+    // grazing views: the midplane lane must read as an opaque silhouette (NGC 891 / Sombrero)
+    this.gu.uKappa.value *= 1 + 0.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value);
 
@@ -316,7 +318,7 @@ export default class GalaxyLevel {
     const P = this.P;
     return {
       hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.95, 0.55, 0.82); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.022); },
+      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.011); },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];

@@ -172,6 +172,15 @@ export class Settlement {
       ctx.lot = null;
       if (++k % 24 === 0) yield;
     }
+    // warm light spilling from lit shopfronts and doorways onto the street (dusk/night pools)
+    for (const fp of ctx.footprints) {
+      const L = fp.lot;
+      if (!L || L.zone > 0.75 || !(L.d > 0)) continue;
+      const hsh = Math.abs(Math.sin(L.x * 12.9898 + L.z * 78.233) * 43758.5453) % 1;
+      if (hsh > (L.plaza ? 0.75 : 0.4)) continue;
+      ctx.place(L.x, L.z, L.base ?? frame.hAt(L.x, L.z), L.yaw || 0);
+      ctx.lamps.push({ p: new THREE.Vector3((hsh - 0.2) * L.w * 0.6, 0, L.d * 0.5 + 1.8).applyMatrix4(ctx.M), r: 4.5 + 3 * hsh, k: 0.35 + 0.5 * hsh });
+    }
     for (const pz of plan.plazas) { S.plaza(ctx, pz); }
     yield;
     S.extras?.(ctx);

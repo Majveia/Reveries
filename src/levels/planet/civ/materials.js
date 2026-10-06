@@ -395,10 +395,13 @@ void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, 
   if (wallLike) {
     float far = smoothstep(0.08, 0.5, fwm);
     // rain / soot streaks under the eaves and sills
-    float sx = uv.x * 1.1 + seed * 37.0;
-    float st = civN2(vec2(sx, uv.y * 0.035 + seed)) * 0.7 + civN2(vec2(sx * 3.1, uv.y * 0.08)) * 0.3;
+    // sparse clusters of run-off (metres wide) with fine drip texture inside: never a plank-like comb
+    float sx = uv.x + seed * 37.0;
+    float cluster = smoothstep(0.55, 0.85, civN2(vec2(sx * 0.32, uv.y * 0.012 + seed)));
+    float drip = civN2(vec2(sx * 2.7, uv.y * 0.06)) * 0.6 + civN2(vec2(sx * 7.3, uv.y * 0.11)) * 0.4;
+    float st = cluster * mix(0.55, 1.0, mix(drip, 0.5, far));
     float fromTop = clamp((H - uv.y) / max(H, 1.0), 0.0, 1.0);
-    float streak = smoothstep(0.5, 0.92, st) * (1.0 - smoothstep(0.0, 0.85, fromTop) * 0.65) * step(uv.y, H);
+    float streak = st * (1.0 - smoothstep(0.0, 0.85, fromTop) * 0.6) * step(uv.y, H);
     float k = id == 6 ? 0.42 : (id == 17 ? 0.22 : 0.3);
     s.alb *= 1.0 - k * streak * mix(1.0, 0.6, far);
     s.rough = mix(s.rough, s.rough * 0.85, streak * 0.4);
@@ -597,9 +600,12 @@ CivS civSurface(){
     vec2 tc = fract(vec2(uv.x / 0.6, uv.y / 0.6)) - 0.5;
     float tie = (1.0 - smoothstep(0.03, 0.06, length(tc * 0.6))) * (1.0 - far);
     float big = civF2(uv * 0.06 + seed * 3.0);
-    float streak = civN2(vec2(uv.x * 0.8 + seed * 7.0, uv.y * 0.025));
-    float strata = civN2(vec2(uv.x * 0.04, uv.y * 0.5 + seed));
-    s.alb *= 0.82 + 0.26 * big - 0.14 * smoothstep(0.5, 0.92, streak) + 0.06 * strata;
+    float streak = civN2(vec2(uv.x * 0.21 + seed * 7.0, uv.y * 0.02)) * (0.7 + 0.3 * civN2(vec2(uv.x * 3.3, uv.y * 0.07)));
+    // wind-scoured horizontal strata: pale sand-blasted bands and darker sheltered lifts
+    float strata = civN2(vec2(uv.x * 0.015 + seed, uv.y * 0.32));
+    float lift = civLines(uv.y + 0.03, 6.0, 0.06, fw.y);
+    s.alb *= 0.8 + 0.3 * big - 0.16 * smoothstep(0.55, 0.9, streak) + 0.12 * (strata - 0.5);
+    s.alb *= 1.0 - 0.35 * lift;
     s.alb = mix(s.alb, s.alb * 0.6, seams + tie * 0.5);
     float sand = 1.0 - smoothstep(0.0, 2.0 + 3.0 * civN2(vec2(uv.x * 0.12, seed)), uv.y);
     s.alb = mix(s.alb, uCivSand, sand * 0.65);
