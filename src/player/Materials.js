@@ -196,13 +196,16 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       diffuseColor.rgb *= 0.94 + 0.1 * smudge;
       // edge wear: paint chipped off convex edges reveals brushed metal; grime settles in creases
       float curv = vAO.y;
-      float chips = rvFbm(bp * 160.0);
-      float wear = smoothstep(0.45, 0.85, curv * 0.9 + (chips - 0.5) * 0.7) * step(0.3, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
+      // chipping at two scales: fine flakes + larger scuffed patches that read at 3rd-person distance
+      float chips = rvFbm(bp * 160.0) * 0.6 + rvFbm(bp * 38.0 + 3.7) * 0.4;
+      float wear = smoothstep(0.4, 0.8, curv * 0.9 + (chips - 0.5) * 0.9) * step(0.3, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
+      // broad weathering: sun-faded tops, darker scuffed lower edges
+      diffuseColor.rgb *= 0.9 + 0.14 * rvFbm(bp * 6.0 + 11.0);
       float grime = smoothstep(-0.08, -0.5, curv) * 0.5 + (1.0 - vAO.x) * 0.25;
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.42, 0.44), wear * 0.75);
       diffuseColor.rgb *= 1.0 - grime * 0.45;
-      float dust = smoothstep(0.36, 0.03, bp.y) * (0.5 + 0.5 * rvFbm(bp * 30.0));
-      diffuseColor.rgb = mix(diffuseColor.rgb, uDust, dust * 0.45);
+      float dust = smoothstep(0.62, 0.03, bp.y) * (0.3 + 0.7 * rvFbm(bp * 24.0)) * (0.55 + 0.45 * smoothstep(0.3, 0.03, bp.y));
+      diffuseColor.rgb = mix(diffuseColor.rgb, uDust, dust * 0.5);
       // accent emissive core + soft halo
       float core = 1.0 - smoothstep(lineW * 0.5, lineW * 1.25, abs(lineD));
       float halo = exp(-abs(lineD) / 0.0045) * 0.18;
@@ -222,8 +225,9 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
 
   // ---- visor glass ------------------------------------------------------------------
   const visor = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#0d1418'), roughness: 0.06, metalness: 0.65, clearcoat: 1, clearcoatRoughness: 0.03,
-    envMap: env.texture, envMapIntensity: 1.5, iridescence: 0.18, iridescenceIOR: 1.5,
+    // smoked gold glass: a dark warm mirror that reflects sky and sun like a real EVA visor
+    color: new THREE.Color('#2a1c08'), roughness: 0.05, metalness: 0.9, clearcoat: 1, clearcoatRoughness: 0.03,
+    envMap: env.texture, envMapIntensity: 1.6, iridescence: 0.3, iridescenceIOR: 1.6,
   });
   visor.onBeforeCompile = (sh) => {
     bind(sh, { uVisorGlow: U.uVisorGlow, uAccent: U.uAccent });
@@ -254,10 +258,10 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
   const clothShader = (isScarf) => (sh) => {
     bind(sh, { uGlyph: U.uGlyph });
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\n${isScarf ? 'attribute vec3 aCloth;' : 'attribute float aAO;'}\nvarying vec3 vCloth;\nvarying vec3 vBind;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${isScarf ? 'vCloth = aCloth;' : 'vCloth = vec3(uv, aAO);'}\nvBind = position;`);
+      .replace('#include <common>', `#include <common>\n${isScarf ? 'attribute vec4 aCloth;' : 'attribute float aAO;'}\nvarying vec4 vCloth;\nvarying vec3 vBind;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${isScarf ? 'vCloth = aCloth;' : 'vCloth = vec4(uv, aAO, 0.0);'}\nvBind = position;`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uGlyph;\nvarying vec3 vCloth;\nvarying vec3 vBind;\n' + COMMON_GLSL)
+      .replace('#include <common>', '#include <common>\nuniform vec3 uGlyph;\nvarying vec4 vCloth;\nvarying vec3 vBind;\n' + COMMON_GLSL)
       .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
       // vCloth: scarf → (across 0..1, along meters, ao); collar → (angle, height, ao)
       vec2 cuv = vCloth.xy;
@@ -303,9 +307,20 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float band = smoothstep(0.45, 0.6, along) * (1.0 - smoothstep(1.15, 1.3, along)) * step(0.5, rvHash(vec3(gi, 3.1, 7.7)) + 0.35);
       glyph *= band;
       vec3 gold = vec3(0.62, 0.42, 0.14);
-      diffuseColor.rgb = mix(diffuseColor.rgb, gold, max(bline, glyph) * 0.85);
-      rvEmit = uGlyph * (glyph * (0.25 + 1.75 * uGlow) + bline * 0.04 * uGlow);
-      // frayed tip
+      // embroidered (raised thread, ~55% contrast), not printed
+      diffuseColor.rgb = mix(diffuseColor.rgb, gold, bline * 0.7 + glyph * 0.5);
+      bumpH += (glyph + bline * 0.6) * 0.00035;
+      rvEmit = uGlyph * (glyph * (0.06 + 1.9 * uGlow) + bline * 0.04 * uGlow);
+      // frayed tip: loose threads of uneven length
+      {
+        float tip = vCloth.w;
+        float strand = across * 15.0;
+        float sid = floor(strand);
+        float fr = 1.0 - (0.025 + 0.05 * rvHash(vec3(sid, 2.3, 8.1)));
+        if (tip > fr && abs(fract(strand) - 0.5) > 0.2) discard;
+        float hem = smoothstep(fr - 0.012, fr - 0.004, tip) * (1.0 - step(fr, tip));
+        diffuseColor.rgb *= 1.0 - hem * 0.45;
+      }
       ` : /* glsl */`
       float ang = cuv.x, hh = cuv.y;
       float folds = rvFbm(vec3(ang * 6.0, hh * 3.0, 0.0));

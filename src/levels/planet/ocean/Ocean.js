@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { Random, seedFrom } from '../../../core/Random.js';
 import { AtmosphereModel } from '../atmosphere/AtmosphereModel.js';
 import { OCEAN_VERT, OCEAN_FRAG, NW } from './OceanShader.js';
-import { detailTexture, plateTexture } from './OceanTextures.js';
+import { detailTexture, plateTexture, foamTexture } from './OceanTextures.js';
 import { bakeGlobal, bakeLocal } from './heightBake.js';
 import { createTerrain } from '../terrain/TerrainHeight.js';
 import { OceanFX } from './OceanFX.js';
@@ -69,6 +69,7 @@ export default class Ocean {
 
     // ---- textures ----
     this.tDetail = detailTexture(seedFrom(P.seed, 'oceanDetail'));
+    this.tFoam = foamTexture(seedFrom(P.seed, 'oceanFoam'));
     this.tPlates = this.isLava ? plateTexture(seedFrom(P.seed, 'lavaPlates')) : null;
     progress?.(0.25);
 
@@ -206,7 +207,7 @@ export default class Ocean {
       uSurf: { value: new THREE.Vector4(1, 30, TAU / 8.5, lava ? 0 : 1) },
       uCapU: { value: new THREE.Vector3(0, 1, 0) }, uCapE: { value: new THREE.Vector3(1, 0, 0) }, uCapN: { value: new THREE.Vector3(0, 0, 1) },
       uCapD0: { value: 1 }, uCapDmax: { value: 1000 }, uRings: { value: this.rings }, uSegs: { value: this.segs },
-      tDetail: { value: this.tDetail }, tPlates: { value: this.tPlates || this.tDetail },
+      tDetail: { value: this.tDetail }, tFoam: { value: this.tFoam }, tPlates: { value: this.tPlates || this.tDetail },
       uDetail: { value: new THREE.Vector4(Math.cos(this.windAngle), Math.sin(this.windAngle), 0.22, 0) },
       uPixelAngle: { value: 0.002 }, uLutW: { value: 0 }, uUseTrans: { value: 0 },
       uSkyZenith: { value: new THREE.Color() }, uSkyHorizon: { value: new THREE.Color() }, uSkyIrr: { value: new THREE.Color() },
@@ -219,7 +220,7 @@ export default class Ocean {
     this._pal = { zenith: lin(pal.zenith, '#3b6dd8'), horizon: lin(pal.horizon, '#cfe4ff') };
     const m = new THREE.ShaderMaterial({
       vertexShader: OCEAN_VERT, fragmentShader: OCEAN_FRAG, uniforms: u,
-      defines: lava ? { LAVA: 1 } : {},
+      defines: Object.assign(lava ? { LAVA: 1 } : {}, { ODBG: +(this.engine.params?.get?.('odbg') || 0) }),
       side: THREE.DoubleSide, depthWrite: true, depthTest: true,
       transparent: !lava,
     });
@@ -301,7 +302,7 @@ export default class Ocean {
     for (let i = 0; i < NW; i++) { const wv = this.waves[i]; this.uPhase[i] = ((wv.base - wv.omega * time) % TAU + TAU) % TAU; }
     const ws = w.windStrength ?? 0.5;
     u.uWaveScale.value = this.isLava ? 1 : 0.85 + 0.5 * ws;
-    u.uDetail.value.z = this.isLava ? 0.1 : 0.16 + 0.12 * ws;
+    u.uDetail.value.z = this.isLava ? 0.1 : 0.2 + 0.15 * ws;
     u.uDetail.value.w = time;
     u.uSurf.value.x = 0.55 + 0.9 * ws;
 
@@ -340,7 +341,6 @@ export default class Ocean {
     u.uSkyZenith.value.copy(this._pal.zenith).multiplyScalar(k);
     u.uSkyHorizon.value.copy(this._pal.horizon).multiplyScalar(k);
     u.uSparkle.value = this.engine.quality.level >= 1 ? 1 : 0;
-    if (this.engine.shotMode && !this._dbg && (this._dbgN = (this._dbgN || 0) + 1) > 4) { this._dbg = 1; console.warn('[ocean] lut', lutOK, 'lutW', u.uLutW.value.toFixed(2), 'alt', alt.toFixed(1), 'skyIrr', u.uSkyIrr.value.toArray().map((x) => x.toFixed(2)).join(','), 'local', u.uLocal.value.w, 'dmax', dmax.toFixed(0)); }
 
     // far terrain sun shadow (shared with the terrain material)
     const ter = this.level.sys?.terrain, tu = ter?.uniforms;
@@ -371,51 +371,61 @@ export default class Ocean {
   }
 
   _findCoast() {
+    // Golden-hour beach: camera a few metres above the sand at the waterline,
+    // looking out over open sea toward a low sun (glitter path through the
+    // frame), the shore sweeping in from one side, surf in the foreground.
     const w = this.world, R = w.radius, sea = w.seaLevel;
     const sites = w.sites.length ? w.sites : [{ dir: new THREE.Vector3(0.3, 0.5, 0.8).normalize() }];
     const lava = this.isLava;
-    const tTarget = lava ? 0.76 : 0.718;
     const cands = [];
     const tg1 = new THREE.Vector3(), tg2 = new THREE.Vector3(), d = new THREE.Vector3(), p = new THREE.Vector3();
+    const offs = (up, fwd, side, along, lateral, out) => out.copy(up).multiplyScalar(R).addScaledVector(fwd, along).addScaledVector(side, lateral).normalize();
     const step = 30;
-    for (const s of sites.slice(0, 6)) {
+    const H = (dir) => w.heightAt(dir);
+    // sun time: the moment the sun stands ~6–9° over the horizon at dir
+    const goldenTime = (dir) => {
+      let best = lava ? 0.76 : 0.72, be = 1e9;
+      for (let t = 0.66; t <= 0.8; t += 0.005) {
+        w.setTimeOfDay(t, dir);
+        const el = Math.asin(THREE.MathUtils.clamp(w.sunDir.dot(dir), -1, 1));
+        const e = Math.abs(el - (lava ? 0.25 : 0.13));
+        if (e < be) { be = e; best = t; }
+      }
+      w.setTimeOfDay(best, dir);
+      return best;
+    };
+    for (const s of sites.slice(0, 8)) {
       const base = s.dir.clone().normalize();
       tg1.set(0, 1, 0).cross(base).normalize(); tg2.copy(base).cross(tg1).normalize();
-      for (let a = 0; a < 40; a++) {
-        const ang = (a / 40) * TAU;
+      for (let a = 0; a < 36; a++) {
+        const ang = (a / 36) * TAU;
         const g = tg1.clone().multiplyScalar(Math.cos(ang)).addScaledVector(tg2, Math.sin(ang));
         let lastLand = null;
-        for (let i = 4; i < 110; i++) {
+        for (let i = 3; i < 120; i++) {
           d.copy(base).addScaledVector(g, (i * step) / R).normalize();
-          const h = w.heightAt(d);
-          if (h > sea + 0.6) { lastLand = { dist: i * step, h }; continue; }
-          if (h < sea - 0.5 && lastLand && i * step - lastLand.dist < 90) {
-            // shore found: refine the land point a little inland (2–9 m above the sea)
+          const h = H(d);
+          if (h > sea + 0.6) { lastLand = i * step; continue; }
+          if (h < sea - 0.5 && lastLand !== null && i * step - lastLand < 70) {
+            // walk back to the waterline: lowest dry point, 0.3–2.5 m above the sea
             let camD = null;
-            for (let b = 0; b <= 14; b++) {
-              const dd = i * step - 2 - b * 4;
+            for (let b = 0; b <= 20; b++) {
+              const dd = i * step - b * 3;
               p.copy(base).addScaledVector(g, dd / R).normalize();
-              const hh = w.heightAt(p);
-              if (hh > sea + 0.25 && hh < sea + 3) {
-                // prefer beaches: gentle ground behind the camera
-                p.copy(base).addScaledVector(g, (dd - 45) / R).normalize();
-                const slope = Math.max(0, w.heightAt(p) - hh) / 45;
-                camD = { dir: _v3.copy(base).addScaledVector(g, dd / R).normalize().clone(), h: hh, dist: dd, slope };
-                break;
-              }
+              const hh = H(p);
+              if (hh > sea + 0.3 && hh < sea + (lava ? 2.5 : 1.4)) { camD = { dir: p.clone(), h: hh, dist: dd }; break; }
             }
             if (!camD) break;
-            // open water ahead?
-            let wet = 0;
-            for (let k = 1; k <= 10; k++) { p.copy(base).addScaledVector(g, (i * step + k * 70) / R).normalize(); if (w.heightAt(p) < sea - 1) wet++; }
-            // sun azimuth alignment at golden hour
-            w.setTimeOfDay(tTarget, camD.dir);
             const up = camD.dir;
-            const sunH = _v.copy(w.sunDir).addScaledVector(up, -w.sunDir.dot(up)).normalize();
             const seaH = g.clone().addScaledVector(up, -g.dot(up)).normalize();
-            const align = sunH.dot(seaH);
-            const score = wet * 1.0 + (lava ? 0 : 4 * Math.max(0, 1 - Math.abs(align - 0.9) * 2.0)) - Math.abs(camD.h - sea - 0.8) * 0.3 - camD.slope * 12;
-            cands.push({ score, dir: camD.dir.clone(), h: camD.h, seaDir: seaH.clone(), sunH: sunH.clone() });
+            // a beach, not a cliff: gentle ground 40 m inland, gentle seabed 40 m out
+            p.copy(up).multiplyScalar(R).addScaledVector(seaH, -40).normalize();
+            const inland = H(p) - camD.h;
+            p.copy(up).multiplyScalar(R).addScaledVector(seaH, 40).normalize();
+            const seabed = camD.h - H(p);
+            const slope = Math.max(0, inland) / 40 + Math.max(0, seabed - 6) / 40;
+            const t = goldenTime(up);
+            const sunH = w.sunDir.clone().addScaledVector(up, -w.sunDir.dot(up)).normalize();
+            cands.push({ dir: up.clone(), h: camD.h, seaH, sunH, t, slope });
             break;
           }
           if (h < sea - 0.5) break;
@@ -423,24 +433,73 @@ export default class Ocean {
       }
     }
     if (!cands.length) return null;
-    cands.sort((a, b) => b.score - a.score);
-    const camH = lava ? 7.5 : 4.2;
-    let best = cands[0];
-    if (!lava) {
-      // the sun must actually be visible over the sea (not behind a headland)
-      for (const c of cands.slice(0, 14)) {
-        w.setTimeOfDay(tTarget, c.dir);
-        const pos = c.dir.clone().multiplyScalar(R + c.h + camH);
-        if (!w.raycast(pos, w.sunDir.clone(), 6000)) { best = c; break; }
+    // score each candidate × yaw: open sea in the frame, sun inside the frame,
+    // some coast at one edge for depth
+    const side = new THREE.Vector3(), fwd = new THREE.Vector3();
+    let best = null;
+    for (const c of cands) {
+      const up = c.dir;
+      w.setTimeOfDay(c.t, up);
+      for (const yawDeg of [-30, -18, -8, 0, 8, 18, 30]) {
+        const yaw = THREE.MathUtils.degToRad(yawDeg);
+        // look = sun azimuth rotated by yaw (water only: lava looks seaward)
+        const baseDir = lava ? c.seaH : c.sunH;
+        fwd.copy(baseDir).applyAxisAngle(up, yaw).normalize();
+        side.copy(fwd).cross(up).normalize();
+        let water = 0, n = 0, landL = 0, landR = 0;
+        for (const fa of [-26, -13, 0, 13, 26]) {
+          const ca = Math.cos(THREE.MathUtils.degToRad(fa)), sa = Math.sin(THREE.MathUtils.degToRad(fa));
+          for (const dist of [70, 180, 420, 900, 2000, 4000]) {
+            offs(up, fwd, side, dist * ca, dist * sa, p);
+            const wet = H(p) < sea - 0.3;
+            water += wet ? 1 : 0; n++;
+          }
+        }
+        for (const dist of [60, 200, 600]) {
+          const ca = Math.cos(0.75), sa = Math.sin(0.75);
+          if (H(offs(up, fwd, side, dist * ca, -dist * sa, p)) > sea + 0.5) landL++;
+          if (H(offs(up, fwd, side, dist * ca, dist * sa, p)) > sea + 0.5) landR++;
+        }
+        const wf = water / n;
+        const sunIn = lava ? 1 : Math.max(0, Math.cos(yaw));
+        const edge = (landL > 0) !== (landR > 0) ? 1 : 0;
+        const score = wf * 8 + sunIn * 2.5 + edge * 1.5 - c.slope * 10 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
+        if (!best || score > best.score) best = { score, c, fwd: fwd.clone() };
       }
     }
-    const up = best.dir;
-    const position = up.clone().multiplyScalar(R + best.h + camH);
-    // look out to sea, turned partly toward the sun so the glitter path crosses the frame
-    const look = best.seaDir.clone();
-    if (!lava) look.lerp(best.sunH, 0.5).normalize();
-    const target = position.clone().addScaledVector(look, 200).addScaledVector(up, lava ? -22 : -16);
-    return { position, target, dir: up, time: tTarget };
+    // the sun must actually be visible over the sea (not behind a headland)
+    const camH = lava ? 7.5 : 2.2;
+    if (!lava) {
+      const ranked = [];
+      for (const c of cands) ranked.push(c);
+      w.setTimeOfDay(best.c.t, best.c.dir);
+      const pos = best.c.dir.clone().multiplyScalar(R + best.c.h + camH);
+      if (w.raycast(pos, w.sunDir.clone(), 8000)) {
+        // try the next-best candidates with the sun in view
+        let alt = null;
+        for (const c of cands) {
+          if (c === best.c) continue;
+          w.setTimeOfDay(c.t, c.dir);
+          const pp = c.dir.clone().multiplyScalar(R + c.h + camH);
+          if (w.raycast(pp, w.sunDir.clone(), 8000)) continue;
+          const sc = -c.slope * 10 + Math.max(0, c.seaH.dot(c.sunH)) * 4;
+          if (!alt || sc > alt.sc) alt = { sc, c };
+        }
+        if (alt) best = { c: alt.c, fwd: alt.c.sunH.clone().applyAxisAngle(alt.c.dir, THREE.MathUtils.degToRad(12)) };
+      }
+    }
+    let up = best.c.dir;
+    w.setTimeOfDay(best.c.t, up);
+    let position = up.clone().multiplyScalar(R + best.c.h + camH);
+    if (!lava) {
+      // stand in the surf a few metres off the beach (grass and dunes stay out
+      // of the frame): breakers roll toward the lens, backlit by the low sun
+      const sh = best.c.seaH;
+      const pd = up.clone().multiplyScalar(R).addScaledVector(sh, 14).normalize();
+      if (w.heightAt(pd) < sea - 0.2) { up = pd; position = pd.clone().multiplyScalar(R + sea + camH + 0.6); }
+    }
+    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -17);
+    return { position, target, dir: up, time: best.c.t };
   }
 
   onModeChange() {}
@@ -449,7 +508,7 @@ export default class Ocean {
     this.worker?.terminate();
     this.mesh?.geometry.dispose();
     this.mesh?.material.dispose();
-    this.tDetail?.dispose(); this.tPlates?.dispose(); this.tGlobal?.dispose(); this.tLocal?.dispose();
+    this.tDetail?.dispose(); this.tFoam?.dispose(); this.tPlates?.dispose(); this.tGlobal?.dispose(); this.tLocal?.dispose();
     this.fx?.dispose();
     if (this.level.ocean === this) this.level.ocean = null;
   }

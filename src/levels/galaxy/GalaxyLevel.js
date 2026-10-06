@@ -53,10 +53,12 @@ export default class GalaxyLevel {
     this.gu = {
       uMap: { value: this.mapRT.texture }, uExtent: { value: P.extent }, uHOld: { value: P.hOld }, uHYoung: { value: P.hYoung },
       uHDust: { value: P.hDust }, uKappa: { value: 5.0 }, uMapTexel: { value: mapTexel },
+      uNoise: { value: this.noise3D }, uInside: { value: 0 },
     };
 
     this.volume = new GalaxyVolume(E, P, this.mapRT, this.noise3D);
     this.volume.march.uniforms.uKappa = this.gu.uKappa;
+    this.volume.march.uniforms.uInside = this.gu.uInside;
 
     this.stars = new Stars(this, P, this.gu);
     this.stars.build(g, progress);
@@ -221,7 +223,7 @@ export default class GalaxyLevel {
     const inside = (1 - THREE.MathUtils.smoothstep(Math.abs(this.camera.position.y), this.P.hOld * 1.5, this.P.hOld * 6)) * (1 - THREE.MathUtils.smoothstep(this.rig.distance, 0.3, 2.0));
     this.volume.march.uniforms.uInside.value = inside;
     this.gu.uKappa.value = THREE.MathUtils.lerp(5.0, 9.0, inside);
-    this.volume.march.uniforms.uEmit.value = THREE.MathUtils.lerp(1.0, 0.7, inside);
+    this.volume.march.uniforms.uEmit.value = THREE.MathUtils.lerp(1.0, 1.8, inside);
     // emission within ~1.5 kpc resolves into the point-star layers; dust keeps absorbing → rifts
     this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 1.6, inside);
     const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
@@ -324,11 +326,11 @@ export default class GalaxyLevel {
         this._pose(n.pos.clone().add(new THREE.Vector3(0, n.radius * 0.2, 0)), n.radius * 0.8, n.rot + 0.6, 0.25);
       },
       stars: async () => {
-        // among the stars of the home neighbourhood, in the disk plane, looking toward the
-        // galactic centre: the bulge and the dusty disk become a Milky-Way-like band
+        // among the stars of the home neighbourhood, in the disk plane, looking out through the
+        // disk (Aurelia sits inside the bar): the dusty disk becomes a Milky-Way-like band
         const s = this.stars.systems[0];
         const yaw = Math.atan2(s.pos.x, s.pos.z);
-        this._pose(s.pos, 0.035, yaw + 0.12, 0.05);
+        this._pose(s.pos, 0.035, yaw + Math.PI + 0.55, 0.035);
         this._ownLabels = true;
         this.hoverEl.style.display = ''; this.homeEl.style.display = '';
         this.select(0);

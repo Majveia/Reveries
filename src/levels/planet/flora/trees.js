@@ -10,6 +10,7 @@ import { foliageAtlas } from './textures.js';
 import { Random, seedFrom } from '../../../core/Random.js';
 
 const CELL = 128;
+const T_COVER = (T) => T.cover ?? 0;
 const TIER_FRAC = [1, 0.5, 0.22];
 const TIER_SCALE = [1, 1.18, 1.5];
 const _dir = [0, 0, 0];
@@ -74,14 +75,20 @@ ${WIND_APPLY}
   vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 4.0);`);
     if (depth) return;
     sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
+      .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
+  // dissolve foliage cards that come within ~2.5 m of the lens (dithered, no pop)
+  float flNear = smoothstep(0.45, 1.7, length(vViewPosition));
+  if (flNear < 1.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > flNear) discard;`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
       .replace('#include <opaque_fragment>', `// backlit translucency: sun shining through the crown, warmer and more saturated
   outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.95 * vLBack) * 0.42;
   // bioluminescence follows the leaf texture (veins, bright leaflets, strand
   // beads) instead of flooding whole cards: luminance-keyed mask with falloff
   vec3 flTx = texture2D(map, vMapUv).rgb;
-  float flGM = pow(clamp(dot(flTx, vec3(0.333)), 0.0, 1.0), 6.0) * 1.8;
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vLGlow * flGM * (0.06 + 3.0 * uNight);
+  float flL = clamp(dot(flTx, vec3(0.333)), 0.0, 1.0);
+  // whole leaf softly lit from within, veins and leaflets brighter (no salt-and-pepper speckle)
+  float flGM = 0.28 + 1.25 * smoothstep(0.5, 0.95, flL);
+  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.72) * vLGlow * flGM * (0.05 + 2.6 * uNight);
 #include <opaque_fragment>`);
   }, depth ? 'flora-leaf-depth' : 'flora-leaf');
 }
@@ -121,7 +128,7 @@ function impostorMaterial(U, tex) {
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
       .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * uKeyColor * (0.05 + 0.5 * vIBack) * 0.3;
   // distant glowing forests shimmer softly (keyed to the brighter texels), never a flat cyan wash
-  float iGM = 0.3 + 0.7 * step(0.86, fract(sin(dot(floor(vMapUv * 160.0), vec2(12.9898, 78.233))) * 43758.5453));
+  float iGM = 0.55 + 0.45 * clamp(dot(diffuseColor.rgb, vec3(0.333)) * 5.0, 0.0, 1.0);
   outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.6) * vIGlow * iGM * 0.9 * (0.03 + 2.0 * uNight);
 #include <opaque_fragment>`);
   }, 'flora-impostor');
@@ -182,6 +189,26 @@ export class Trees {
       }
       if (entry.variants.length) this.species.push(entry);
     }
+    // undergrowth (ferns, low bushes): mesh-only, streamed in a small ring
+    this.under = [];
+    const UD = fl.profile.under;
+    if (UD && q.level >= 1) {
+      for (const sp of UD.species) {
+        const entry = { ...sp, variants: [] };
+        for (let k = 0; k < (sp.variants || 3); k++) {
+          const pal = typeof sp.pal === 'function' ? sp.pal(k, rng) : sp.pal || {};
+          let g;
+          try { g = buildPlant(sp.kind, rng, pal, { scale: sp.scale || 1 }); } catch (e) { console.warn('[flora] undergrowth', sp.kind, e); continue; }
+          if (!g.bark) continue;
+          const v = { index: this.variants.length, kind: sp.kind, ...g, list: [], glow: pal.glowAmt || 0, under: true };
+          v.barkMesh = this._inst(g.bark, this.barkMat, this.barkDepth, 256);
+          v.leafMesh = g.leaves ? this._inst(g.leaves, this.leafMat, this.leafDepth, 256) : null;
+          v.barkMesh.castShadow = false; if (v.leafMesh) v.leafMesh.castShadow = q.level >= 3;
+          entry.variants.push(v); this.variants.push(v);
+        }
+        if (entry.variants.length) this.under.push(entry);
+      }
+    }
     this._bakeImpostors();
     // impostor instancing
     const ig = new THREE.InstancedBufferGeometry();
@@ -203,6 +230,15 @@ export class Trees {
       covers: (c, tier) => c.data && c.data.tier <= tier,
       build: (c, tier) => this._build(c, tier),
     });
+    if (this.under.length) {
+      this.underRange = q.pick(30, 40, 55, 70);
+      this.ulayer = new CellLayer({
+        R: this.R, cellSize: 32, radius: this.underRange, moveThresh: 4, cacheMax: 300,
+        tierOf: (dmin) => (dmin > this.underRange ? -1 : 0),
+        covers: (c) => !!c.data,
+        build: (c) => this._buildUnder(c),
+      });
+    }
     this._lastPack = new THREE.Vector3(1e12, 0, 0);
     this._landmarks();
   }
@@ -357,6 +393,37 @@ export class Trees {
     c.data = { tier, trees };
   }
 
+  _buildUnder(c) {
+    const { face, i, j, N } = c;
+    const R = this.R, sea = this.sea, UD = this.flora.profile.under;
+    const cellM = (Math.PI * 0.5 * R) / N;
+    const n = Math.round(cellM * cellM * UD.density);
+    const rng = cellRng(this.flora.seed, 37, face, i, j);
+    const fz = this.flora.noiseScale.forest, S = THREE.MathUtils.smoothstep;
+    const tot = this.under.reduce((a, sp) => a + sp.w, 0);
+    const trees = [];
+    for (let k = 0; k < n; k++) {
+      const u = rng(), v = rng(), r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng();
+      faceDir(face, ((i + u) / N) * 2 - 1, ((j + v) / N) * 2 - 1, _dir);
+      const s = this.world.terrain.sample(_dir[0], _dir[1], _dir[2]);
+      if ((sea > -1e8 && s.h < sea + 0.5) || s.biome === 0 || s.biome === 8) continue;
+      let p = (1 - S((s.cliff || 0) + s.rock * 0.5 * (1 - (UD.rockOk ?? 0)), 0.45, 0.8)) * (1 - S(s.snow || 0, 0.3, 0.6)) * (1 - S(s.sand || 0, 0.3, 0.6)) * S(s.moisture, UD.moist?.[0] ?? 0.1, UD.moist?.[1] ?? 0.42);
+      if (p <= 0.01) continue;
+      const rr = R + s.h, x = _dir[0] * rr, y = _dir[1] * rr, z = _dir[2] * rr;
+      const fm = valueFbm3(x * fz, y * fz, z * fz, 3);
+      const forestK = S(fm + (T_COVER(this.T)) + (s.moisture - 0.5) * 0.45, -0.1, 0.14);
+      p *= (UD.open ?? 0.25) + (1 - (UD.open ?? 0.25)) * forestK;
+      p *= S(valueNoise3(x * 0.07, y * 0.07, z * 0.07, 47) + 0.15, -0.2, 0.45);
+      p *= this.flora.siteClear(x, y, z, 1.0);
+      if (r1 > p) continue;
+      let pick = r2 * tot, sp = this.under[0];
+      for (const e of this.under) { pick -= e.w; if (pick <= 0) { sp = e; break; } }
+      const vv = sp.variants[Math.floor(r3 * sp.variants.length) % sp.variants.length];
+      trees.push({ x, y, z, nx: _dir[0], ny: _dir[1], nz: _dir[2], yaw: u * 97.0 + v * 53.0, scale: (0.6 + 0.5 * r4 * r4) * (sp.sizeK || 1) * (0.8 + 0.3 * forestK), v: vv, rank: 0, tint: r2 * 7.31 % 1, sp });
+    }
+    c.data = { tier: 0, trees };
+  }
+
   _pack(focus, cam, player) {
     const anchor = this.flora.anchor;
     for (const v of this.variants) v.list.length = 0;
@@ -375,6 +442,16 @@ export class Trees {
         if (player) {
           const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
           if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
+        }
+      }
+    }
+    if (this.ulayer) {
+      const ur2 = this.underRange * this.underRange;
+      for (const c of this.ulayer.active.values()) {
+        if (!c.data) continue;
+        for (const t of c.data.trees) {
+          const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z;
+          if (dx * dx + dy * dy + dz * dz < ur2) t.v.list.push(t);
         }
       }
     }
@@ -431,15 +508,17 @@ export class Trees {
       const col = w.addCollider({ type: 'cylinder', center: new THREE.Vector3(t.x, t.y, t.z).addScaledVector(up, -0.5), up, radius: Math.max(0.15, t.v.trunkR * t.scale * 1.05), height: Math.min(8, t.v.height * t.scale * 0.6) + 0.5, walkable: false, flora: true });
       this.colliders.set(t, col);
     }
-    this.meshCount = this.variants.reduce((a, v) => a + v.list.length, 0);
+    this.meshCount = this.variants.reduce((a, v) => a + (v.under ? 0 : v.list.length), 0);
+    this.underCount = this.variants.reduce((a, v) => a + (v.under ? v.list.length : 0), 0);
     this.impCount = imp.length;
   }
 
   update(focus, cam, player, budget, force) {
     if (!this.layer) return;
     this.layer.update(focus, budget, force);
-    if (this.layer.dirty || this.flora.reanchored || cam.distanceToSquared(this._lastPack) > 196) {
-      this.layer.dirty = false;
+    if (this.ulayer) this.ulayer.update(focus, budget * 0.5, force);
+    if (this.layer.dirty || this.ulayer?.dirty || this.flora.reanchored || cam.distanceToSquared(this._lastPack) > (this.ulayer ? 16 : 196)) {
+      this.layer.dirty = false; if (this.ulayer) this.ulayer.dirty = false;
       this._lastPack.copy(cam);
       this._pack(focus, cam, player);
     }

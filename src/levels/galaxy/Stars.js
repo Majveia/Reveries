@@ -27,8 +27,34 @@ export function bbColor(T, out = [0, 0, 0]) {
   return out;
 }
 
+// Inside the disk: the same discrete near-dust clouds as the volume (GalaxyVolume) dim every
+// point star within 3 kpc, so the resolved star haze breaks into rifts exactly like the band.
+const CLOUD_GLSL = /* glsl */ `
+uniform sampler3D uNoise; uniform float uInside;
+float cloudTau(vec3 a, vec3 b){
+  float L = length(b - a), t = 0.0;
+  for (int k = 0; k < 4; k++) {
+    vec3 pm = mix(a, b, (float(k) + 0.5) / 4.0);
+    vec4 c1 = textureLod(uNoise, pm * 0.9 + 0.37, 0.0);
+    vec4 c2 = textureLod(uNoise, pm * 4.0 + c1.xyz * 0.3, 0.0);
+    float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
+    float pD = 0.5 / (uHDust * pow(cosh(clamp(pm.y / uHDust, -12.0, 12.0)), 2.0));
+    t += galMap(pm, 0.0).b * pD * (0.04 + cl * cl * 9.0) * (0.5 + c2.b);
+  }
+  return t * L * 0.25 * uKappa;
+}
+float starTau(vec3 a, vec3 b, int n, float lod){
+  if (uInside <= 0.0) return galTau(a, b, n, lod);
+  float L = length(b - a);
+  vec3 m = a + (b - a) * (min(L, 2.0) / max(L, 1e-6));
+  float far = L > 2.0 ? galTau(m, b, n, lod) : 0.0;
+  return mix(galTau(a, b, n, lod), cloudTau(a, m) + far, uInside);
+}
+`;
+
 const STAR_VERT = /* glsl */ `
 ${GAL_GLSL}
+${CLOUD_GLSL}
 attribute vec4 aCol;          // linear color (rgb) + log2 luminosity code (a)
 uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade;
 varying vec3 vColor; varying float vSharp, vRc;
@@ -40,7 +66,7 @@ void main(){
   float flux = L * uBright / (d2 + 1e-6);
   flux = uSat * (1.0 - exp(-flux / uSat));
   float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
-  flux *= exp(-galTau(cameraPosition, position, int(uTauSteps), lod));
+  flux *= exp(-starTau(cameraPosition, position, int(uTauSteps), lod));
   // stars embedded in a lane are dimmed by the column around them (screen term, matches the volume)
   flux *= exp(-galMap(position, 1.0).b * 1.1);
   float px = clamp(1.0 + sqrt(flux) * uPxScale, uMinPx, uMaxPx);
@@ -119,10 +145,10 @@ void main(){
 // Nested wrap-around local star boxes
 const LOCAL_VERT = /* glsl */ `
 ${GAL_GLSL}
+${CLOUD_GLSL}
 attribute vec4 aRnd;     // xyz position in unit box, w = luminosity/keep random
 uniform float uS, uBright, uPxScale, uSat, uDensRef, uBulgeScale, uBulgeQ, uBulgeAmp, uHOldU, uHYoungU;
 uniform vec3 uCamPos;
-varying vec3 vColor; varying float vSharp, vRc;
 vec3 bb(float t){ // compact blackbody approx (linear)
   t = clamp(t, 1500.0, 30000.0) / 100.0;
   float r = t <= 66.0 ? 1.0 : clamp(1.2929 * pow(t - 60.0, -0.1332), 0.0, 1.0);
@@ -159,7 +185,7 @@ void main(){
   gl_Position = projectionMatrix * mv;
   float flux = L * uBright * uS * uS / (dist * dist + 1e-12);
   flux = uSat * (1.0 - exp(-flux / uSat));
-  flux *= exp(-galTau(uCamPos, p, 2, 0.0));
+  flux *= exp(-starTau(uCamPos, p, 2, 0.0));
   float px = clamp(1.0 + sqrt(flux) * uPxScale, 1.0, 26.0);
   gl_PointSize = px;
   vSharp = px;
@@ -285,7 +311,7 @@ export class Stars {
     geo.setAttribute('aCol', new THREE.BufferAttribute(col.subarray(0, o * 4), 4, true));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 2);
     this.starMat = this._mat(STAR_VERT, STAR_FRAG, {
-      uBright: { value: 1.15 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
+      uBright: { value: 2.4 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
       uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 },
     });
     this.field = new THREE.Points(geo, this.starMat);
@@ -294,7 +320,7 @@ export class Stars {
 
     // HII knots: complexes of pink blobs on the arm ridges
     const hrng = new Random(seedFrom(g.seed, 'hii'));
-    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(160, 260, 380, 460);
+    const nHII = g.type === 'elliptical' || g.type === 'lenticular' ? 0 : q.pick(90, 140, 200, 240);
     let hm = 0; guard = 0;
     while (hm < nHII && guard++ < nHII * 80) {
       const s = U.galaxySample(g, hrng);
@@ -318,7 +344,7 @@ export class Stars {
         for (let k = 0; k < subN; k++) {
           hiiPos.push(cx + hrng.gaussian(0, size * 0.6), y0 + hrng.gaussian(0, size * 0.15), cz + hrng.gaussian(0, size * 0.6));
           const pinkish = hrng.float();
-          hiiCol.push(1.0, 0.16 + pinkish * 0.12, 0.2 + pinkish * 0.14, bright * hrng.range(0.4, 1.1) / subN * 1.6);
+          hiiCol.push(1.0, 0.3 + pinkish * 0.12, 0.36 + pinkish * 0.16, bright * hrng.range(0.3, 1.1) / subN * 1.2);
           hiiSize.push(size * hrng.range(0.5, 1.15));
         }
         // hot white-blue core (the ionizing cluster)
@@ -331,14 +357,14 @@ export class Stars {
       hg.setAttribute('position', new THREE.Float32BufferAttribute(hiiPos, 3));
       hg.setAttribute('aCol', new THREE.Float32BufferAttribute(hiiCol, 4));
       hg.setAttribute('aSize', new THREE.Float32BufferAttribute(hiiSize, 1));
-      this.blobMat = this._mat(BLOB_VERT, BLOB_FRAG, { uProj: { value: 500 }, uGain: { value: 0.8 }, uMaxPx: { value: 160 } });
+      this.blobMat = this._mat(BLOB_VERT, BLOB_FRAG, { uProj: { value: 500 }, uGain: { value: 0.5 }, uMaxPx: { value: 160 } });
       this.blobs = new THREE.Points(hg, this.blobMat);
       this.blobs.frustumCulled = false;
       this.group.add(this.blobs);
     }
 
     // nested local star fields
-    const nLocal = E.shotMode ? 110000 : q.pick(20000, 45000, 80000, 120000);
+    const nLocal = E.shotMode ? 150000 : q.pick(25000, 50000, 90000, 140000);
     const lrng = new Random(seedFrom(g.seed, 'local'));
     const rnd = new Float32Array(nLocal * 4);
     for (let i = 0; i < rnd.length; i++) rnd[i] = lrng.float();

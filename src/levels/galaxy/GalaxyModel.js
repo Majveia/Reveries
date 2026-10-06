@@ -96,6 +96,26 @@ varying vec2 vUv;
 const float PI = 3.14159265, TAU = 6.2831853;
 
 float fbm2(vec2 p, int o){ float a = 0.5, s = 0.0; for (int i = 0; i < 6; i++){ if (i >= o) break; s += a * snoise(vec3(p, uSeed + float(i) * 7.1)); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return s; }
+// Irregular emission knots: one candidate per cell with a power-law luminosity (dN/dL ~ L^-2)
+// and a size that grows with it; random orientation/elongation so no two look alike.
+float knots(vec2 x, float thr, float seed){
+  vec2 id = floor(x), f = fract(x);
+  float s = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 c = id + vec2(float(i), float(j));
+    vec3 h = hash32(c + seed);
+    if (h.z < thr) continue;
+    float u = (h.z - thr) / (1.0 - thr);
+    float L = 1.0 / (1.0 - 0.96 * u * u);
+    float rad = 0.05 + 0.045 * pow(L, 0.55);
+    vec2 d = vec2(float(i), float(j)) + 0.2 + 0.6 * h.xy - f;
+    float a = hash12(c + seed + 7.3) * 6.2832;
+    d = mat2(cos(a), -sin(a), sin(a), cos(a)) * d;
+    d *= vec2(1.0, 1.0 + 1.4 * hash12(c + seed + 3.1));
+    s += L * exp(-dot(d, d) / (rad * rad));
+  }
+  return s;
+}
 float ridge2(vec2 p, int o){ float a = 0.5, s = 0.0; for (int i = 0; i < 6; i++){ if (i >= o) break; float n = 1.0 - abs(snoise(vec3(p, uSeed * 1.3 + float(i) * 3.3))); s += a * n * n; p = p * 2.1 + vec2(4.1, 2.7); a *= 0.5; } return s; }
 
 void main(){
@@ -143,7 +163,7 @@ void main(){
     float dSig = 0.055 + 0.03 * max(0.0, fbm2(q * 0.5 + 3.0, 3));
     float lane = exp(-pow(phi - dOff, 2.0) / (2.0 * dSig * dSig));
     float fil = ridge2(vec2(lr * 9.0, across * 3.5 + armId * 17.0), 5);
-    float laneD = lane * (0.2 + 2.2 * smoothstep(0.3, 0.8, fil) * (0.5 + fil));
+    float laneD = lane * (0.25 + 2.8 * smoothstep(0.3, 0.8, fil) * (0.5 + fil));
     // feathers: thin dark streaks leaving the lane outward through the arm at a steep angle
     float sp = ridge2(vec2(lr * 22.0 + phi * 6.0, armId * 3.0 + across * 0.6), 3);
     float feather = pow(sp, 6.0) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.22 * 0.22));
@@ -153,13 +173,14 @@ void main(){
     // a web of thin filaments over the whole inner disk (M101 / M51 look)
     dust += pow(flocD, 4.0) * 0.9 * exp(-r / (0.35 * uR)) * inner * edge;
     // HII knots strung along the arm, just outside the dust lane
-    vec2 wc = worley(q * 3.2 + vec2(uSeed));
-    float cell = hash12(floor(q * 3.2 + vec2(uSeed)) + 3.0);
-    float knot = smoothstep(0.42, 0.04, wc.x) * step(0.45, cell);
-    float hiiBand = exp(-pow(phi + 0.02, 2.0) / (2.0 * 0.12 * 0.12));
-    hii = knot * hiiBand * (0.4 + clump) * inner * edge * exp(-r / (0.45 * uR)) * 3.0 * uSF;
+    // multi-scale, power-law knots, clustered into star-forming complexes (no polka dots)
+    vec2 qk = q + 0.25 * vec2(fbm2(q * 2.0 + 3.0, 2), fbm2(q * 2.0 + 8.0, 2));
+    float knot = knots(qk * 2.4, 0.72, uSeed) * 0.5 + knots(qk * 6.5, 0.6, uSeed + 41.0) * 0.28 + knots(qk * 15.0, 0.55, uSeed + 77.0) * 0.12;
+    float cplx = smoothstep(-0.15, 0.55, fbm2(q * 0.55 + 17.0, 3));
+    float hiiBand = exp(-pow(phi + 0.02, 2.0) / (2.0 * 0.1 * 0.1));
+    hii = knot * cplx * hiiBand * (0.4 + clump) * inner * edge * exp(-r / (0.42 * uR)) * 4.5 * uSF;
     // old disk is mildly enhanced in the arms (density wave)
-    old = disk * (0.45 + 0.75 * exp(-phi * phi / (2.0 * 0.4 * 0.4)));
+    old = disk * (0.3 + 0.9 * exp(-phi * phi / (2.0 * 0.4 * 0.4)));
   } else if (uType == 3.0) {
     // irregular: clumpy, offset star-forming complexes
     vec2 c = p + vec2(0.15, -0.1) * uR;
@@ -217,14 +238,16 @@ void main(){
     if (float(i) >= uNebCount) break;
     vec2 d = p - uNeb[i].xy;
     float s = uNeb[i].z;
-    hii += exp(-dot(d, d) / (2.0 * s * s)) * 2.5;
+    // a giant HII complex: a cluster of irregular knots, not a smooth ball
+    float gk = exp(-dot(d, d) / (2.0 * s * s));
+    hii += gk * (0.25 + 1.4 * knots(p * 12.0 + float(i) * 13.7, 0.35, uSeed + 5.0) + 0.8 * knots(p * 30.0, 0.5, uSeed + 9.0)) * 1.3;
     young += exp(-dot(d, d) / (2.0 * 4.0 * s * s)) * 0.8;
   }
   // screen extinction inside the column: lanes silhouette the arm light face-on
   float dd = dust * uDust;
-  young *= exp(-dd * 2.0);
-  old *= exp(-dd * 0.55);
-  hii *= exp(-dd * 0.6);
+  young *= exp(-dd * 3.0);
+  old *= exp(-dd * 0.9);
+  hii *= exp(-dd * 0.8);
   // diffuse dust disk with a longer scale length than the starlight (edge-on lanes span the disk)
   if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0);
   o = vec4(young, old, dust * uDust, hii);

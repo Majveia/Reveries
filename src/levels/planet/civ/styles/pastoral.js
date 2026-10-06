@@ -202,6 +202,7 @@ export function extras(ctx) {
     if (s.r < plan.builtRadius * 0.8) continue;
     if (!ctx.free(s.x, s.z, 6)) continue;
     windmill(ctx, s.x, s.z); ctx.occupy(s.x, s.z, 8); nw++;
+    (ctx._windmills ||= []).push([s.x, s.z]);
   }
   // bunting across lanes in the core
   for (const road of plan.roads) {
@@ -409,6 +410,14 @@ export function landmark(ctx) {
   let a = rng.range(0, TAU);
   if (plan.shore) a = Math.atan2(plan.shore[1] - plan.center[1], plan.shore[0] - plan.center[0]) + rng.range(-0.5, 0.5);
   const off = plan.builtRadius * rng.range(0.75, 1.05);
+  // keep windmills and the bell tower out from under the island (clean silhouettes from town)
+  const clear = (aa) => {
+    const ix = plan.center[0] + Math.cos(aa) * off, iz = plan.center[1] + Math.sin(aa) * off;
+    let m = Infinity;
+    for (const [wx, wz] of ctx._windmills || []) m = Math.min(m, Math.hypot(wx - ix, wz - iz));
+    return m;
+  };
+  for (let k = 0; k < 24 && clear(a) < 190; k++) a += (k % 2 ? -1 : 1) * (k + 1) * 0.13;
   const x = plan.center[0] + Math.cos(a) * off, z = plan.center[1] + Math.sin(a) * off;
   const alt = Math.max(ctx.frame.hAt(plan.center[0], plan.center[1]), ctx.frame.hAt(x, z)) + rng.range(175, 215);
   floatingIsland(ctx, x, z, alt, rng.range(80, 100));

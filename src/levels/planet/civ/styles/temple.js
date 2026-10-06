@@ -33,8 +33,9 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.24;
-export const shot = { dist: 0.8, height: 34, sunAngle: 1.7, lmLift: 0.3 };
+export const shotSun = 0.3;
+export const lightsEarly = 0.16; // lanterns lit in the mist of the late afternoon
+export const shot = { dist: 0.62, height: 64, sunAngle: 1.7, lmLift: 0.3, sunPref: 0.95 };
 
 /** A timber hall: terrace, columns, lattice screens, curved roof (1–2 eaves). */
 function hall(ctx, w, d, lot, o = {}) {

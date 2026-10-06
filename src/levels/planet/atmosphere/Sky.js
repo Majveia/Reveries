@@ -229,6 +229,21 @@ void main(){
     occl *= 1.0 - edge;
   }
 
+  // ---- moon aureole: forward-scattered moonlight in the air (the sky-view LUT
+  // is too coarse for the tight Mie lobe); lunar halo ring on icy/hazy worlds
+  for (int i = 0; i < MAX_MOONS; i++) {
+    if (i >= uMoonCount || uSpace > 0.99) break;
+    vec3 md = uMoonDir[i].xyz;
+    float ar = uMoonDir[i].w;
+    float th = acos(clamp(dot(rd, md), -1.0, 1.0));
+    if (th > ar * 60.0) continue;
+    float frac = 0.5 * (1.0 - dot(md, uSunDir));
+    vec3 Lm = uMoonCol[i].rgb * uMoonCol[i].a * uSunE * 0.8 * frac * frac;
+    float x = max(th - ar, 0.0);
+    float glow = 0.14 * exp(-x / (ar * 1.4)) + 0.03 * exp(-x / (ar * 5.0)) + 0.006 * exp(-x / (ar * 20.0));
+    col += Lm * glow * (1.0 - uSpace) * step(ar, th);
+  }
+
   // ---- sun -----------------------------------------------------------------
   float cs = dot(rd, uSunDir);
   float th = acos(clamp(cs, -1.0, 1.0));
@@ -249,19 +264,25 @@ void main(){
     float gl = dot(gal, vec3(0.333));
     // contrast curve: the diffuse disk glow we sit inside is cut to black (OLED),
     // the band, bulge and star clouds keep their structure; mostly neutral colour.
-    vec3 galD = mix(vec3(gl) * vec3(0.95, 0.97, 1.05), gal, 0.78) * uGalaxyGain;
-    float gd = gl * uGalaxyGain;
+    // seen from inside the disk the band is mostly neutral starlight: warm only toward
+    // the bulge, cool-white in the arms; contrast lives in the dust rifts, not the hue
+    vec3 galD = mix(vec3(gl) * vec3(0.93, 0.96, 1.06), gal, 0.5) * uGalaxyGain * 0.7;
+    float gd = gl * uGalaxyGain * 0.7;
     galD *= smoothstep(0.004, 0.04, gd) * clamp(gd / 0.04, 0.3, 1.5);
-    // fine dust filaments + star-cloud mottling (resolution-independent, anisotropic along the plane)
+    // dust: coherent dark rifts hugging the mid-plane (Great-Rift-like) plus mottled
+    // star clouds; smooth fBm lanes, anisotropic along the plane (no crackle veins)
     vec3 dg = uCelToGal * dc;
-    float bandM = exp(-dg.y * dg.y / 0.018);
+    float bandM = exp(-dg.y * dg.y / 0.02);
     if (bandM > 0.01) {
-      vec3 fp = vec3(dg.x, dg.y * 3.2, dg.z);
-      float r1 = 1.0 - abs(snoise(fp * 13.0 + 1.7));
-      float r2 = 1.0 - abs(snoise(fp * 34.0 + vec3(5.1, 2.3, 8.7)));
-      float fil = pow(r1, 7.0) * 0.6 + pow(r2, 9.0) * 0.45;
-      float mott = 0.7 + 0.6 * smoothstep(-0.6, 0.8, snoise(dc * 55.0) * 0.6 + snoise(dc * 140.0) * 0.4);
-      galD *= mix(1.0, (1.0 - clamp(fil, 0.0, 0.92)) * mott, bandM);
+      vec3 fp = vec3(dg.x, dg.y * 3.0, dg.z);
+      float lanes = snoise(fp * 4.0 + 1.7) * 0.55 + snoise(fp * 11.0 + vec3(5.1, 2.3, 8.7)) * 0.3 + snoise(fp * 27.0 - 3.3) * 0.15;
+      float rift = smoothstep(-0.05, 0.55, lanes) * exp(-dg.y * dg.y / 0.004);
+      float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
+      float mott = 0.75 + 0.5 * smoothstep(-0.5, 0.8, snoise(dc * 40.0) * 0.6 + snoise(dc * 110.0) * 0.4);
+      float absorb = clamp(rift * 0.85 + patchy * (1.0 - rift), 0.0, 0.92);
+      galD *= mix(1.0, (1.0 - absorb) * mott, bandM);
+      // dust reddens what it does not block
+      galD *= mix(vec3(1.0), vec3(1.08, 0.97, 0.86), absorb * bandM);
     }
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
@@ -377,11 +398,11 @@ export default class Sky {
   async init(progress) {
     let t0 = performance.now();
     await this.model.init();
-    if (this.engine.debug || this.engine.shotMode) console.warn('[sky] luts ms', Math.round(performance.now() - t0));
+    if (this.engine.debug) console.warn('[sky] luts ms', Math.round(performance.now() - t0));
     progress?.(0.3);
     t0 = performance.now();
     this._bakeGalaxy();
-    if (this.engine.debug || this.engine.shotMode) { this.engine.renderer.getContext().finish(); console.warn('[sky] galaxy ms', Math.round(performance.now() - t0)); }
+    if (this.engine.debug) { this.engine.renderer.getContext().finish(); console.warn('[sky] galaxy ms', Math.round(performance.now() - t0)); }
     progress?.(0.7);
     this._buildDome();
     if (this.level.planet.rings) this._buildRings();

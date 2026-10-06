@@ -412,9 +412,12 @@ void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, 
     // edge darkening near the top (parapet run-off)
     s.alb *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, 0.7, H - uv.y)) * step(uv.y, H);
     // per-window light variance: some brighter, some dim, a few cool; lanterns breathe
+    // (only where single windows resolve: at range the window shaders emit a facade average,
+    //  and a per-cell gain there turns whole walls into an emissive checkerboard)
     float wc = civH12(floor(vec2(uv.x / 2.7, uv.y / 3.1)) + seed * 17.0);
-    float gain = 0.35 + 2.2 * wc * wc;
-    vec3 tint = mix(vec3(1.0), vec3(0.75, 0.85, 1.15), step(0.94, fract(wc * 13.7)));
+    float wNear = 1.0 - smoothstep(0.03, 0.09, fwm);
+    float gain = mix(1.0, 0.35 + 2.2 * wc * wc, wNear);
+    vec3 tint = mix(vec3(1.0), vec3(0.75, 0.85, 1.15), step(0.94, fract(wc * 13.7)) * wNear);
     float flick = 1.0 + 0.12 * sin(uCivTime * (2.0 + 5.0 * wc) + wc * 40.0) * step(0.8, fract(wc * 7.3));
     s.emit *= gain * tint * flick;
   }

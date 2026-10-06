@@ -90,8 +90,6 @@ export default class Player {
     this.rig = createExplorer(data, { body: this.mats.body, hard: this.mats.hard, visor: this.mats.visor, collar: this.mats.collar });
     for (const m of Object.values(this.rig.meshes)) { m.castShadow = true; m.receiveShadow = true; }
     this.group = this.rig.group;
-    // heroic proportions: a slightly smaller helmet (≈7 heads tall) reads less toy-like
-    this.rig.bones[B.head].scale.setScalar(0.9);
     level.scene.add(this.group);
     this.anim = new Animator(this.rig);
     this.scarf = new Scarf(this.mats.scarf, q);
@@ -398,7 +396,7 @@ export default class Player {
     const self = this;
     this.anim.update({
       dt, speed: sp ? sp.speed : Math.hypot(ctl.vel.dot(fwd), ctl.vel.dot(left)),
-      state, vy: ctl.vUp, accel: sp ? { x: 0, z: 0 } : ctl.accelLocal, turnRate: sp ? 0 : ctl.turnRate,
+      state, vy: ctl.vUp, accel: sp ? { x: 0, z: 0 } : ctl.accelLocal, turnRate: sp ? 0 : ctl.turnRate, leanAdd: sp?.leanAdd || 0,
       lookYaw, lookPitch, lookFree: !sp,
       groundFn(footPos, outN) {
         _v3.copy(groundPos).addScaledVector(left, footPos.x).addScaledVector(fwd, footPos.z).addScaledVector(up, 0.3);
@@ -454,7 +452,7 @@ export default class Player {
       const ctr = _v2.copy(this.ctl.pos).addScaledVector(sd, off);
       const right = _v.crossVectors(sd, up).normalize();
       cat.update(this.world, ctr, up, right, sd);
-      cat.material.uniforms.uStrength.value = 0.62 * THREE.MathUtils.smoothstep(elev, 0.05, 0.2) * clamp(this.world.daylight * 1.4, 0, 1) * clamp(1 - alt / 4, 0, 1);
+      cat.material.uniforms.uStrength.value = 0.72 * THREE.MathUtils.smoothstep(elev, 0.05, 0.2) * clamp(this.world.daylight * 1.4, 0, 1) * clamp(1 - alt / 4, 0, 1);
     }
   }
 
@@ -476,7 +474,7 @@ export default class Player {
     // contact shadow
     const alt = r - ctl.groundRadius;
     const cs = this.contact;
-    const k = clamp(1 - alt / 2.2, 0, 1) * (ctl.state === 'swim' ? 0 : 1) * (0.25 + 0.75 * w.daylight);
+    const k = clamp(1 - alt / 2.2, 0, 1) * (ctl.state === 'swim' ? 0 : 1) * (0.7 + 0.3 * w.daylight);
     cs.object.visible = k > 0.01;
     if (cs.object.visible) {
       const n = ctl.groundNormal;
@@ -485,11 +483,13 @@ export default class Player {
       _m.makeBasis(left, n, fwd);
       cs.object.quaternion.setFromRotationMatrix(_m);
       cs.object.position.copy(ctl.pos).setLength(ctl.groundRadius + 0.02);
+      // ambient-occlusion footprint: stretched along the stride
       const s = 1.2 * (1 + alt * 0.25);
-      cs.object.scale.set(s, 1, s);
+      const str = 1 + clamp(anim.speed / 8, 0, 0.45);
+      cs.object.scale.set(s, 1, s * str);
       const fl = anim.P[B.footL], fr = anim.P[B.footR];
-      cs.material.uniforms.uFeet.value.set(fl.x / (0.5 * s), -fl.z / (0.5 * s), fr.x / (0.5 * s), -fr.z / (0.5 * s));
-      cs.material.uniforms.uStrength.value = 0.8 * k;
+      cs.material.uniforms.uFeet.value.set(fl.x / (0.5 * s), -fl.z / (0.5 * s * str), fr.x / (0.5 * s), -fr.z / (0.5 * s * str));
+      cs.material.uniforms.uStrength.value = 0.95 * k;
     }
   }
 
@@ -517,20 +517,25 @@ export default class Player {
     S.groundR = ctl.state === 'swim' ? 0 : ctl.groundRadius;
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
-      const sp = this.shotPose.speed;
+      const sp = this.shotPose.air ?? this.shotPose.speed;
       S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 0.95);
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.3 * Math.max(sp, 1.5);
       if (S.wind.length() > cap) S.wind.setLength(cap);
     } else S.airOffset.set(0, 0, 0);
+    // screenshot poses: once settled the cloth holds its (rippled) instant, so temporal AA
+    // never smears a moving ribbon across a frozen frame
+    const hold = this.shotPose && this.engine.shotMode && S.ready && this._scarfHeld;
     if (!S.ready || this._scarfTeleport()) {
       S.reset(this.anchorsWorld, _v.copy(ctl.facing).negate(), ctl.up);
       this._scarfRef = this.anchorsWorld[0][0].clone();
       // settle
-      for (let i = 0; i < (this.engine.shotMode ? 90 : 30); i++) S.step(1 / 60, this.anchorsWorld);
+      for (let i = 0; i < (this.engine.shotMode ? 150 : 30); i++) S.step(1 / 60, this.anchorsWorld);
+      this._scarfHeld = !!this.shotPose;
     }
-    S.step(dt, this.anchorsWorld);
+    if (!this.shotPose) this._scarfHeld = false;
+    if (!hold) S.step(dt, this.anchorsWorld);
     this._scarfRef = (this._scarfRef || new THREE.Vector3()).copy(this.anchorsWorld[0][0]);
     S.updateGeometry(this.group.position);
   }
@@ -613,6 +618,37 @@ export default class Player {
   // =====================================================================================
   // Screenshot presets
   // =====================================================================================
+  /** Pick a camera yaw around the settlement direction that gives a clean, open hero frame. */
+  _searchHeroYaw(siteDir, up, target, dist, pivotH, shoulder) {
+    const w = this.world, pos = this.ctl.pos;
+    const cands = [0.32, 0.22, 0.44, 0.12, 0.56, 0.0, 0.7, -0.15, 0.86, -0.3, 1.05];
+    let best = null;
+    const dir = new THREE.Vector3(), cp = new THREE.Vector3(), right = new THREE.Vector3();
+    for (const a of cands) {
+      const camH = siteDir.clone().applyAxisAngle(up, a);
+      right.crossVectors(camH, up).normalize();
+      const piv = pos.clone().addScaledVector(up, pivotH).addScaledVector(right, shoulder);
+      cp.copy(piv).addScaledVector(camH, -dist);
+      let score = -Math.abs(a - 0.3) * 1.5;
+      // the spring arm itself must be clear
+      const back = w.raycast(piv, dir.copy(camH).negate(), dist + 0.4);
+      if (back) score -= 3;
+      // near occluders across the frame (cliffs, walls): 5 x 3 grid of terrain rays
+      for (let i = -2; i <= 2; i++) for (let j = 0; j < 3; j++) {
+        dir.copy(camH).applyAxisAngle(up, -i * 0.28).addScaledVector(up, 0.02 + j * 0.16).normalize();
+        const h = w.raycast(cp, dir, 30);
+        if (h) score -= ((30 - h.distance) / 30) * (j === 0 ? 0.5 : 1.0);
+      }
+      // the settlement should rise above the horizon line, not hide behind a hill
+      const toT = dir.copy(target).addScaledVector(up, 12).sub(cp);
+      const tl = toT.length();
+      const hs = w.raycast(cp, toT.normalize(), tl);
+      if (hs && hs.distance < tl * 0.9) score -= 2.5;
+      if (!best || score > best.score) best = { score, camH };
+    }
+    return best.camH;
+  }
+
   _endShotPose() {
     this.shotPose = null;
     if (this._shotPivot != null) { this.cam.pivotHeight = this._shotPivot; this._shotPivot = null; }
@@ -644,22 +680,27 @@ export default class Player {
     const cam = this.cam;
     cam.initialized = false;
     if (this._shotPivot != null) { cam.pivotHeight = this._shotPivot; this._shotPivot = null; }
+    this.anim.freezePhase = false;
     if (name === 'character') {
-      // mid-stride jog toward the settlement, seen over the right shoulder
-      // 3/4 hero framing: the camera trails behind-left, the explorer sits on the left
-      // third striding across the frame toward the settlement on the right third, visor
-      // edge and scarf streaming back toward the lens.
-      // the explorer strides from the left third toward the settlement on the right: a
-      // 3/4 profile shows the visor glow, the scarf streams back across the left edge
-      this.shotPose = { state: 'ground', speed: 4.4, look: [-0.42, 0.06] };
-      const camH = turn(siteDir, 0.42);
-      this.ctl.setFacing(turn(camH, -1.4));
-      this.anim.phase = 0.27;
-      this.anim.freezePhase = true;
-      cam.view = 'third'; cam.distance = 2.75; cam.shoulder = 0.95;
+      // 3/4-rear hero framing (Jedi Survivor / Death Stranding): the explorer jogs on the
+      // left third toward the settlement on the right third, caught at foot contact (one
+      // heel planted, rear foot just off the ground), leaning into the stride, scarf
+      // streaming back toward the lens. The camera yaw is searched for a clean frame:
+      // no near cliffs / walls filling the view, settlement visible over the terrain.
+      const portrait = this.level.camera.aspect < 1;
+      const speed = 3.7;
+      const gait = THREE.MathUtils.smoothstep(speed, 2.6, 4.6);
+      const duty = THREE.MathUtils.lerp(0.6, 0.29, gait);
+      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.02], leanAdd: 0.06, air: 4.4 };
+      cam.view = 'third';
+      cam.distance = portrait ? 3.1 : 2.85; cam.shoulder = portrait ? 0.1 : 0.82;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = 1.32;
-      cam.snap(this.ctl.pos, up, camH, -0.03);
+      cam.pivotHeight = portrait ? 1.3 : 1.22;
+      const camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
+      this.ctl.setFacing(turn(camH, -0.62));
+      this.anim.phase = duty * 0.14;
+      this.anim.freezePhase = true;
+      cam.snap(this.ctl.pos, up, camH, -0.02);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, -0.05] };
       this.ctl.setFacing(siteDir);
@@ -682,7 +723,7 @@ export default class Player {
     // converge the animation (smoothed params), the cloth and the environment
     const a = this.anim;
     a.speed = this.shotPose.speed; a.gait = THREE.MathUtils.smoothstep(a.speed, 2.6, 4.6); a.sprint = 0;
-    a.lean = clamp(a.speed * 0.05, -0.25, 0.42); a.bank = 0;
+    a.lean = clamp(a.speed * 0.045 + (this.shotPose.leanAdd || 0), -0.25, 0.42); a.bank = 0;
     a.lookYaw = this.shotPose.look[0]; a.lookPitch = this.shotPose.look[1];
     for (const k in a.w) a.w[k] = k === 'loco' ? 1 : 0;
     this.scarf.ready = false;

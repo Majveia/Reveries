@@ -79,9 +79,11 @@ export default class Civilization {
     const y = sunL.y;
     const ss = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
     // lanterns start glowing in the golden hour, windows light up progressively toward night
-    u.uCivNight.value = 1 - ss(-0.08, 0.3, y);
+    // (lights come on early: dusk towns read by their windows and lanterns)
+    const early = s.style?.lightsEarly ?? 0;
+    u.uCivNight.value = 1 - ss(-0.06, 0.4 + early, y);
     u.uCivDay.value = ss(-0.1, 0.25, y);
-    u.uCivLitP.value = 0.05 + 0.7 * ss(0.32, -0.06, y);
+    u.uCivLitP.value = 0.06 + 0.66 * ss(0.44 + early, -0.04, y);
     // sky colour for glass reflections follows the light
     const P = this.level.aesthetic?.palette || {};
     const day = u.uCivDay.value;
@@ -205,12 +207,13 @@ export default class Civilization {
           for (const u of [-0.85, -0.42, 0, 0.42, 0.85]) {
             for (const v of [-0.6, -0.15, 0.3, 0.75]) {
               const hit = march(x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 1.2, 16);
-              if (hit && hit[0] < dC * 0.75 && hit[1] > Math.max(ch, gh) + 10) block++;
+              // hills, fins, cliffs or karst pillars standing between the camera and the far edge of town eat the frame
+              if (hit && hit[0] < dC * 1.1 && hit[1] > Math.max(ch, gh) + 10) block++;
             }
           }
           const frac = block / 20;
-          if (frac > 0.25) sc -= 6;
-          sc -= frac * 6;
+          if (frac > 0.2) sc -= 8;
+          sc -= frac * 8;
           const toC = march(x, z, camY, aC, eTown + 0.01, dC * 0.95, 16);
           if (toC) sc -= 2;
           // light: sun to the side and a little ahead

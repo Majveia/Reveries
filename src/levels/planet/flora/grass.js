@@ -129,6 +129,8 @@ const BLADE_BODY = /* glsl */ `
   float dC = length(toC);
   float fDen = clamp(uR0 * uR0 / max(dC * dC, 1e-3), 0.0, 1.0);
   float vis = (1.0 - smoothstep(fDen * 0.7, fDen, aOff.w)) * (1.0 - smoothstep(uFar * 0.72, uFar, dC));
+  // never let a blade or flower grow into the lens (low cameras on slopes)
+  vis *= smoothstep(0.45, 1.5, dC);
   float wk = clamp(inversesqrt(max(fDen, 1e-4)), 1.0, uWidthMax);
   float rnd = fl_hash(aOff.w * 7919.0 + aDat.x * 13.7);
   vec3 ref = abs(gUp.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -190,7 +192,7 @@ const BLADE_BODY = /* glsl */ `
   } else { vGCol = uStemCol * mix(0.45, 1.0, t); vGlow = 0.0; }
   vTrans = 0.6;
 #else
-  float ao = mix(0.42, 1.0, smoothstep(0.0, 0.85, t));
+  float ao = mix(0.5, 1.0, smoothstep(0.0, 0.85, t));
   vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
   vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * (0.86 + 0.28 * rnd);
   // glowing blades come in patches (a few metres across), not as uniform frost
@@ -288,7 +290,7 @@ export class Grass {
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind,
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
       uR0: { value: this.r0 }, uFar: { value: this.far }, uWidthMax: { value: 3.2 }, uStiff: { value: P.stiff ?? 1 },
-      uGlow: { value: P.glow || 0 }, uTransK: { value: 0.16 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
+      uGlow: { value: P.glow || 0 }, uTransK: { value: 0.22 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
     };
     this.mat = makeBladeMaterial(this.U, false);
     this.geo = bladeGeometry(q.level >= 2 ? 4 : 3);
@@ -422,7 +424,7 @@ export class Grass {
         const i0 = Math.floor(ci), i1 = Math.min(cols.length - 1, i0 + 1);
         _c.copy(cols[i0]).lerp(cols[i1], ci - i0);
         const dryK = THREE.MathUtils.clamp((0.42 - moist) * 2.2 + (P.dryBias || 0) + n1 * 0.25, 0, 1);
-        _c.lerp(dry, dryK * 0.85);
+        _c.lerp(dry, Math.min(dryK, P.dryMax ?? 1) * 0.85);
         // clump-scale hue/value drift (warm sunlit tufts vs cool deep clumps)
         const n3 = valueNoise3(x * 0.45, y * 0.45, z * 0.45, 61);
         _c.multiplyScalar(0.84 + 0.3 * (n3 * 0.5 + 0.5));

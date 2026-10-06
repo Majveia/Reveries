@@ -76,7 +76,7 @@ void main(){
   const vec3 KRGB = vec3(0.72, 1.0, 1.32);   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
-  float inBulge = smoothstep(uBulgeScale * 1.5, uBulgeScale * 0.2, camR) * 0.7;
+  float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
   if (t1 > t0) {
     // bulge light in front of the dusty slab
     col += bulgeLine(ro, rd, 0.0, t0) * cB;
@@ -109,7 +109,16 @@ void main(){
       }
       float pY = galSeg(pa.y, pb.y, uHYoung), pO = galSeg(pa.y, pb.y, uHOld), pD = galSeg(pa.y, pb.y, uHDust);
       float pT = galSeg(pa.y, pb.y, uHOld * 2.6);
-      float tau = m.b * pD * seg * uKappa * mix(det, det * det * 1.3, uInside);
+      // inside the disk the near dust condenses into discrete opaque clouds with clear gaps
+      // between them: the band breaks into Great-Rift silhouettes instead of a smooth haze
+      float dIn = det;
+      if (uInside > 0.0 && tm < 3.0) {
+        vec4 c1 = texture(uNoise, pm * 0.9 + 0.37);
+        vec4 c2 = texture(uNoise, pm * 4.0 + c1.xyz * 0.3);
+        float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
+        dIn = mix(det * det * 1.3, (0.04 + cl * cl * 9.0) * (0.5 + c2.b), 1.0 - smoothstep(0.8, 2.0, tm));
+      }
+      float tau = m.b * pD * seg * uKappa * mix(det, dIn, uInside);
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
       vec3 j = (m.r * uColYoung * pY * uYoungGain + m.g * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 1.6 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit;
@@ -164,10 +173,10 @@ export class GalaxyVolume {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
         uBulgeDim: { value: 1 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.62 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.48 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
         uColYoung: { value: new THREE.Color(0.42, 0.6, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
-        uColDustGlow: { value: new THREE.Color(0.014, 0.008, 0.006) },
+        uColDustGlow: { value: new THREE.Color(0.007, 0.0045, 0.0038) },
       },
     });
     this.comp = new THREE.ShaderMaterial({

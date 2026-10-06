@@ -125,3 +125,44 @@ export function plateTexture(seed = 3) {
   }
   return finish(new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType));
 }
+
+/**
+ * Sea foam, RGBA8 256² (tiling): R = organic foam density — domain-warped
+ * multi-octave noise carved by soft, irregular bubble lace at two scales
+ * (patches with holes and torn filaments, not a regular cell net);
+ * G = fine bubble speckle; B = streak noise stretched along +x (the shader
+ * rotates it into the wind); A = unused (1).
+ */
+export function foamTexture(seed = 5) {
+  const N = 256;
+  const rng = new Random(seed >>> 0 || 13);
+  const v4 = makeValueNoise(rng, 4), v8 = makeValueNoise(rng, 8), v16 = makeValueNoise(rng, 16), v32 = makeValueNoise(rng, 32), v64 = makeValueNoise(rng, 64);
+  const wA = makeValueNoise(rng, 8), wB = makeValueNoise(rng, 8);
+  const woA = makeWorley(rng, 18, 0.8), woB = makeWorley(rng, 40, 0.8), woC = makeWorley(rng, 96, 0.8);
+  const sA = makeValueNoise(rng, 64), sB = makeValueNoise(rng, 128);
+  const data = new Uint8Array(N * N * 4);
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const u = x / N, v = y / N;
+    // domain warp → torn, flowing shapes
+    const qu = u + (wA(u, v) - 0.5) * 0.1, qv = v + (wB(u, v) - 0.5) * 0.1;
+    const n = v4(qu, qv) * 0.3 + v8(qu, qv) * 0.28 + v16(qu, qv) * 0.2 + v32(qu, qv) * 0.13 + v64(qu, qv) * 0.09;
+    const a = woA(qu, qv), b = woB(qu, qv), c = woC(qu, qv);
+    // round holes of varied size opening in the foam sheet (bubbles bursting)
+    const holeA = 1 - ss(0.08 + 0.22 * a.id, 0.2 + 0.3 * a.id, a.f1);
+    const holeB = (1 - ss(0.1, 0.32, b.f1)) * (b.id > 0.45 ? 1 : 0);
+    const fil = Math.exp(-(b.f2 - b.f1) * 10.0);
+    const base = ss(0.34, 0.66, n + 0.12 * (v64(u, v) - 0.5));
+    let foam = base * (1 - 0.85 * holeA * ss(0.3, 0.8, 1 - base * 0.6)) * (1 - 0.5 * holeB) * (0.82 + 0.18 * fil);
+    foam += 0.18 * fil * ss(0.2, 0.5, n) * (1 - holeA);
+    const speck = (1 - ss(0.05, 0.3, c.f1)) * ss(0.3, 0.6, n);
+    const o = (y * N + x) * 4;
+    data[o] = Math.round(Math.min(1, Math.max(0, foam * 1.15)) * 255);
+    data[o + 1] = Math.round(speck * 255);
+    // streaks: long along x, thin along y
+    const st = sA(u * 0.25, v) * 0.6 + sB(u * 0.25, v) * 0.4;
+    data[o + 2] = Math.round(st * 255);
+    data[o + 3] = 255;
+  }
+  return finish(new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType));
+}

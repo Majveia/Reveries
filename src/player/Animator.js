@@ -137,7 +137,7 @@ export class Animator {
     this.gait = damp(this.gait, sstep(2.6, 4.6, sp), 6, dt);
     this.sprint = damp(this.sprint, sstep(7.5, 10.5, sp), 4, dt);
     const accF = clamp(s.accel?.z || 0, -25, 25), accX = clamp(s.accel?.x || 0, -25, 25);
-    this.lean = damp(this.lean, clamp(sp * 0.045 + this.sprint * 0.12 + accF * 0.012, -0.25, 0.48), 5, dt);
+    this.lean = damp(this.lean, clamp(sp * 0.045 + this.sprint * 0.12 + accF * 0.012 + (s.leanAdd || 0), -0.25, 0.48), 5, dt);
     this.bank = damp(this.bank, clamp(-(s.turnRate || 0) * sp * 0.035 - accX * 0.004, -0.35, 0.35), 5, dt);
     this.idleTime = sp < 0.15 && s.state === 'ground' ? this.idleTime + dt : 0;
     // squash spring (critically-damped-ish)
@@ -407,13 +407,15 @@ export class Animator {
     qYXZ(p.D[B.chest], this.lean * 0.15 - 0.025 * br * (1 - move) + g * 0.04 * Math.abs(Math.sin(TAU * ph)), -pYaw * 1.6, -pRoll * 0.4 - this.bank * 0.25);
     qYXZ(p.D[B.neck], -this.lean * 0.4, pYaw * 1.0, pRoll * 0.5);
     // arms counter-swing
-    const A = lerp(lerp(0.32, 0.82, g), 0.95, spr) * move;
-    const swingL = -Math.cos(TAU * ph) * A + 0.05 - 0.12 * spr;
-    const swingR = Math.cos(TAU * ph) * A + 0.05 - 0.12 * spr;
-    const elBase = lerp(lerp(0.28, 1.3, g), 1.42, spr) * move + 0.22 * (1 - move);
-    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.5, elBase + Math.max(0, swingR) * 0.5, lerp(0.1, 0.22, g * move), 0.3 * g * move);
-    // shoulders lift with breathing / run
-    for (const [S, s] of [['L', 1], ['R', -1]]) qYXZ(p.D[B['clav' + S]], 0, 0, s * (0.03 * br * (1 - move) + 0.04 * g * move));
+    // arms: long relaxed pendulum swing at a walk, a compact driven pump at a run
+    // (elbows stay low and close to the ribs, hands pass the hip — never 'T-rex')
+    const A = lerp(lerp(0.45, 0.92, g), 1.0, spr) * move;
+    const swingL = -Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
+    const swingR = Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
+    const elBase = lerp(lerp(0.3, 0.92, g), 1.25, spr) * move + 0.22 * (1 - move);
+    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.42 - Math.max(0, -swingL) * 0.18, elBase + Math.max(0, swingR) * 0.42 - Math.max(0, -swingR) * 0.18, lerp(0.08, 0.16, g * move), 0.3 * g * move);
+    // shoulders lift with breathing / run; the forward-swinging arm's shoulder protracts
+    for (const [S, s, sw] of [['L', 1, swingL], ['R', -1, swingR]]) qYXZ(p.D[B['clav' + S]], 0, -s * clamp(sw, -1, 1) * 0.13 * move, s * (0.03 * br * (1 - move) + 0.04 * g * move));
   }
 
   _air(p, s) {
@@ -518,12 +520,13 @@ export class Animator {
 
   _ride(p, s) {
     const t = this.time;
-    qYXZ(p.D[B.hips], 0.38, 0, this.bank * 0.5);
-    qYXZ(p.D[B.spine], 0.12, 0, 0);
-    qYXZ(p.D[B.chest], 0.05 + Math.sin(t * 1.6) * 0.01, 0, 0);
-    qYXZ(p.D[B.neck], -0.35, 0, 0);
-    this._arms(p, 0.95, 0.95, 0.55, 0.55, 0.3, 0.1);
-    this._legsFK(p, 1.35, 1.35, 1.55, 1.55, 0.18, 0.15);
+    // committed rider: torso tucked over the bars, head level, elbows in, knees gripping
+    qYXZ(p.D[B.hips], 0.44, 0, this.bank * 0.7);
+    qYXZ(p.D[B.spine], 0.16, 0, -this.bank * 0.15);
+    qYXZ(p.D[B.chest], 0.07 + Math.sin(t * 1.6) * 0.012, 0, 0);
+    qYXZ(p.D[B.neck], -0.46, 0, -this.bank * 0.3);
+    this._arms(p, 1.02, 1.02, 0.52, 0.52, 0.22, 0.12);
+    this._legsFK(p, 1.28, 1.28, 1.72, 1.72, 0.2, 0.25);
     p.root.set(0, -0.42, -0.05);
   }
 

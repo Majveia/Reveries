@@ -57,6 +57,10 @@ const ENV_VERT = /* glsl */ `
 varying vec3 vDir;
 void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
+// Moonlit sky scattering is kept below the physical ratio so nights stay OLED-deep
+// (the moon still keys the ground at full strength).
+const MOON_SKY = 0.4;
+
 export class PlanetLighting {
   constructor(level) {
     this.level = level;
@@ -224,7 +228,7 @@ export class PlanetLighting {
     if (moon) {
       m.moonDir.copy(moon.pos).normalize();
       const mc = moon.color;
-      m.moonE.set(0.78 + 0.1 * mc.r, 0.86 + 0.08 * mc.g, 1.0).multiplyScalar(moonE * 1.0);
+      m.moonE.set(0.78 + 0.1 * mc.r, 0.86 + 0.08 * mc.g, 1.0).multiplyScalar(moonE * MOON_SKY);
     } else m.moonE.set(0, 0, 0);
     this.night = 1 - THREE.MathUtils.smoothstep(sunElev, -0.14, 0.02);
     // airglow: faint green/blue emission so moonless nights keep a horizon line
@@ -246,7 +250,7 @@ export class PlanetLighting {
     } else {
       this.keyDir.copy(moon.pos).sub(focus).normalize();
       const Tm = m.transmittance(probe, this.keyDir, _v3, 20);
-      this.keyColor.setRGB(m.moonE.x * Tm.x, m.moonE.y * Tm.y, m.moonE.z * Tm.z);
+      this.keyColor.setRGB(m.moonE.x * Tm.x, m.moonE.y * Tm.y, m.moonE.z * Tm.z).multiplyScalar(1 / MOON_SKY);
     }
     const kI = Math.max(this.keyColor.r, this.keyColor.g, this.keyColor.b);
     sun.intensity = kI;

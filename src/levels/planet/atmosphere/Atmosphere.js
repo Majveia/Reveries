@@ -77,7 +77,7 @@ void main(){
   float depth = texture2D(tDepth, vUv).r;
   bool far = isFarDepth(depth, uRev);
   vec3 vp = viewPosFromDepth(vUv, far ? 0.5 : depth, uProjInv, uRev);
-  vec3 rd = normalize((uViewInv * vec4(vp, 1.0)).xyz - uCam);
+  vec3 rd = normalize(mat3(uViewInv) * vp); // rotation only: world-space subtraction at planet scale quantizes rd into blocks
   float dist = far ? 1e12 : length(viewPosFromDepth(vUv, depth, uProjInv, uRev));
   vec3 ro = uCam;
   float r = length(ro);

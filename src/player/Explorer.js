@@ -48,7 +48,10 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 // ---- palette (sRGB hex → linear) ---------------------------------------------------
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
 export const PALETTE = {
-  ivory: lin('#e4ddcc'),
+  ivory: lin('#e3d9c4'),
+  signal: lin('#c4632a'),
+  webbing: lin('#302f2b'),
+  canvas: lin('#4d4936'),
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
@@ -74,7 +77,7 @@ export function skeletonSpec() {
   const beta = THREE.MathUtils.degToRad(40); // arm angle from vertical in the A-pose
   for (const [S, s] of [['L', 1], ['R', -1]]) {
     J['clav' + S] = [s * 0.028, 1.43, -0.016];
-    const sh = [s * 0.182, 1.428, -0.03];
+    const sh = [s * 0.192, 1.428, -0.03];
     J['upperArm' + S] = sh;
     const dA = norm([s * Math.sin(beta), -Math.cos(beta), 0.035]);
     J['dA' + S] = dA;
@@ -156,14 +159,14 @@ function makeBody(spec) {
   const gluteL = P('hips', (x, y, z) => sdEllipsoid(x, y, z, 0.07, 0.905, -0.052, 0.083, 0.086, 0.076));
   const gluteR = P('hips', (x, y, z) => sdEllipsoid(x, y, z, -0.07, 0.905, -0.052, 0.083, 0.086, 0.076));
   const abdomen = P('spine', (x, y, z) => sdRoundCone(x, y, (z + 0.004) / 0.84 - 0.004, 0, 1.0, 0.0, 0, 1.19, -0.004, 0.122, 0.13) * 0.84);
-  const ribs = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0, 1.305, -0.012, 0.164, 0.152, 0.112));
-  const pecL = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0.072, 1.346, 0.05, 0.08, 0.062, 0.05));
-  const pecR = P('chest', (x, y, z) => sdEllipsoid(x, y, z, -0.072, 1.346, 0.05, 0.08, 0.062, 0.05));
-  const latL = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0.112, 1.27, -0.04, 0.07, 0.12, 0.07));
-  const latR = P('chest', (x, y, z) => sdEllipsoid(x, y, z, -0.112, 1.27, -0.04, 0.07, 0.12, 0.07));
-  const traps = P('chest', (x, y, z) => sdCapsule(x, y, z, -0.125, 1.432, -0.036, 0.125, 1.432, -0.036, 0.056));
-  const uback = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0, 1.385, -0.062, 0.12, 0.085, 0.068));
-  const neck = P('neck', (x, y, z) => sdRoundCone(x, y, z, 0, 1.42, -0.022, 0, 1.6, -0.006, 0.058, 0.05));
+  const ribs = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0, 1.305, -0.012, 0.178, 0.152, 0.116));
+  const pecL = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0.078, 1.346, 0.052, 0.086, 0.064, 0.052));
+  const pecR = P('chest', (x, y, z) => sdEllipsoid(x, y, z, -0.078, 1.346, 0.052, 0.086, 0.064, 0.052));
+  const latL = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0.124, 1.28, -0.04, 0.078, 0.125, 0.074));
+  const latR = P('chest', (x, y, z) => sdEllipsoid(x, y, z, -0.124, 1.28, -0.04, 0.078, 0.125, 0.074));
+  const traps = P('chest', (x, y, z) => sdCapsule(x, y, z, -0.135, 1.432, -0.036, 0.135, 1.432, -0.036, 0.06));
+  const uback = P('chest', (x, y, z) => sdEllipsoid(x, y, z, 0, 1.385, -0.062, 0.132, 0.088, 0.07));
+  const neck = P('neck', (x, y, z) => sdRoundCone(x, y, z, 0, 1.42, -0.022, 0, 1.6, -0.006, 0.07, 0.062));
   const torso = (x, y, z) => {
     let d = smin(pelvis(x, y, z), abdomen(x, y, z), 0.06);
     d = smin(d, crotch(x, y, z), 0.04);
@@ -186,41 +189,40 @@ function makeBody(spec) {
     const nAx = norm(cross(wAx, dA)); // completes frame; sign-corrected below
     const pn = dot(nAx, palmN) < 0 ? mul(nAx, -1) : nAx;
     const deltC = add(sh, [s * 0.012, 0.014, 0.0]);
-    const delt = P('upperArm' + S, (x, y, z) => sdEllipsoid(x, y, z, deltC[0], deltC[1], deltC[2], 0.071, 0.068, 0.074));
-    const uarm = P('upperArm' + S, (x, y, z) => sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.061, 0.046));
-    const farm = P('foreArm' + S, (x, y, z) => sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.046, 0.033));
+    const delt = P('upperArm' + S, (x, y, z) => sdEllipsoid(x, y, z, deltC[0], deltC[1], deltC[2], 0.08, 0.076, 0.082));
+    const uarm = P('upperArm' + S, (x, y, z) => sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.069, 0.052));
+    const farm = P('foreArm' + S, (x, y, z) => sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.051, 0.037));
     const fbul = add(add(el, mul(dA, 0.075)), mul(wAx, -0.004));
-    const fbulge = P('foreArm' + S, (x, y, z) => sdEllipsoid(x, y, z, fbul[0], fbul[1], fbul[2], 0.047, 0.047, 0.047));
+    const fbulge = P('foreArm' + S, (x, y, z) => sdEllipsoid(x, y, z, fbul[0], fbul[1], fbul[2], 0.053, 0.052, 0.053));
     const palmC = add(add(wr, mul(dA, 0.052)), mul(pn, -0.002));
-    const palm = P('hand' + S, (x, y, z) => sdRoundBox(x, y, z, palmC, wAx, dA, pn, 0.041, 0.05, 0.018, 0.014));
+    const palm = P('hand' + S, (x, y, z) => sdRoundBox(x, y, z, palmC, wAx, dA, pn, 0.033, 0.042, 0.013, 0.011));
     // fingers curl slightly toward the palm
     const fDir = norm(add(mul(dA, Math.cos(0.38)), mul(pn, Math.sin(0.38))));
     const fN = norm(sub(pn, mul(fDir, dot(pn, fDir))));
     const fingC = add(add(wr, mul(dA, 0.118)), mul(pn, 0.016));
-    const fing = P('hand' + S, (x, y, z) => sdRoundBox(x, y, z, fingC, wAx, fDir, fN, 0.039, 0.038, 0.014, 0.012));
+    void fingC; void fN;
     const thA = add(add(add(wr, mul(dA, 0.024)), mul(wAx, 0.03)), mul(pn, 0.008));
     const thB = add(add(add(wr, mul(dA, 0.082)), mul(wAx, 0.046)), mul(pn, 0.03));
-    const thumb = P('hand' + S, (x, y, z) => sdCapsule(x, y, z, thA[0], thA[1], thA[2], thB[0], thB[1], thB[2], 0.0135));
+    void thA; void thB;
     arms.push((x, y, z) => {
       let d = smin(delt(x, y, z), uarm(x, y, z), 0.03);
       d = smin(d, smin(farm(x, y, z), fbulge(x, y, z), 0.03), 0.022);
-      const h = smin(smin(palm(x, y, z), fing(x, y, z), 0.012), thumb(x, y, z), 0.012);
-      return smin(d, h, 0.016);
+      return smin(d, palm(x, y, z), 0.016);
     });
 
     const hp = J['thigh' + S], kn = J['shin' + S], an = J['foot' + S];
-    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.09, 0.058));
+    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.1, 0.063));
     const qc = add(lerp3(hp, kn, 0.4), [s * 0.004, 0, 0.02]);
-    const quad = P('thigh' + S, (x, y, z) => sdEllipsoid(x, y, z, qc[0], qc[1], qc[2], 0.07, 0.135, 0.068));
+    const quad = P('thigh' + S, (x, y, z) => sdEllipsoid(x, y, z, qc[0], qc[1], qc[2], 0.079, 0.14, 0.076));
     const knee = P('shin' + S, (x, y, z) => sdSphere(x, y, z, kn[0], kn[1], kn[2] + 0.002, 0.046), { bone2: B['thigh' + S] });
     const shin = P('shin' + S, (x, y, z) => sdRoundCone(x, y, z, kn[0], kn[1], kn[2], an[0], an[1], an[2], 0.051, 0.038));
     const cc = add(kn, [0, -0.135, -0.03]);
-    const calf = P('shin' + S, (x, y, z) => sdEllipsoid(x, y, z, cc[0], cc[1], cc[2], 0.05, 0.105, 0.054));
+    const calf = P('shin' + S, (x, y, z) => sdEllipsoid(x, y, z, cc[0], cc[1], cc[2], 0.055, 0.108, 0.058));
     const fx = s * 0.105;
-    const heel = P('foot' + S, (x, y, z) => sdBox(x, y, z, fx, 0.052, -0.032, 0.047, 0.052, 0.056, 0.03));
-    const mid = P('foot' + S, (x, y, z) => sdBox(x, y, z, fx, 0.04, 0.066, 0.05, 0.04, 0.074, 0.028));
-    const ankleCuff = P('foot' + S, (x, y, z) => sdCapsule(x, y, z, an[0], an[1] - 0.01, an[2], an[0], an[1] + 0.05, an[2], 0.047));
-    const toe = P('toe' + S, (x, y, z) => sdEllipsoid(x, y, z, fx, 0.034, 0.15, 0.05, 0.034, 0.056));
+    const heel = P('foot' + S, (x, y, z) => sdBox(x, y, z, fx, 0.047, -0.03, 0.042, 0.047, 0.052, 0.026));
+    const mid = P('foot' + S, (x, y, z) => sdBox(x, y, z, fx, 0.036, 0.062, 0.044, 0.036, 0.068, 0.024));
+    const ankleCuff = P('foot' + S, (x, y, z) => sdCapsule(x, y, z, an[0], an[1] - 0.01, an[2], an[0], an[1] + 0.05, an[2], 0.043));
+    const toe = P('toe' + S, (x, y, z) => sdEllipsoid(x, y, z, fx, 0.031, 0.145, 0.045, 0.031, 0.052));
     legs.push((x, y, z) => {
       let d = smin(thigh(x, y, z), quad(x, y, z), 0.04);
       d = smin(d, knee(x, y, z), 0.03);
@@ -259,30 +261,32 @@ function makePieces(spec, body) {
   const { J } = spec;
   const pieces = [];
   const ivory = PALETTE.ivory, graphite = PALETTE.graphite, gun = PALETTE.gunmetal;
+  const HEAT = lin('#5d5866'); // heat-tinted (blued bronze) thruster metal
 
   // ---- chest plate ----------------------------------------------------------------
   {
     const base = (x, y, z) => {
-      let d = sdEllipsoid(x, y, z, 0, 1.305, -0.012, 0.164, 0.152, 0.112);
-      d = smin(d, smin(sdEllipsoid(x, y, z, 0.072, 1.346, 0.05, 0.08, 0.062, 0.05), sdEllipsoid(x, y, z, -0.072, 1.346, 0.05, 0.08, 0.062, 0.05), 0.03), 0.04);
+      let d = sdEllipsoid(x, y, z, 0, 1.305, -0.012, 0.178, 0.152, 0.116);
+      d = smin(d, smin(sdEllipsoid(x, y, z, 0.078, 1.346, 0.052, 0.086, 0.064, 0.052), sdEllipsoid(x, y, z, -0.078, 1.346, 0.052, 0.086, 0.064, 0.052), 0.03), 0.04);
       return d;
     };
     const f = (x, y, z) => {
       const ax = Math.abs(x);
-      let d = shell(base(x, y, z), 0.016, 0.013);
-      const topY = 1.452 - smoothstep(0.07, 0.165, ax) * 0.075;
+      let d = shell(base(x, y, z), 0.016, 0.017);
+      const topY = 1.452 - smoothstep(0.07, 0.178, ax) * 0.075;
       let region = Math.max(1.152 - y, y - topY);
       region = Math.max(region, -0.04 - z);
       // V-neck
       const v = ax - (0.05 + Math.max(0, y - 1.36) * 0.95);
       region = Math.max(region, -v);
       // side cut for the arms
-      region = Math.max(region, ax - 0.172);
+      region = Math.max(region, ax - 0.186);
       return smax(d, region, 0.007);
     };
     pieces.push({
-      name: 'chestPlate', bone: B.chest, f, bounds: [-0.2, 1.12, -0.08, 0.2, 1.48, 0.14], h: 0.0065,
-      color: () => ivory, mat: () => [0.34, 0.0], split: (x, y) => y - 1.19,
+      name: 'chestPlate', bone: B.chest, f, bounds: [-0.22, 1.12, -0.08, 0.22, 1.48, 0.15], h: 0.0065,
+      color: (x, y, z) => (x < -0.07 && x > -0.13 && y > 1.372 && y < 1.394 && z > 0.04 ? PALETTE.signal : ivory),
+      mat: () => [0.34, 0.0], split: (x, y) => y - 1.19,
       line: (x, y, z) => (y < 1.205 ? y - 1.171 : FAR),
       seam: (x, y, z) => (y > 1.2 ? (Math.abs(x) < 0.09 ? x : (Math.abs(x) - 0.135)) : FAR),
     });
@@ -290,14 +294,14 @@ function makePieces(spec, body) {
   // ---- back plate (under the pack) ------------------------------------------------------
   {
     const f = (x, y, z) => {
-      const d = shell(sdEllipsoid(x, y, z, 0, 1.31, -0.015, 0.164, 0.152, 0.112), 0.012, 0.012);
+      const d = shell(sdEllipsoid(x, y, z, 0, 1.31, -0.015, 0.178, 0.152, 0.116), 0.012, 0.012);
       let region = Math.max(1.17 - y, y - 1.445);
       region = Math.max(region, z + 0.035);
-      region = Math.max(region, Math.abs(x) - 0.15);
+      region = Math.max(region, Math.abs(x) - 0.162);
       return smax(d, region, 0.007);
     };
     pieces.push({
-      name: 'backPlate', bone: B.chest, f, bounds: [-0.19, 1.14, -0.16, 0.19, 1.47, 0.0], h: 0.008,
+      name: 'backPlate', bone: B.chest, f, bounds: [-0.21, 1.14, -0.17, 0.21, 1.47, 0.0], h: 0.008,
       color: () => graphite, mat: () => [0.45, 0.3], line: () => FAR, seam: (x, y) => y - 1.3,
     });
   }
@@ -336,20 +340,21 @@ function makePieces(spec, body) {
     const sh = J['upperArm' + S], el = J['foreArm' + S], wr = J['hand' + S], dA = J['dA' + S];
     // ---- pauldron ---------------------------------------------------------------------
     {
-      const c = add(sh, [s * 0.016, 0.02, -0.004]);
+      const c = add(sh, [s * 0.018, 0.022, -0.004]);
       const out = norm([s * 1, 0.25, 0]);
+      const big = s > 0 ? 1.1 : 1.0;
       const f = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.068, 0.062, 0.072), 0.012, 0.012);
+        const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.079 * big, 0.072 * big, 0.083 * big), 0.012, 0.015);
         const rel = sub(p, sh);
-        let region = dot(rel, dA) - 0.062; // only the cap near the joint
+        let region = dot(rel, dA) - 0.066 * big; // only the cap near the joint
         region = Math.max(region, -dot(rel, out) - 0.012); // open toward the neck
         // second lame (layered): cut a step
         return smax(d, region, 0.008);
       };
       const lame = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.057, 0.043), 0.013, 0.011);
+        const d = shell(sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.065, 0.05), 0.013, 0.014);
         const t = dot(sub(p, sh), dA);
         let region = Math.max(0.055 - t, t - 0.105);
         region = Math.max(region, -dot(sub(p, sh), out) + 0.01);
@@ -359,7 +364,8 @@ function makePieces(spec, body) {
       const lo = [Math.min(sh[0], el[0]) - 0.12, sh[1] - 0.17, -0.13], hi = [Math.max(sh[0], el[0]) + 0.12, sh[1] + 0.12, 0.1];
       pieces.push({
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
-        color: () => ivory, mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
+        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return s > 0 && t > 0.036 && t < 0.056 ? PALETTE.signal : ivory; },
+        mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
         line: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return t < 0.05 ? t - 0.03 : FAR; },
         seam: () => FAR,
       });
@@ -369,21 +375,21 @@ function makePieces(spec, body) {
       const out = norm([s * Math.cos(spec.beta), Math.sin(spec.beta), 0]); // outer (back of forearm) side in A-pose
       const f = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.044, 0.031), 0.009, 0.01);
+        const d = shell(sdRoundCone(x, y, z, el[0], el[1], el[2], wr[0], wr[1], wr[2], 0.049, 0.035), 0.009, 0.014);
         const t = dot(sub(p, el), dA);
         let region = Math.max(0.045 - t, t - 0.235);
         // open slit on the inner (palm) side
         const rel = sub(sub(p, el), mul(dA, t));
         const side = dot(norm(rel), out);
-        region = Math.max(region, (-side - 0.55) * 0.05);
+        region = Math.max(region, (-side - 0.75) * 0.05);
         let dd = smax(d, region, 0.006);
         if (s > 0) { // wrist computer on the left forearm
-          const cc = add(add(el, mul(dA, 0.17)), mul(out, 0.043));
+          const cc = add(add(el, mul(dA, 0.17)), mul(out, 0.05));
           const zA = norm(cross(dA, out));
           dd = Math.min(dd, sdRoundBox(x, y, z, cc, zA, dA, out, 0.022, 0.034, 0.01, 0.006));
         }
         // cuff ring
-        const cuff = sdCylinder(x, y, z, ...add(el, mul(dA, 0.226)), ...add(el, mul(dA, 0.252)), 0.041, 0.006);
+        const cuff = sdCylinder(x, y, z, ...add(el, mul(dA, 0.226)), ...add(el, mul(dA, 0.252)), 0.045, 0.006);
         return Math.min(dd, cuff);
       };
       const lo = [Math.min(el[0], wr[0]) - 0.07, Math.min(el[1], wr[1]) - 0.07, -0.08], hi = [Math.max(el[0], wr[0]) + 0.07, Math.max(el[1], wr[1]) + 0.07, 0.08];
@@ -393,7 +399,7 @@ function makePieces(spec, body) {
         line: (x, y, z) => {
           const p = [x, y, z], t = dot(sub(p, el), dA);
           if (s > 0) { // wrist screen glows
-            const cc = add(add(el, mul(dA, 0.17)), mul(out, 0.043));
+            const cc = add(add(el, mul(dA, 0.17)), mul(out, 0.05));
             const q = sub(p, cc);
             if (dot(q, out) > 0.004 && Math.abs(dot(q, dA)) < 0.03) return Math.max(Math.abs(dot(q, dA)) - 0.022, Math.abs(dot(q, norm(cross(dA, out)))) - 0.014);
           }
@@ -411,12 +417,12 @@ function makePieces(spec, body) {
       const ax = norm(sub(kn, hp));
       const f = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.086, 0.056), 0.022, 0.011);
+        const d = shell(sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.096, 0.061), 0.022, 0.015);
         const t = dot(sub(p, hp), ax);
         let region = Math.max(0.09 - t, t - 0.33);
         const rel = sub(sub(p, hp), mul(ax, t));
         const a = Math.atan2(rel[0] * s, rel[2]); // 0 = front, +π/2 = outer side
-        region = Math.max(region, (Math.abs(a - 0.55) - 1.05) * 0.06);
+        region = Math.max(region, (Math.abs(a - 0.5) - 1.4) * 0.06);
         return smax(d, region, 0.007);
       };
       pieces.push({
@@ -427,7 +433,7 @@ function makePieces(spec, body) {
           if (t < 0.12 || t > 0.3) return FAR;
           const rel = sub(sub(p, hp), mul(ax, t));
           const a = Math.atan2(rel[0] * s, rel[2]);
-          return (a - 1.05) * 0.09; // vertical stripe on the outer side
+          return (a - 1.3) * 0.09; // vertical stripe on the outer side
         },
         seam: (x, y, z) => dot(sub([x, y, z], hp), ax) - 0.2,
       });
@@ -440,12 +446,12 @@ function makePieces(spec, body) {
         const p = [x, y, z];
         let cap = shell(sdEllipsoid(x, y, z, kn[0], kn[1] - 0.004, kn[2] + 0.014, 0.05, 0.058, 0.042), 0.006, 0.01);
         cap = smax(cap, Math.max(kn[2] - 0.008 - z, Math.abs(y - kn[1] + 0.004) - 0.064), 0.008);
-        const sh = shell(sdRoundCone(x, y, z, kn[0], kn[1], kn[2], an[0], an[1], an[2], 0.051, 0.038), 0.012, 0.011);
+        const sh = shell(sdRoundCone(x, y, z, kn[0], kn[1], kn[2], an[0], an[1], an[2], 0.055, 0.04), 0.012, 0.014);
         const t = dot(sub(p, kn), ax);
         let region = Math.max(0.075 - t, t - 0.345);
         const rel = sub(sub(p, kn), mul(ax, t));
         const a = Math.atan2(rel[0] * s, rel[2]);
-        region = Math.max(region, (Math.abs(a - 0.25) - 1.35) * 0.05);
+        region = Math.max(region, (Math.abs(a - 0.2) - 1.65) * 0.05);
         const gr = smax(sh, region, 0.007);
         return Math.min(cap, gr);
       };
@@ -465,13 +471,13 @@ function makePieces(spec, body) {
     {
       const fx = s * 0.105, an = J['foot' + S];
       const footF = (x, y, z) => {
-        let f = smin(sdBox(x, y, z, fx, 0.052, -0.032, 0.047, 0.052, 0.056, 0.03), sdBox(x, y, z, fx, 0.04, 0.066, 0.05, 0.04, 0.074, 0.028), 0.03);
-        f = smin(f, sdCapsule(x, y, z, an[0], an[1] - 0.01, an[2], an[0], an[1] + 0.05, an[2], 0.047), 0.03);
+        let f = smin(sdBox(x, y, z, fx, 0.047, -0.03, 0.042, 0.047, 0.052, 0.026), sdBox(x, y, z, fx, 0.036, 0.062, 0.044, 0.036, 0.068, 0.024), 0.03);
+        f = smin(f, sdCapsule(x, y, z, an[0], an[1] - 0.01, an[2], an[0], an[1] + 0.05, an[2], 0.043), 0.03);
         return f;
       };
       const f = (x, y, z) => {
-        const d = shell(footF(x, y, z), 0.006, 0.01);
-        let region = Math.max(0.03 - y, y - 0.145);
+        const d = shell(footF(x, y, z), 0.004, 0.009);
+        let region = Math.max(0.028 - y, y - 0.128);
         region = Math.max(region, z - 0.11);
         return smax(d, region, 0.006);
       };
@@ -481,7 +487,7 @@ function makePieces(spec, body) {
         line: (x, y, z) => (z < -0.06 ? y - 0.075 : FAR), seam: (x, y, z) => z - 0.02,
       });
       const toeF = (x, y, z) => {
-        const d = shell(sdEllipsoid(x, y, z, fx, 0.034, 0.15, 0.05, 0.034, 0.056), 0.005, 0.009);
+        const d = shell(sdEllipsoid(x, y, z, fx, 0.031, 0.145, 0.045, 0.031, 0.052), 0.004, 0.008);
         return smax(d, Math.max(0.026 - y, 0.112 - z), 0.006);
       };
       pieces.push({
@@ -516,9 +522,9 @@ function makePieces(spec, body) {
       const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
       // side pods
-      for (const s of [1, -1]) {
-        d = smin(d, sdCylinder(x, y, z, s * 0.1, 1.662, -0.004, s * 0.134, 1.662, -0.004, 0.034, 0.007), 0.008);
-      }
+      d = smin(d, sdRoundBox(x, y, z, [0.118, 1.668, -0.006], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.022, 0.034, 0.05, 0.009), 0.008);
+      d = smin(d, sdCylinder(x, y, z, 0.13, 1.683, 0.03, 0.13, 1.683, 0.058, 0.009, 0.002), 0.003); // sensor lens
+      d = smin(d, sdCylinder(x, y, z, -0.1, 1.662, -0.004, -0.13, 1.662, -0.004, 0.027, 0.006), 0.008);
       return d;
     };
     pieces.push({
@@ -532,7 +538,8 @@ function makePieces(spec, body) {
         return -Math.max(pod, crest, chin);
       },
       line: (x, y, z) => {
-        if (Math.abs(x) > 0.128) return Math.hypot(y - 1.662, z + 0.004) - 0.025; // pod rings
+        if (x > 0.128) return Math.min(Math.hypot(y - 1.646, z - 0.026) - 0.0045, Math.hypot(y - 1.683, z - 0.058) - 0.006); // status LED + lens
+        if (x < -0.124) return Math.hypot(y - 1.662, z + 0.004) - 0.006; // status LED
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
         if (Math.abs(x) > 0.07 && z > -0.11 && z < 0.07 && y > 1.6 && y < 1.7) return y - (1.64 + z * 0.22);
@@ -553,7 +560,7 @@ function makePieces(spec, body) {
     // antenna on the left pod
     pieces.push({
       name: 'antenna', bone: B.head,
-      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.134, 1.685, -0.02, 0.142, 1.8, -0.075, 0.0035), sdSphere(x, y, z, 0.142, 1.8, -0.075, 0.0065)),
+      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.136, 1.69, -0.035, 0.146, 1.8, -0.085, 0.0035), sdSphere(x, y, z, 0.146, 1.8, -0.085, 0.0065)),
       bounds: [0.12, 1.66, -0.1, 0.16, 1.82, 0.0], h: 0.0035,
       color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.142, y - 1.8, z + 0.075) - 0.0068, seam: () => FAR,
     });
@@ -572,8 +579,9 @@ function makePieces(spec, body) {
   const nozzles = (x, y, z) => {
     let d = FAR;
     for (const s of [1, -1]) {
-      const outer = sdCylinder(x, y, z, s * 0.128, 1.115, -0.214, s * 0.128, 1.058, -0.222, 0.035, 0.006);
-      const inner = sdCylinder(x, y, z, s * 0.128, 1.09, -0.216, s * 0.128, 1.04, -0.225, 0.025, 0.0);
+      // flared thruster bell (hollow), angled slightly outward
+      const outer = sdRoundCone(x, y, z, s * 0.128, 1.12, -0.213, s * 0.134, 1.05, -0.224, 0.027, 0.039);
+      const inner = sdRoundCone(x, y, z, s * 0.128, 1.1, -0.214, s * 0.135, 1.03, -0.226, 0.019, 0.033);
       d = Math.min(d, Math.max(outer, -inner));
     }
     return d;
@@ -585,32 +593,173 @@ function makePieces(spec, body) {
       d = smin(d, sdRoundBox(x, y, z, [0, 1.3, -0.262], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.03, 0.15, 0.012, 0.008), 0.008);
       // top handle
       d = Math.min(d, sdTorus(x, y, z, [0, 1.462, -0.205], [0, 0, 1], 0.045, 0.009));
-      d = Math.min(d, nozzles(x, y, z));
-      // straps over the shoulders
-      for (const s of [1, -1]) {
-        const a = [s * 0.095, 1.405, -0.142], b = [s * 0.112, 1.478, -0.05], c = [s * 0.118, 1.445, 0.062], e = [s * 0.11, 1.36, 0.105];
-        d = Math.min(d, sdCapsule(x, y, z, ...a, ...b, 0.012), sdCapsule(x, y, z, ...b, ...c, 0.012), sdCapsule(x, y, z, ...c, ...e, 0.011));
+      // cooling-fin array down the spine
+      if (Math.abs(x) < 0.06 && z < -0.24 && y > 1.15 && y < 1.43) {
+        for (let k = 0; k < 7; k++) d = Math.min(d, sdRoundBox(x, y, z, [0, 1.19 + k * 0.032, -0.272], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.046, 0.0045, 0.016, 0.003));
       }
+      d = Math.min(d, nozzles(x, y, z));
       return d;
     };
     pieces.push({
       name: 'jetpack', bone: B.chest, f, bounds: [-0.2, 1.02, -0.3, 0.2, 1.5, 0.13], h: 0.0068,
-      color: () => ivory, mat: () => [0.31, 0.0],
+      color: (x, y) => (Math.abs(x) > 0.1 && y > 1.205 && y < 1.228 ? PALETTE.signal : y < 1.122 && Math.abs(x) > 0.08 ? HEAT : ivory),
+      mat: (x, y) => (y < 1.122 && Math.abs(x) > 0.08 ? [0.28, 0.85] : [0.31, 0.0]),
       split: (x, y, z) => -Math.max(z + 0.15, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.12 - y, Math.abs(x) - 0.098),
       line: (x, y, z) => {
         if (Math.abs(x) < 0.032 && z < -0.26 && y > 1.18 && y < 1.42) return Math.abs(x) - 0.006; // spine light
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth
         if (Math.abs(x) > 0.1 && z < -0.24 && y < 1.19) return y - 1.17; // pod vent band
-        if (Math.abs(x) > 0.1 && y > 1.2 && y < 1.355) { // outer-back light strip on each pod
-          const dx = Math.abs(x) - 0.128, dz = z + 0.21;
-          if (dx * dx + dz * dz > 0.03 * 0.03) return (Math.atan2(-dz, dx) - 0.75) * 0.043;
-        }
         return FAR;
       },
       seam: (x, y, z) => {
         if (Math.abs(x) > 0.1) return Math.min(Math.abs(y - 1.36), Math.abs(y - 1.195));
         return z < -0.15 ? Math.min(Math.abs(y - 1.215), Math.abs(y - 1.39)) : FAR;
       },
+    });
+  }
+
+  // ---- gauntlets: articulated glove (four curled fingers + thumb), knuckle guard ---------
+  for (const [S, s] of [['L', 1], ['R', -1]]) {
+    const wr = J['hand' + S], dA = J['dA' + S];
+    const palmN = norm([-s * Math.cos(spec.beta), -Math.sin(spec.beta), 0]);
+    const wAx = norm(sub([0, 0, 1], mul(dA, dot([0, 0, 1], dA))));
+    const nAx = norm(cross(wAx, dA));
+    const pn = dot(nAx, palmN) < 0 ? mul(nAx, -1) : nAx;
+    const palmC = add(wr, mul(dA, 0.047));
+    const caps = []; // [a, b, r]
+    const K = add(add(wr, mul(dA, 0.086)), mul(pn, 0.003));
+    const FING = [
+      [0.026, [0.036, 0.024, 0.02], [0.28, 0.48, 0.4], 1.0],
+      [0.0085, [0.04, 0.027, 0.021], [0.36, 0.56, 0.44], 1.03],
+      [-0.009, [0.037, 0.025, 0.02], [0.44, 0.62, 0.46], 0.98],
+      [-0.025, [0.03, 0.02, 0.017], [0.52, 0.68, 0.5], 0.88],
+    ];
+    for (const [off, L, C, rs] of FING) {
+      let p0 = add(K, mul(wAx, off));
+      let ang = 0;
+      for (let k = 0; k < 3; k++) {
+        ang += C[k];
+        const dir = norm(add(add(mul(dA, Math.cos(ang)), mul(pn, Math.sin(ang))), mul(wAx, off * 0.25)));
+        const p1 = add(p0, mul(dir, L[k]));
+        caps.push([p0, p1, [0.0094, 0.0086, 0.0078][k] * rs]);
+        p0 = p1;
+      }
+    }
+    {
+      const t0 = add(add(add(wr, mul(dA, 0.02)), mul(wAx, 0.024)), mul(pn, 0.012));
+      const d1 = norm(add(add(mul(dA, 0.5), mul(wAx, 0.55)), mul(pn, 0.66)));
+      const t1 = add(t0, mul(d1, 0.036));
+      const d2 = norm(add(add(mul(dA, 0.75), mul(wAx, 0.15)), mul(pn, 0.62)));
+      const t2 = add(t1, mul(d2, 0.03));
+      caps.push([t0, t1, 0.0112], [t1, t2, 0.0098]);
+    }
+    const knA = add(add(K, mul(wAx, 0.03)), mul(pn, -0.009)), knB = add(add(K, mul(wAx, -0.03)), mul(pn, -0.009));
+    const hc = add(wr, mul(dA, 0.07));
+    const f = (x, y, z) => {
+      const far = Math.hypot(x - hc[0], y - hc[1], z - hc[2]) - 0.115;
+      if (far > 0.012) return far;
+      let d = sdRoundBox(x, y, z, palmC, wAx, dA, pn, 0.038, 0.044, 0.016, 0.011);
+      for (const [a, b, r] of caps) d = smin(d, sdCapsule(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2], r), 0.005);
+      // glove cuff + armoured knuckle ridge
+      d = smin(d, sdRoundCone(x, y, z, ...add(wr, mul(dA, -0.03)), ...add(wr, mul(dA, 0.02)), 0.037, 0.034), 0.01);
+      d = Math.min(d, sdCapsule(x, y, z, ...knA, ...knB, 0.0075));
+      return d;
+    };
+    const ends = [wr, add(wr, mul(dA, 0.2))];
+    const lo = [0, 1, 2].map((k) => Math.min(ends[0][k], ends[1][k]) - 0.075), hi = [0, 1, 2].map((k) => Math.max(ends[0][k], ends[1][k]) + 0.075);
+    pieces.push({
+      name: 'gauntlet' + S, bone: B['hand' + S], f, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0037,
+      color: (x, y, z) => (dot(sub([x, y, z], K), pn) < -0.006 && dot(sub([x, y, z], wr), dA) < 0.1 && dot(sub([x, y, z], wr), dA) > 0.03 ? PALETTE.gunmetal : PALETTE.glove),
+      mat: (x, y, z) => (dot(sub([x, y, z], K), pn) < -0.006 && dot(sub([x, y, z], wr), dA) < 0.1 ? [0.42, 0.55] : [0.66, 0]),
+      line: () => FAR,
+      seam: (x, y, z) => dot(sub([x, y, z], wr), dA) - 0.024,
+    });
+  }
+
+  // ---- harness: webbing straps over the shoulders + sternum strap with a buckle --------
+  {
+    const chestBase = (x, y, z) => smin(sdEllipsoid(x, y, z, 0, 1.305, -0.012, 0.178, 0.152, 0.116),
+      smin(sdEllipsoid(x, y, z, 0.078, 1.346, 0.052, 0.086, 0.064, 0.052), sdEllipsoid(x, y, z, -0.078, 1.346, 0.052, 0.086, 0.064, 0.052), 0.03), 0.04);
+    const OFF = 0.03;
+    const zOn = (x, y) => { let z0 = -0.05, z1 = 0.3; for (let k = 0; k < 40; k++) { const zm = (z0 + z1) / 2; if (chestBase(x, y, zm) - OFF < 0) z0 = zm; else z1 = zm; } return (z0 + z1) / 2; };
+    const SY = 1.372;
+    const buck = [0, SY, zOn(0, SY) + 0.004];
+    const straps = [1, -1].map((s) => {
+      const c = [s * 0.112, 1.44, zOn(s * 0.112, 1.44) - 0.002], e = [s * 0.104, SY, zOn(s * 0.104, SY) - 0.002];
+      const lo = [s * 0.098, 1.25, zOn(s * 0.098, 1.25) - 0.002];
+      return [[s * 0.1, 1.41, -0.15], [s * 0.12, 1.494, -0.05], c, e, lo];
+    });
+    const f = (x, y, z) => {
+      let d = FAR;
+      for (const P of straps) for (let k = 0; k + 1 < P.length; k++) {
+        const a = P[k], b = P[k + 1];
+        // flat webbing: a capsule squashed against the body normal
+        d = Math.min(d, sdCapsule(x, y, z, ...a, ...b, 0.0115));
+      }
+      // sternum strap conforms to the chest plate
+      const band = Math.max(Math.abs(chestBase(x, y, z) - OFF) - 0.0045, Math.abs(y - SY) - 0.0095);
+      d = Math.min(d, Math.max(band, Math.abs(x) - 0.106, -z));
+      d = Math.min(d, sdRoundBox(x, y, z, buck, [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.021, 0.016, 0.006, 0.004));
+      return d;
+    };
+    pieces.push({
+      name: 'harness', bone: B.chest, f, bounds: [-0.16, 1.22, -0.17, 0.16, 1.52, 0.2], h: 0.005,
+      color: (x, y, z) => (Math.abs(x) < 0.024 && Math.abs(y - SY) < 0.019 && z > buck[2] - 0.006 ? PALETTE.gunmetal : PALETTE.webbing),
+      mat: (x, y, z) => (Math.abs(x) < 0.024 && Math.abs(y - SY) < 0.019 && z > buck[2] - 0.006 ? [0.3, 0.8] : [0.82, 0]),
+      line: (x, y, z) => (Math.abs(x) < 0.024 && z > buck[2] + 0.004 ? Math.hypot(x, y - SY) - 0.005 : FAR),
+      seam: () => FAR,
+    });
+  }
+
+  // ---- thigh pouch (right leg) hanging off the belt -----------------------------------------
+  {
+    const hp = J.thighR, kn = J.shinR;
+    const ax = norm(sub(kn, hp));
+    const Pt = lerp3(hp, kn, 0.4);
+    const out = [-1, 0, 0];
+    const c = add(add(Pt, mul(out, 0.13)), [0, 0, 0.004]);
+    const flapC = add(add(c, mul(ax, -0.034)), mul(out, 0.004));
+    const strapA = [-0.15, 0.985, 0.012], strapB = add(c, mul(ax, -0.05));
+    const f = (x, y, z) => {
+      let d = sdRoundBox(x, y, z, c, [0, 0, 1], ax, out, 0.042, 0.054, 0.02, 0.011);
+      d = smin(d, sdRoundBox(x, y, z, flapC, [0, 0, 1], ax, out, 0.045, 0.026, 0.021, 0.008), 0.003);
+      d = Math.min(d, sdCapsule(x, y, z, ...strapA, ...strapB, 0.006));
+      return d;
+    };
+    pieces.push({
+      name: 'pouch', bone: B.thighR, f, bounds: [c[0] - 0.08, c[1] - 0.09, c[2] - 0.08, c[0] + 0.08, 1.0, c[2] + 0.08], h: 0.004,
+      color: () => PALETTE.canvas, mat: () => [0.86, 0], line: () => FAR,
+      seam: (x, y, z) => dot(sub([x, y, z], flapC), ax) - 0.024,
+    });
+  }
+
+  // ---- corrugated hose: pack → collar (life support) -------------------------------------------
+  {
+    const P0 = [0.135, 1.405, -0.2], P1 = [0.2, 1.53, -0.14], P2 = [0.08, 1.5, -0.075];
+    const pts = [];
+    const NS = 14;
+    for (let i = 0; i <= NS; i++) { const t = i / NS, u = 1 - t; pts.push([0, 1, 2].map((k) => u * u * P0[k] + 2 * u * t * P1[k] + t * t * P2[k])); }
+    const segLen = pts.slice(1).map((p, i) => len(sub(p, pts[i])));
+    const hcen = mul(add(add(P0, P1), P2), 1 / 3);
+    const f = (x, y, z) => {
+      const far = Math.hypot(x - hcen[0], y - hcen[1], z - hcen[2]) - 0.11;
+      if (far > 0.01) return far;
+      let d = FAR, acc = 0;
+      for (let i = 0; i < NS; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const ba = sub(b, a), pa = [x - a[0], y - a[1], z - a[2]];
+        const h = clamp(dot(pa, ba) / dot(ba, ba), 0, 1);
+        const q = sub(pa, mul(ba, h));
+        const sArc = acc + h * segLen[i];
+        const r = 0.0098 + 0.0013 * Math.sin(sArc * 2 * Math.PI / 0.011);
+        d = Math.min(d, len(q) - r);
+        acc += segLen[i];
+      }
+      return d;
+    };
+    pieces.push({
+      name: 'hose', bone: B.chest, f, bounds: [0.05, 1.37, -0.23, 0.23, 1.56, -0.04], h: 0.0034,
+      color: () => PALETTE.graphite, mat: () => [0.55, 0.15], line: () => FAR, seam: () => FAR,
     });
   }
 
@@ -734,8 +883,8 @@ export function buildExplorerData(quality = 2) {
       const nx = m.normals[v * 3], ny = m.normals[v * 3 + 1], nz = m.normals[v * 3 + 2];
       merged.normals.push(nx, ny, nz);
       merged.skinIndex.push(pc.bone);
-      const c = pc.color(x, y, z);
-      merged.colors.push(c[0], c[1], c[2]);
+      const c = pc.color(x, y, z), jt = pc.jitter;
+      merged.colors.push(c[0] * jt[0], c[1] * jt[1], c[2] * jt[2]);
       const rm = pc.mat(x, y, z);
       merged.mat.push(rm[0], rm[1], clamp(pc.line(x, y, z), -1, 1), clamp(pc.seam(x, y, z), -1, 1));
       merged.ao.push(sdfAO(unionAO, x, y, z, nx, ny, nz, 0.01, 5, 0.9));
@@ -747,6 +896,9 @@ export function buildExplorerData(quality = 2) {
     }
     for (let i = 0; i < m.indices.length; i++) merged.indices.push(m.indices[i] + base);
   };
+  P.pieces.forEach((pc, i) => { // ±3% per-plate paint variation (batches, fading, repairs)
+    pc.jitter = [1 + 0.03 * Math.sin(i * 12.9898), 1 + 0.022 * Math.sin(i * 7.13 + 1), 1 + 0.035 * Math.sin(i * 3.31 + 2)];
+  });
   for (const pc of P.pieces) {
     const b = pc.bounds;
     const m = meshSDF(pc.f, b, pc.h * hs, { project: 3 });
@@ -866,8 +1018,8 @@ function visorUV(theta, rho) {
   return [u, v];
 }
 function visorPoint(f, u, v, out) {
-  const x = u * 0.104 * (1 - Math.max(0, -v) * 0.14);
-  const y = 1.668 - 0.9 * x * x + v * 0.044;
+  const x = u * 0.11 * (1 - Math.max(0, -v) * 0.16);
+  const y = 1.665 - 0.85 * x * x + v * 0.052;
   let z0 = 0.0, z1 = 0.26;
   for (let k = 0; k < 40; k++) { const zm = (z0 + z1) * 0.5; if (f(x, y, zm) < 0) z0 = zm; else z1 = zm; }
   const z = (z0 + z1) * 0.5, e = 0.0008;

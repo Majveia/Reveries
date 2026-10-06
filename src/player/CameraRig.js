@@ -135,7 +135,7 @@ export class CameraRig {
       cam.near = 0.05;
     } else {
       // pivot: shoulder point with spring lag
-      const pivot = this.pivot.copy(p.pos).addScaledVector(up, this.pivotHeight).addScaledVector(this.right, this.shoulder * (1 - portrait * 0.6) * (this.curDist / 3.6) ** 0.5);
+      const pivot = this.pivot.copy(p.pos).addScaledVector(up, this.pivotHeight + portrait * 0.15).addScaledVector(this.right, this.shoulder * (1 - portrait * 0.8) * (this.curDist / 3.6) ** 0.5);
       if (!this.initialized || this.smoothPivot.distanceToSquared(pivot) > 400) { this.smoothPivot.copy(pivot); this.pivotVel.set(0, 0, 0); this.initialized = true; }
       if (p.freeze) { this.smoothPivot.copy(pivot); this.pivotVel.set(0, 0, 0); }
       else {

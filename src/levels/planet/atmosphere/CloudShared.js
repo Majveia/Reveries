@@ -97,16 +97,19 @@ void main(){
   // domain warp → swirls, fronts and cyclones
   vec3 w = vec3(fbm(p * 0.8 + 1.7, 3), fbm(p * 0.8 + 9.2, 3), fbm(p * 0.8 - 4.4, 3));
   vec3 q = p + w * 1.25;
+  // band-limited well below the texel Nyquist: magnified from the ground a texel
+  // spans hundreds of metres, so any near-Nyquist content turns into stair-stepped
+  // "voxel" clouds. Kilometre-scale cell structure comes from the 3D noise instead.
   float big = fbm(q * 0.9, 4);
-  float mid = fbm(q * 2.6 + 3.0, 4);
-  float fine = fbm(q * 7.0 - 2.0, 3);
+  float mid = fbm(q * 2.6 + 3.0, 3);
+  float fine = fbm(q * 4.2 - 2.0, 2);
   float lat = d.y;
   // latitude climate: wet equator, dry subtropics, stormy mid-latitudes
   float climate = 0.55 * exp(-lat * lat / 0.012) - 0.45 * exp(-pow(abs(lat) - 0.45, 2.0) / 0.015) + 0.35 * exp(-pow(abs(lat) - 0.75, 2.0) / 0.02);
   float c = big * 0.85 + mid * 0.45 + fine * 0.18 + climate * uBands + (uCoverage - 0.5) * 1.6;
-  float cov = smoothstep(-0.08, 0.55, c);
+  float cov = smoothstep(-0.25, 0.75, c);
   // cell clusters: break the field into separate cumulus families
-  float cells = smoothstep(-0.25, 0.45, mid * 0.8 + fine * 0.6 + 0.1);
+  float cells = smoothstep(-0.45, 0.6, mid * 0.8 + fine * 0.5 + 0.1);
   cov *= mix(1.0, cells, 0.55 * (1.0 - uWet));
   float type = clamp(uType + 0.35 * mid + 0.4 * max(c - 0.4, 0.0) + 0.2 * climate, 0.0, 1.0);
   float wet = clamp(uWet * smoothstep(0.35, 0.9, c) + 0.6 * max(c - 0.7, 0.0), 0.0, 1.0);
@@ -198,6 +201,9 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   float base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * prof;
   // anvil-ish spread at the top of tall clouds; coverage threshold softened so cells are rounded families
   float cov = smoothstep(0.0, 1.0, wx.r) * mix(1.0, 1.0 + 0.6 * smoothstep(0.6, 1.0, h), wx.g);
+  // kilometre-scale cumulus families: Worley cells (1.75 km / 0.9 km) modulate the
+  // smooth coverage, so cloud outlines come from filtered 3D noise, not weather texels
+  cov = clamp(cov * (0.55 + 0.75 * smoothstep(0.25, 0.85, n.g * 0.7 + n.b * 0.3)), 0.0, 1.0);
   float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
   if (c <= 0.0) return 0.0;
   if (lod < 0.5) {
@@ -261,7 +267,7 @@ export class CloudResources {
     this.shapeSize = this.engine.shotMode ? 96 : q.pick(64, 96, 128, 128);
     this.perlinOct = this.engine.shotMode ? 4 : q.pick(4, 5, 6, 6);
     this.detailSize = 32;
-    this.weatherSize = q.pick(128, 192, 256, 256);
+    this.weatherSize = this.engine.shotMode ? 384 : q.pick(192, 256, 384, 512);
     // software GL (SwiftShader / llvmpipe) → filter the noise volumes by hand
     let rname = '';
     try { const gl = this.engine.renderer.getContext(); const ext = gl.getExtension('WEBGL_debug_renderer_info'); rname = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER)); } catch (e) { /* ignore */ }

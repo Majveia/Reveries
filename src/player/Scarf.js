@@ -32,8 +32,9 @@ class Ribbon {
       if (q + 1 < cols) add(i, i + 1, 1);
       if (r + 1 < rows) add(i, i + cols, 1);
       if (r + 1 < rows && q + 1 < cols) { add(i, i + cols + 1, 0.6); add(i + 1, i + cols, 0.6); }
-      if (r + 2 < rows) add(i, i + 2 * cols, 0.12);
-      if (q + 2 < cols) add(i, i + 2, 0.3);
+      // soft bending: the cloth folds into travelling S-waves and curls across its width
+      if (r + 2 < rows) add(i, i + 2 * cols, 0.045);
+      if (q + 2 < cols) add(i, i + 2, 0.12);
     }
     this.con = new Float64Array(c);
     // rest lengths
@@ -55,8 +56,8 @@ export class Scarf {
   constructor(material, quality = 2) {
     const rows = [12, 16, 20, 22][quality] ?? 20;
     this.ribbons = [
-      new Ribbon(3, 5, rows, 1.45, 0.23),
-      new Ribbon(3, 4, Math.round(rows * 0.6), 0.9, 0.18),
+      new Ribbon(3, 7, rows + 2, 1.9, 0.27),
+      new Ribbon(3, 5, Math.round(rows * 0.65), 1.1, 0.2),
     ];
     this.object = new THREE.Group();
     this.object.name = 'explorer-scarf';
@@ -81,15 +82,16 @@ export class Scarf {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
-    const cl = new Float32Array(n * 3);
+    const cl = new Float32Array(n * 4);
     for (let r = 0; r < R; r++) for (let q = 0; q < C; q++) {
       const i = r * C + q;
       const along = (r / (R - 1)) * rb.length;
-      cl[i * 3] = q / (C - 1);
-      cl[i * 3 + 1] = along;
-      cl[i * 3 + 2] = 0.55 + 0.45 * Math.min(1, along / 0.35);
+      cl[i * 4] = q / (C - 1);
+      cl[i * 4 + 1] = along;
+      cl[i * 4 + 2] = 0.55 + 0.45 * Math.min(1, along / 0.35);
+      cl[i * 4 + 3] = r / (R - 1); // 0 at the knot, 1 at the frayed tip
     }
-    g.setAttribute('aCloth', new THREE.BufferAttribute(cl, 3));
+    g.setAttribute('aCloth', new THREE.BufferAttribute(cl, 4));
     const idx = [];
     for (let r = 0; r < R - 1; r++) for (let q = 0; q < C - 1; q++) {
       const a = r * C + q, b = a + 1, c = a + C, d = c + 1;

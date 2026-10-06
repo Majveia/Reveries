@@ -74,7 +74,7 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float cx = cloudLayer2D(P + e1 * eps, wx), cy = cloudLayer2D(P + e2 * eps, wx);
   vec3 nn = normalize(n - (e1 * (cx - c) + e2 * (cy - c)) * 2.4);
   float mu = abs(dot(rd, n));
-  float tau = pow(c, 1.5) * 22.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.22);
+  float tau = c * c * 18.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.22);
   float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.1, mu);
   float muS = dot(n, uKeyDir);
   vec3 Tl = transmittanceToLight(r + 600.0, muS);
@@ -98,7 +98,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   float depth = texture2D(tDepth, vUv).r;
   bool far = isFarDepth(depth, uRev);
   vec3 vp = viewPosFromDepth(vUv, far ? 0.5 : depth, uProjInv, uRev);
-  vec3 rd = normalize((uViewInv * vec4(vp, 1.0)).xyz - uCam);
+  vec3 rd = normalize(mat3(uViewInv) * vp); // rotation only: world-space subtraction at planet scale quantizes rd into blocks
   rdOut = rd;
   float sceneDist = far ? 1e12 : length(viewPosFromDepth(vUv, depth, uProjInv, uRev));
   vec3 ro = uCam;
@@ -304,7 +304,7 @@ export default class Clouds {
     const t0 = performance.now();
     this.res.init();
     this.res.bakeWeather({ seed: this.seed, ...this.preset });
-    if (this.engine.debug || this.engine.shotMode) { this.engine.renderer.getContext().finish(); console.warn('[clouds] bake ms', Math.round(performance.now() - t0)); }
+    if (this.engine.debug) { this.engine.renderer.getContext().finish(); console.warn('[clouds] bake ms', Math.round(performance.now() - t0)); }
     const m = this.model, r = this.res;
     this.uniforms = {
       ...m.uniforms,
@@ -361,8 +361,10 @@ export default class Clouds {
     u.uCloudRot.value.setFromMatrix4(_m4.makeRotationY(this._rot));
   }
 
-  _ensureTargets(W, H) {
-    const div = this.engine.quality.pick(4, 3, 2, 2);
+  _ensureTargets(W, H, orbit = false) {
+    // from orbit the layer is a single projected sample per pixel: render it at full
+    // resolution (no stair-stepped coastlines of cloud over the sharp planet)
+    const div = orbit ? 1 : this.engine.quality.pick(4, 3, 2, 2);
     const w = Math.max(1, Math.ceil(W / div)), h = Math.max(1, Math.ceil(H / div));
     if (this.rt && this.rt.width === w && this.rt.height === h) return;
     this.rt?.dispose(); this.rtPrev?.dispose();
@@ -374,7 +376,8 @@ export default class Clouds {
   /** Called by the atmosphere's pass chain. */
   render(renderer, input, output, ctx) {
     const L = this.level, m = this.model, light = L.lighting;
-    this._ensureTargets(ctx.width, ctx.height);
+    const altC = ctx.cameraPosition.length() - m.Rb;
+    this._ensureTargets(ctx.width, ctx.height, altC > this.topH * 2.4);
     const mu = this.marchMat.uniforms;
     mu.tDepth.value = ctx.depthTexture;
     mu.uFullRes.value.set(ctx.width, ctx.height);
@@ -406,7 +409,7 @@ export default class Clouds {
         const bio = /pandora|eywa|nausicaa/i.test(this.level.planet.aesthetic || '');
         this._glowTint = bio && glow ? new THREE.Color(glow) : new THREE.Color(1, 0.62, 0.3);
       }
-      const k = 0.0012 * this._cityGlow * light.night;
+      const k = 0.0005 * this._cityGlow * light.night;
       mu.uCityGlow.value.set(this._glowTint.r, this._glowTint.g, this._glowTint.b).multiplyScalar(k);
     }
     const q = this.engine.quality;

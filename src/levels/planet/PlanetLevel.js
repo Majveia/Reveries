@@ -313,6 +313,11 @@ export default class PlanetLevel {
         w.setTimeOfDay(0.7, spot.dir);
         if (!(await delegate('ship', spot))) free(spot.position, spot.lookAt);
       },
+      fauna: async () => { // wildlife frame (fauna subsystem composes it)
+        const spot = this.scenicSpot(0, 520, 2);
+        w.setTimeOfDay(0.3, spot.dir);
+        if (!(await delegate('fauna', spot))) free(spot.position.clone().addScaledVector(spot.dir, 1.6), spot.lookAt);
+      },
     };
     // Every preset starts from a clean slate: subsystems drop any camera /
     // vehicle / pose state a previous preset left behind (shotReset), so one

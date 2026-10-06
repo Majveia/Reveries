@@ -33,6 +33,7 @@ uniform vec3 uHoleDir, uCoreCol;
 uniform vec2 uRes;
 varying vec2 vUv;
 const float TAU = 6.2831853;
+float gW = 1.0;   // source-plane star width factor: lens compression never makes a star sub-pixel
 
 // analytic star layer evaluated in the BENT direction: lensed stars stay crisp points
 // (arcs only where the true lens map stretches them), Einstein-ring images included.
@@ -44,7 +45,7 @@ vec3 starLayer(vec3 dir, float scale, float dens, float pix){
   if (pick < 1.0 - dens) return vec3(0.0);
   vec3 sp = (cell + 0.5 + (hsh - 0.5) * 0.7) / scale;
   float ang = length(normalize(sp) - dir);
-  float w = pix * 0.75;
+  float w = pix * 0.75 * gW;
   float mag = pow(hash13(cell + 3.1), 6.0) * 6.0 + 0.15;
   vec3 c = blackbody(mix(3200.0, 14000.0, hsh.y * hsh.y));
   return c * mag * exp(-ang * ang / (w * w));
@@ -120,6 +121,8 @@ vec3 trace(vec2 uv){
   // alpha(s1→s2) = (Rs/b)·(s2/√(s2²+b²) − s1/√(s1²+b²))
   if (r0 > uRint && (b > uRint || tca < 0.0)) {
     float a = (1.0 / b) * (1.0 - sObs / sqrt(sObs * sObs + b * b));
+    float th = atan(b, max(tca, 1e-4)), k = min(a / max(th, 1e-4), 0.98);
+    gW = min(max(1.0 + k, 1.0 / max(1.0 - k, 0.02)) * 0.8, 5.0);
     return background(bend(v, toBH, a));
   }
   if (r0 > uRint) {
@@ -153,6 +156,7 @@ vec3 trace(vec2 uv){
     if (T < 0.01) break;
     if (length(p) > uRint * 1.02 && dot(p, v) > 0.0) break;
   }
+  gW = 2.5;
   if (!captured && T > 0.01) {
     // remaining deflection on the way out to infinity
     v = normalize(v);
@@ -193,7 +197,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 300 : q.pick(160, 220, 300, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.24 }, uTmax: { value: 6600 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.5 }, uTmax: { value: 5200 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

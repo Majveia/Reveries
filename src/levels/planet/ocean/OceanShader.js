@@ -36,6 +36,7 @@ uniform float uSwash;
 uniform float uWaveScale;
 
 uniform sampler2D tDetail;
+uniform sampler2D tFoam;
 uniform vec4 uSurf;          // breaker height (m), wavelength (m), angular speed (rad/s), on
 
 vec2 localUV(vec2 xz){ return (xz - uLocal.xy) * uLocal.z + 0.5; }
@@ -50,6 +51,13 @@ float terrainRel(vec3 dir, vec2 xz){
   float m = localMask(luv);
   if (m > 0.0) return mix(g, textureLod(tLocal, luv, 0.0).r, m);
   return g;
+}
+float shoreDist(vec2 xz, float depth){
+  vec2 luv = localUV(xz);
+  float m = localMask(luv);
+  float far = depth * 14.0;
+  if (m <= 0.0) return far;
+  return mix(far, textureLod(tLocal, luv, 0.0).g, m);
 }
 float shoalFactor(float depth){ return smoothstep(-0.4, 6.0, depth) * (0.55 + 0.45 * smoothstep(6.0, 40.0, depth)); }
 
@@ -90,7 +98,7 @@ float surf(vec2 xz, float depth, out vec4 o, out vec2 g){
   float dc = u - uc;
   o.x = A * dh / lam;
   float lip = exp(-dc * dc / 0.0012) * smoothstep(0.2, 0.75, br) * smoothstep(0.15, 0.6, A);
-  float white = br * (dc > 0.0 ? exp(-dc / 0.2) : exp(dc / 0.025) * smoothstep(0.6, 1.0, br));
+  float white = br * (dc > 0.0 ? exp(-dc / 0.12) : exp(dc / 0.025) * smoothstep(0.6, 1.0, br));
   o.y = lip; o.z = white * smoothstep(0.05, 0.4, A); o.w = br * step(0.05, A);
   return A * (h - 0.33);
 }
@@ -255,11 +263,24 @@ void main(){
   vec2 uv2 = (mat2(0.8, 0.6, -0.6, 0.8) * pw) / 2.9 + vec2(uDetail.w * 0.23, uDetail.w * 0.05);
   vec4 d1 = texture2D(tDetail, uv1);
   vec4 d2 = texture2D(tDetail, uv2);
-  float dk = uDetail.z * (0.35 + 0.65 * shoal);
+  // macro variation: wind gusts roughen patches ("cat's paws"), calm slicks
+  // stay glassy — breaks the tiling and gives the far sea its mottled sheen
+  float gust = texture2D(tDetail, vXZ / 1300.0 + vec2(uDetail.w * 0.0011, 0.37)).a * 0.6
+             + texture2D(tDetail, (mat2(0.6, -0.8, 0.8, 0.6) * vXZ) / 340.0 + vec2(0.71, uDetail.w * 0.0023)).a * 0.4;
+  float gk = smoothstep(0.28, 0.72, gust);
+  float dk = uDetail.z * (0.35 + 0.65 * shoal) * mix(0.45, 1.4, gk);
   vec2 ds = ((d1.rg * 2.0 - 1.0) * 0.55 + (d2.rg * 2.0 - 1.0) * 0.4) * dk;
   float dfade = smoothstep(0.6, 6.0, foot);
   var += dfade * 0.09 * dk * dk;
   ds *= 1.0 - dfade * 0.85;
+  // mid-scale chop (17 m, 43 m) rotated off the wind, slower and broader: no
+  // visible repetition once the capillary layers have faded
+  vec2 uv3 = (mat2(0.94, 0.34, -0.34, 0.94) * pw) / 17.0 + vec2(uDetail.w * 0.041, uDetail.w * 0.006);
+  vec2 uv4 = (mat2(0.82, -0.57, 0.57, 0.82) * pw) / 43.0 + vec2(uDetail.w * 0.024, -uDetail.w * 0.004);
+  vec2 dm = ((texture2D(tDetail, uv3).rg * 2.0 - 1.0) * 0.6 + (texture2D(tDetail, uv4).rg * 2.0 - 1.0) * 0.45) * dk * 0.75;
+  float mfade = smoothstep(3.0, 30.0, foot);
+  var += mfade * 0.06 * dk * dk;
+  ds += dm * (1.0 - mfade * 0.9);
   ds = ds * rw; // back to anchor-plane axes
 
 #ifdef LAVA
@@ -292,13 +313,18 @@ void main(){
   float w1 = mix(0.0, 0.1, smoothstep(0.25, 1.0, H)) * (0.4 + 1.2 * pl.g);
   float w2 = mix(0.0, 0.08, smoothstep(0.55, 1.0, H));
   float cB = 1.0 - plB.r / max(wB, 1e-4);   // 1 at the rift centre, 0 at its rim
-  float c1 = 1.0 - pl.r / max(w1, 1e-4);
-  float c2 = 1.0 - pl2.r / max(w2, 1e-4);
+  // closed cracks stay closed (an 8-bit edge distance of exactly 0 must not glow)
+  float c1 = w1 > 0.004 ? 1.0 - pl.r / w1 : -1.0;
+  float c2 = w2 > 0.004 ? 1.0 - pl2.r / w2 : -1.0;
   float core = max(max(cB, c1), c2 * 0.8);
   float molten = smoothstep(0.0, 0.25, core);
   // open pools: the crust breaks into small drifting rafts
-  float pool = smoothstep(0.78, 0.95, H + 0.12 * (plB.g - 0.5));
-  float raft = smoothstep(0.06, 0.13, pl2.r) * step(0.42, pl2.g) * (1.0 - smoothstep(0.9, 1.0, H));
+  float pool = smoothstep(0.86, 0.98, H + 0.1 * (plB.g - 0.5));
+  // rafts: whole crust plates (irregular, varied in size) adrift in the pools,
+  // their rims frayed by the churning melt
+  float rn = texture2D(tDetail, vXZ / 23.0 + 0.61).a - 0.5;
+  float raft = max(smoothstep(0.05, 0.16, pl.r + rn * 0.12) * step(0.3, pl.g),
+                   smoothstep(0.08, 0.2, pl2.r + rn * 0.1) * step(0.78, pl2.g)) * (1.0 - smoothstep(0.93, 1.0, H));
   molten = max(molten, pool * (1.0 - raft));
   // churning melt: flow-mapped turbulence with darker cooling skins
   vec2 fv = wdir * uLava.y * 2.0 + (vec2(texture2D(tDetail, vXZ / 600.0).a, texture2D(tDetail, vXZ / 600.0 + 0.5).a) - 0.5) * uLava.y * 4.0;
@@ -313,14 +339,15 @@ void main(){
   float cover = clamp(wB * 0.9 + w1 * 0.7 + w2 * 0.3 + pool * 0.8, 0.0, 1.0);
   molten = mix(molten, cover, aa);
   Tm = mix(Tm, mix(1080.0, 1300.0, H), aa);
-  float seam = exp(-abs(depth - 0.12) * 6.0) * (0.25 + 0.75 * smoothstep(0.3, 0.7, pl2.a)) * 0.7;
+  float sdl = shoreDist(vXZ, depth);
+  float seam = exp(-max(sdl, 0.0) / 2.2) * smoothstep(-1.0, 0.2, sdl) * (0.25 + 0.75 * smoothstep(0.3, 0.7, pl2.a)) * 0.7;
   float pulse = 0.88 + 0.12 * sin(uTime * 0.7 + pl.g * 40.0 + plB.g * 13.0);
   vec3 emis = lavaRad(Tm) * uLava.w * pulse * molten + lavaRad(1250.0) * uLava.w * seam * (1.0 - molten);
   // crust: residual heat glows near the cracks, stronger over hot regions
   float nearC = max(max(exp(-plB.r / max(wB * 2.2 + 0.015, 0.02)), exp(-pl.r / max(w1 * 2.5 + 0.01, 0.02)) * step(0.001, w1)), pool * 0.6);
   // fine crazing on the crust stays faintly incandescent (texture on the plates)
-  float craze = (1.0 - smoothstep(0.0, 0.05, pl2.r)) * (1.0 - aa);
-  float Tc = 560.0 + 380.0 * nearC * (0.3 + 0.7 * H) + 60.0 * H + craze * (150.0 + 200.0 * H);
+  float craze = (1.0 - smoothstep(0.0, 0.035, pl2.r)) * (1.0 - aa) * smoothstep(0.35, 0.75, texture2D(tDetail, vXZ / 47.0 + 0.23).a);
+  float Tc = 520.0 + 330.0 * nearC * nearC * (0.15 + 0.85 * H) + 60.0 * H + craze * (40.0 + 230.0 * H * H) * (0.4 + 0.6 * nearC);
   vec3 crustGlow = lavaRad(Tc) * uLava.w * (1.0 - aa * 0.5);
   // crust surface: domed basalt plates, glassy where freshly chilled, ashen where old
   vec2 e = vec2(0.004, 0.0);
@@ -348,6 +375,13 @@ void main(){
   col += lavaRad(1180.0) * uLava.w * (0.012 + 0.06 * hor) * Fr * mix(0.5, 1.0, glassy) * (0.4 + 0.6 * H + 0.4 * nearC);
   col += crustGlow;
   col = col * (1.0 - molten) + emis;
+#if ODBG == 1
+  col = vec3(molten, pool, seam);
+#elif ODBG == 2
+  col = vec3(H, nearC, craze);
+#elif ODBG == 3
+  col = vec3(crustGlow.r, emis.r * 0.1, Es.r);
+#endif
   gl_FragColor = vec4(col, 1.0);
   return;
 #else
@@ -397,12 +431,16 @@ void main(){
   float NLm = max(dot(N, uMoonDir), 0.0);
   spec += Em * ggxD(max(dot(N, Hm), 0.0), aS) * visSmith(NLm, NV, aS) * fresnel(dot(V, Hm), 0.02) * NLm;
   // glitter: sparse micro-facets catching the sun near the camera
-  if (uSparkle > 0.0 && dist < 400.0) {
-    vec2 cell = floor(vXZ * 5.0);
-    vec2 hh = hash22(cell + floor(uTime * 6.0 + hash12(cell) * 7.0));
-    vec3 Ng = normalize(N + (t1 * (hh.x - 0.5) + t2 * (hh.y - 0.5)) * 0.32);
-    float g = pow(max(dot(Ng, H), 0.0), 1800.0) * step(0.55, hash12(cell + 3.1));
-    spec += Es * g * 14.0 * uSparkle * (1.0 - smoothstep(60.0, 400.0, dist)) * smoothstep(0.0, 0.2, NL);
+  if (uSparkle > 0.0 && dist < 2500.0) {
+    // facets ~1.5 px wide at every distance (power-of-two cells keep them
+    // stable), tilted by a random micro-slope as wide as the filtered
+    // roughness: a dense twinkling glitter path under a low sun
+    float cs = exp2(floor(log2(max(0.2, foot * 1.6))));
+    vec2 cell = floor(vXZ / cs);
+    vec2 hh = hash22(cell + floor(uTime * 5.0 + hash12(cell) * 7.0));
+    vec3 Ng = normalize(N + (t1 * (hh.x - 0.5) + t2 * (hh.y - 0.5)) * (0.2 + rough));
+    float g = pow(max(dot(Ng, H), 0.0), 2600.0) * step(0.6, hash12(cell + 3.1));
+    spec += Es * g * 20.0 * uSparkle * (1.0 - smoothstep(900.0, 2500.0, dist)) * smoothstep(0.0, 0.2, NL);
   }
 
   // water body: upwelling light, crest SSS, depth absorption
@@ -415,7 +453,7 @@ void main(){
   float shallowMix = exp(-max(depth, 0.0) * 0.3);
   vec3 bodyAlb = mix(uDeep, uShallow, shallowMix);
   // surf zone: churned, sediment-milky turquoise
-  float turb = clamp(so.w * 0.7 + (1.0 - smoothstep(0.0, 3.5, depth)) * 0.25, 0.0, 1.0) * step(0.0, depth);
+  float turb = clamp(so.w * 0.55 + (1.0 - smoothstep(0.0, 1.5, depth)) * 0.2, 0.0, 1.0) * step(0.0, depth);
   bodyAlb = mix(bodyAlb, mix(uShallow * 1.6, uBed * 0.35, 0.35), turb * 0.6);
   vec3 body = bodyAlb * Ein / 3.14159 * (1.0 - Tr * 0.85);
   // subsurface scattering through backlit wave crests
@@ -437,25 +475,37 @@ void main(){
   // foam: Jacobian crests, surf lines, swash edge
   float fJ = smoothstep(uFoam, uFoam - 0.45, J);
   vec2 fuv = vXZ / 4.3 + vec2(uTime * 0.02, 0.0);
-  float ft = texture2D(tDetail, fuv).b;
+  float ft = texture2D(tFoam, fuv).r;
   float ft2 = texture2D(tDetail, vXZ / 13.0 - vec2(0.0, uTime * 0.012)).a;
-  float crestFoam = fJ * smoothstep(0.15, 0.55, ft * (0.6 + 0.8 * ft2));
-  float surfZone = 1.0 - smoothstep(0.6, 9.0, depth);
-  float ph = depth * 1.15 + uTime * 0.9 + ft2 * 3.0;
-  float band = pow(0.5 + 0.5 * sin(ph), 5.0) * surfZone * smoothstep(-0.6, 0.6, depth);
-  float wash = (1.0 - smoothstep(0.0, 0.9, abs(depth - 0.1))) * 0.9;
-  float shoreFoam = clamp((band * 1.2 + wash) * smoothstep(0.2, 0.75, ft + 0.15 * ft2) + wash * 0.35, 0.0, 1.0);
+  float crestFoam = fJ * smoothstep(0.15, 0.55, ft * (0.6 + 0.8 * ft2)) * mix(0.55, 1.3, gk);
+  // shore foam follows the distance to the waterline (m), not the depth: on a
+  // flat beach a depth band would smear foam over tens of metres
+  float sd = shoreDist(vXZ, depth);
+  float surfZone = 1.0 - smoothstep(6.0, 70.0, sd);
+  float ph = sd * 0.19 + uTime * 0.85 + ft2 * 3.0;
+  float band = pow(0.5 + 0.5 * sin(ph), 7.0) * surfZone * smoothstep(0.5, 4.0, sd) * 0.7;
+  float swEdge = 1.4 + 1.1 * sin(uTime * 0.42 + vXZ.x * 0.021 + vXZ.y * 0.013) + 0.8 * (ft2 - 0.5);
+  float wash = exp(-abs(sd - swEdge) / 0.7) * 0.9 + (1.0 - smoothstep(-0.3, swEdge, sd)) * 0.3;
+  float shoreFoam = clamp((band + wash) * smoothstep(0.28, 0.7, ft + 0.2 * ft2 - 0.05), 0.0, 1.0);
   // wind-blown streaks: crest foam smeared downwind
   float st = texture2D(tDetail, vec2(pw.x / 60.0 - uDetail.w * 0.004, pw.y / 5.5)).a;
   float streak = smoothstep(0.68, 0.86, st) * smoothstep(0.3, 0.7, ft) * 0.35 * smoothstep(0.85, 1.3, uWaveScale) * smoothstep(3.0, 20.0, depth);
   // breakers: a bright lip on the pitching crest, whitewater rolling behind it, lacy residue
   float lace = smoothstep(0.25, 0.75, ft * (0.55 + 0.9 * ft2));
-  float ft3 = texture2D(tDetail, vXZ / 2.1 + vec2(0.0, uTime * 0.05)).b;
-  float surfFoam = so.y * (0.75 + 0.25 * ft3) + so.z * smoothstep(0.1, 0.6, ft3 * 0.6 + ft * 0.6) + so.w * lace * 0.35;
+  float ft3 = texture2D(tFoam, vXZ / 2.1 + vec2(0.0, uTime * 0.05)).r;
+  float surfFoam = so.y * (0.6 + 0.4 * ft3) + so.z * smoothstep(0.35, 0.8, ft3 * 0.6 + ft * 0.6) + so.w * lace * 0.2;
   shoreFoam *= 1.0 - so.w * 0.5;
+  // residual foam left by broken waves: lacy sheets drifting in the surf zone
+  float resid = (1.0 - smoothstep(10.0, 140.0, sd)) * smoothstep(-0.5, 2.0, sd) * uSurf.w;
+  // thin veins of foam (ridges of warped noise) — the lace a spent breaker leaves
+  vec2 rw2 = vec2(texture2D(tDetail, vXZ / 37.0 + 0.13).a, texture2D(tDetail, vXZ / 37.0 + 0.57).a) - 0.5;
+  float vn1 = texture2D(tDetail, vXZ / 13.0 + rw2 * 0.35 + vec2(0.0, uTime * 0.004)).a;
+  float vn2 = texture2D(tDetail, vXZ / 5.3 + rw2 * 0.6 - vec2(uTime * 0.006, 0.0)).a;
+  float veins = pow(1.0 - abs(2.0 * vn1 - 1.0), 14.0) + 0.7 * pow(1.0 - abs(2.0 * vn2 - 1.0), 18.0);
+  shoreFoam += resid * clamp(veins, 0.0, 1.0) * smoothstep(0.15, 0.5, ft + 0.3 * ft2) * 0.85;
   float foam = clamp(crestFoam + shoreFoam + streak + surfFoam, 0.0, 1.0);
   foam *= 1.0 - smoothstep(0.5, 3.0, foot) * 0.6;
-  vec3 foamCol = vec3(0.86) * (Es * max(dot(n0, L), 0.0) * (0.6 + 0.4 * max(dot(N, L), 0.0)) + uSkyIrr * 1.1 + Em * 0.4) / 3.14159;
+  vec3 foamCol = vec3(0.86) * (Es * max(dot(n0, L), 0.0) * (0.6 + 0.4 * max(dot(N, L), 0.0)) + Es * back * 0.18 + uSkyIrr * 1.1 + Em * 0.4) / 3.14159;
 
   vec3 col = (body + sss + bedLight) * (1.0 - F) + sky * F + spec;
   float alpha = 1.0 - (1.0 - F) * Tl;
