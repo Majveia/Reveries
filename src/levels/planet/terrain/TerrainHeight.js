@@ -287,7 +287,8 @@ export function createTerrain(p) {
       const b = bw(wl);
       if (b <= 0) { s += a * 0.3 * w; norm += a; a *= gain; continue; }
       const v = n.n3d(x, y, z);
-      const kc = 0.0009 + 0.05 * (1 - (LS <= 0 ? 1 : smoothstep(5 * LS, 18 * LS, wl)));
+      // crease radius: crisp km-scale crests, rounded fine octaves (no 1 m knife fins / comb spikes)
+      const kc = 0.0009 + Math.min(0.08, (14 / wl) * (14 / wl)) + 0.05 * (1 - (LS <= 0 ? 1 : smoothstep(5 * LS, 18 * LS, wl)));
       const av = Math.sqrt(v * v + kc); // rounded crease (wider when under-sampled)
       let r = 1 - av; if (r < 0) r = 0;
       const r2 = sharp > 1 ? Math.pow(r, sharp) : r * r;
@@ -331,17 +332,31 @@ export function createTerrain(p) {
       gx += dx * b; gy += dy * b; gz += dz * b;
       const g2 = gx * gx + gy * gy + gz * gz;
       let o = v;
-      if (gully > 0 && i > 0 && g2 > 1e-8) {
-        // stripes perpendicular to the slope's contour → channels run downhill
+      // drainage gullies only on the coarse octaves (125–650 m spacing): finer
+      // octaves of the stripe field read as a man-made comb, not erosion
+      if (gully > 0 && i > 0 && i < 4 && g2 > 1e-8) {
+        // stripes perpendicular to the slope's contour → channels run downhill.
+        // Gabor-style: each lattice cell carries its own stripe phase measured
+        // from the cell centre, blended across the 2×2×2 neighbourhood → the
+        // phase never multiplies a large position by a varying direction (no
+        // chirped metre-scale combs), the stripe period stays ~0.8 octave units.
         const gl = 1 / Math.sqrt(g2);
-        const px = x * 2.6, py = y * 2.6, pz = z * 2.6;
-        // project the octave position onto the contour direction (⊥ gradient in the tangent plane)
         const tx = gy * uz - gz * uy, ty = gz * ux - gx * uz, tz = gx * uy - gy * ux;
-        // tangent in rotated octave space: C · t
-        const qx = c0 * tx + c1 * ty + c2 * tz, qy = c3 * tx + c4 * ty + c5 * tz, qz = c6 * tx + c7 * ty + c8 * tz;
-        const ph = (px * qx + py * qy + pz * qz) * gl * Math.PI;
+        const qx = (c0 * tx + c1 * ty + c2 * tz) * gl, qy = (c3 * tx + c4 * ty + c5 * tz) * gl, qz = (c6 * tx + c7 * ty + c8 * tz) * gl;
+        const px = x * 1.3, py = y * 1.3, pz = z * 1.3;
+        const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+        const fx = px - ix, fy = py - iy, fz = pz - iz;
+        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy), sz = fz * fz * (3 - 2 * fz);
+        let gs = 0;
+        for (let cc = 0; cc < 8; cc++) {
+          const ax = cc & 1, ay = (cc >> 1) & 1, az = cc >> 2;
+          const wgt = (ax ? sx : 1 - sx) * (ay ? sy : 1 - sy) * (az ? sz : 1 - sz);
+          if (wgt < 1e-4) continue;
+          const ph0 = n.hashU(ix + ax, iy + ay, iz + az, 5 + i) * 6.2832;
+          gs += wgt * Math.cos(((fx - ax) * qx + (fy - ay) * qy + (fz - az) * qz) * 2.0 * Math.PI + ph0);
+        }
         const steep = Math.min(1, Math.sqrt(g2) * 0.8);
-        o = lerp(v, -Math.abs(Math.cos(ph)) * 0.9 + 0.35, gully * steep);
+        o = lerp(v, -Math.abs(gs) * 0.9 + 0.35, gully * steep);
       }
       s += a * b * o / (1 + erosion * g2);
       norm += a; a *= gain; f *= lac; wl /= lac;
@@ -359,7 +374,7 @@ export function createTerrain(p) {
   // 3D jittered lattice restricted to [0.25,0.75] per axis; with feature radius
   // < 0.5 cell only the 2×2×2 nearest cells can touch a point → exact & cheap.
   // cb(dist, cellRandA, cellRandB, cellRandC) is folded with smooth max.
-  const CELL = { best: 0, id: 0, d: 0, ra: 0, rb: 0, rc: 0 };
+  const CELL = { best: 0, id: 0, d: 0, ra: 0, rb: 0, rc: 0, dx: 0, dy: 0, dz: 0, cx: 0, cy: 0, cz: 0 };
   function cells(n, X, Y, Z, size, salt, fn, acc) {
     const x = X / size, y = Y / size, z = Z / size;
     const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
@@ -372,6 +387,7 @@ export function createTerrain(p) {
       const dx = x - fx, dy = y - fy, dz = z - fz;
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 > 0.25) continue; // beyond 0.5 cells: no influence
+      CELL.dx = dx; CELL.dy = dy; CELL.dz = dz; CELL.cx = cx; CELL.cy = cy; CELL.cz = cz;
       v = fn(Math.sqrt(d2), n.hashU(cx, cy, cz, salt + 3), n.hashU(cx, cy, cz, salt + 4), n.hashU(cx, cy, cz, salt + 5), v);
     }
     return v;
@@ -384,7 +400,16 @@ export function createTerrain(p) {
     const wy = fbm(nW, x * 1.6 + o[3], y * 1.6 + o[4], z * 1.6 + o[5], 3);
     const wz = fbm(nW, x * 1.6 + o[6], y * 1.6 + o[7], z * 1.6 + o[8], 3);
     const k = 0.34;
-    return fbm(nC, (x + k * wx) * contFreq + o[9], (y + k * wy) * contFreq + o[10], (z + k * wz) * contFreq + o[11], 7, 2.0, 0.53);
+    // coast character varies by region: smooth sandy bights vs fractal fjord coasts
+    const cr = smoothstep(-0.35, 0.3, fbm(nW, x * 2.3 - o[2], y * 2.3 + o[0], z * 2.3 - o[1], 2));
+    let px = (x + k * wx) * contFreq + o[9], py = (y + k * wy) * contFreq + o[10], pz = (z + k * wz) * contFreq + o[11];
+    let s = 0, a = 1, norm = 0;
+    for (let i = 0; i < 7; i++) {
+      const wgt = i < 3 ? 1 : 0.3 + 0.7 * cr;
+      s += a * wgt * nC.n3(px, py, pz); norm += a; a *= 0.53;
+      px = px * 2 + 17.13; py = py * 2 - 9.71; pz = pz * 2 + 5.29;
+    }
+    return s / norm;
   }
   // Calibrate the coastline so the requested fraction of the planet is ocean.
   let contSea = 0, contLo = -0.5, contHi = 0.5;
@@ -497,7 +522,10 @@ export function createTerrain(p) {
     let temp = clim.temp0 - 0.62 * Math.pow(lat, 1.7) - (alt / rel) * 0.5 + tn * 0.07;
     temp = clamp01(temp);
     const mn = fbm(nK, x * 2.4 - 6.1, y * 2.4 + 3.3, z * 2.4 - 1.4, 3);
-    let moisture = clim.moist0 + mn * 0.32 + wet * 0.35 + (hasOcean ? 0.12 * (1 - smoothstep(0.0, 0.25, e)) : 0) - (alt / rel) * 0.15;
+    // Hadley circulation: a dry subtropical belt (~20–35°) where the continents are deep
+    const subtrop = Math.exp(-((lat - 0.45) * (lat - 0.45)) / 0.012) * smoothstep(0.15, 0.6, e);
+    let moisture = clim.moist0 + mn * 0.32 + wet * 0.35 + (hasOcean ? 0.12 * (1 - smoothstep(0.0, 0.25, e)) : 0) - (alt / rel) * 0.15
+      - subtrop * 0.32 * (0.5 + 0.5 * clim.moist0) - smoothstep(0.35, 0.9, e) * 0.12;
     if (style === 'dunes') moisture = clim.moist0 + mn * 0.05 + wet * 0.2;
     moisture = clamp01(moisture);
     let snow = smoothstep(0.24, 0.07, temp);
@@ -548,13 +576,13 @@ export function createTerrain(p) {
     const k = smoothstep(0.0, 0.1, e);
     // ---- eroded rolling hills (iq derivative fbm): soft crowns, gullied flanks ----
     const wq = fbmM(nW, X, Y, Z, 7000, 2, 2.0, 0.5, 3.1, 0, -2.2) * 0.9;
-    const hl = erodedFbm(nH, X / 2600 + wq, Y / 2600 - wq, Z / 2600 + wq * 0.5, x, y, z, 7, 2.0, 0.5, 0.9, 2600, 0.6);
-    const hillAmp = rel * 0.14 * (0.5 + 0.9 * mReg);
+    const hl = erodedFbm(nH, X / 2600 + wq, Y / 2600 - wq, Z / 2600 + wq * 0.5, x, y, z, 7, 2.0, 0.5, 1.15, 2600, 0.7);
+    const hillAmp = rel * 0.17 * (0.5 + 0.9 * mReg);
     const hills = hillAmp * (0.5 + 0.5 * hl) * k;
     // knolls & swales
     const kn = fbmM(nH, X, Y, Z, 420, 3, 2.0, 0.5, 5.5, -1.1, 0) * rel * 0.008 * k;
     // ---- escarpments: hill country stepped into pale rock benches ----
-    const em = smoothstep(0.48, 0.7, fbmM(nS, X, Y, Z, 9000, 3, 2.0, 0.5, 1.7, -6.2, 2.4) * 0.5 + 0.5);
+    const em = smoothstep(0.44, 0.64, fbmM(nS, X, Y, Z, 9000, 3, 2.0, 0.5, 1.7, -6.2, 2.4) * 0.5 + 0.5);
     let ter = hills;
     let riser = 0;
     if (em > 0) {
@@ -572,12 +600,12 @@ export function createTerrain(p) {
     let mnt = 0;
     if (mm > 0) {
       const r = mountains(x, y, z, X, Y, Z, 8200, 8, 1.5, 2.0);
-      mnt = rel * 1.1 * mm * Math.pow(r, 1.3);
+      mnt = rel * 1.3 * mm * Math.pow(r, 1.3);
     }
     // great ranges: a second, broader massif layer along the arcs (layered depth)
     if (tect > 0.001) {
       const r2 = ridgedEroded(nH, X / 21000 - 4.4, Y / 21000 + 9.1, Z / 21000 + 2.6, x, y, z, 8, 2.1, 0.46, 2.4, 1.6, 21000);
-      mnt += rel * 0.95 * tect * Math.pow(r2, 1.6);
+      mnt += rel * 1.15 * tect * Math.pow(r2, 1.6);
     }
     // ---- tors / crags on crowns ----
     const tn = fbmM(nS, X, Y, Z, 380, 3, 2.0, 0.5, 2.2, 0, -1.3);
@@ -642,7 +670,8 @@ export function createTerrain(p) {
     // rocky shields / inselbergs: islands of rock in the sand sea (a few km across)
     const isl = fbmM(nM, X, Y, Z, 6500, 3, 2.0, 0.5, 3.3, -7.7, 1.9) * 0.5 + 0.5;
     const up = smoothstep(0.58, 0.72, isl + e * 0.15 + (mReg - 0.5) * 0.3);
-    let base = rel * (0.06 + 0.2 * smoothstep(-0.4, 0.8, e));
+    // draa: km-scale swells the dune field rides on (layered horizons)
+    let base = rel * (0.06 + 0.2 * smoothstep(-0.4, 0.8, e)) + rel * 0.07 * fbmM(nH, X, Y, Z, 3200, 3, 2.0, 0.5, -1.9, 3.3, 0.4);
     // rocky escarpments & buttes (isotropic: no axis-aligned fluting)
     let rockH = -1e9, riser = 0, rr = 0;
     if (up > 0.001) {
@@ -662,12 +691,16 @@ export function createTerrain(p) {
     const wA = fbmM(nS, X, Y, Z, 4200, 3, 2.0, 0.5, 1.3, -2.1, 0.7);
     const wB = fbmM(nS, X, Y, Z, 1300, 2, 2.0, 0.5, -3.3, 4.4, -1.1);
     const ampN = fbmM(nH, X, Y, Z, 6000, 3, 2.0, 0.5, 2.2, 0, -0.4) * 0.5 + 0.5;
-    const A1 = rel * 0.1 * (0.5 + 0.65 * ampN) * latFade;
+    // sinuous crests: a third, shorter warp bends the ridges into seif curves;
+    // amplitude modulation along the crest breaks them into barchanoid segments
+    const wC = fbmM(nW, X, Y, Z, 560, 2, 2.0, 0.5, 2.9, -0.3, 1.7);
+    const seg = smoothstep(-0.45, 0.35, fbmM(nH, X, Y, Z, 1100, 2, 2.0, 0.5, 7.1, -2.6, 3.9) + (ampN - 0.5) * 0.6);
+    const A1 = rel * 0.1 * (0.5 + 0.65 * ampN) * latFade * (0.35 + 0.65 * seg);
     // slip face at ~32° (tan ≈ 0.62) → brink phase from the dune height
     const fc = 1 - clamp(A1 / 0.62 / duneLambda, 0.12, 0.42);
-    const kc = 0.035 + clamp(LS / duneLambda * 3, 0, 0.3);
+    const kc = 0.009 + clamp(LS / duneLambda * 3, 0, 0.3); // knife-edge brink up close
     // primary transverse/draa ridges
-    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.35;
+    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.9 + wC * 0.22;
     const p1 = duneProfile(ph1 - Math.floor(ph1), fc, kc);
     const slip1 = DP.slip;
     // secondary oblique dunes (crossing pattern → star-like junctions where mReg is high)
@@ -692,7 +725,7 @@ export function createTerrain(p) {
       const exposed = smoothstep(-6, 10, rockH - sandH);
       // treads are draped in wind-blown sand sheets; bedrock shows on the
       // escarpment risers, the plateau rims and scattered outcrops
-      const outcrop = smoothstep(0.6, 0.78, fbmM(nD, X, Y, Z, 160, 2, 2.0, 0.5, 2.2, -1.4, 0.3) * 0.5 + 0.5 + rr * 0.25);
+      const outcrop = smoothstep(0.7, 0.84, fbmM(nD, X, Y, Z, 160, 2, 2.0, 0.5, 2.2, -1.4, 0.3) * 0.5 + 0.5 + rr * 0.2);
       const rim = 1 - smoothstep(0.0, 0.25, up);
       const rocky = exposed * clamp01(Math.max(riser * 1.5, outcrop, rim * 0.6));
       S.rock = rocky; S.sand = 1 - rocky;
@@ -702,7 +735,8 @@ export function createTerrain(p) {
     return out;
   }
 
-  const KT = { t: 1 };
+  const KT = { t: 1, tread: 0 };
+  const TW = { t: 1, tread: 0 };
   function styleKarst(x, y, z, X, Y, Z, e, h, land, mReg) {
     S.rock = 0; S.sand = 0; S.cliff = 0; S.ice = 0;
     if (land <= 0 && e < -0.12) return h;
@@ -721,45 +755,75 @@ export function createTerrain(p) {
     const dens = smoothstep(0.15, 0.42, dn + (mReg - 0.5) * 0.2) * (0.55 + 0.45 * smoothstep(0.02, 0.1, e)) * smoothstep(-0.02, 0.025, e);
     let towers = 0, towerRock = 0, wall = 0;
     if (dens > 0.001) {
-      // fluted outlines: the radius wobble lives on the sphere (no height term)
-      // → vertical karren runnels on every wall, 8–20 m period
-      // in metres, slope < 1 → the radial profile stays monotonic (no detached
-      // needle fragments where the wobble dips outside the wall)
-      const wobM = fbmM(nD, X, Y, Z, 60, 2, 2.0, 0.5, 0, 0, 0) * 5.0 + fbmM(nD, X, Y, Z, 16, 2, 2.0, 0.5, 1.7, 0, -2.1) * 1.0;
+      // Fengcong towers as stacked limestone tiers (setback bedding ledges that
+      // carry shrubs), lobed outlines (strong low-frequency domain warp), a
+      // sugarloaf / dome crown, a slight lean (upper tiers drift off-axis) and
+      // a dissolution moat at the foot. All in a height field → no overhangs,
+      // but the stepped silhouette reads as fractured bedded rock.
+      const lobe = fbmM(nW, X, Y, Z, 150, 2, 2.0, 0.5, 3.3, -1.7, 0.6); // [-1,1]
+      const wobM = fbmM(nD, X, Y, Z, 34, 2, 2.0, 0.5, 0, 0, 0) * 2.6 + fbmM(nD, X, Y, Z, 11, 2, 2.0, 0.5, 1.7, 0, -2.1) * 0.7;
       const crownN = fbmM(nD, X, Y, Z, 45, 2, 2.0, 0.5, -4.4, 2.2, 0);
-      KT.t = 1;
+      KT.t = 1; KT.tread = 0;
+      const tower = (cellSz, rad, Ht, nT, sr, sk, ra2) => {
+        // tangent lean vector (cells) from the cell's own hashes
+        let lx = (nK.hashU(CELL.cx, CELL.cy, CELL.cz, sk) - 0.5), ly = nK.hashU(CELL.cx, CELL.cy, CELL.cz, sk + 1) - 0.5, lz = nK.hashU(CELL.cx, CELL.cy, CELL.cz, sk + 2) - 0.5;
+        const ln = lx * x + ly * y + lz * z; lx -= ln * x; ly -= ln * y; lz -= ln * z;
+        const ll = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1, lean = rad * 0.28 * (0.3 + 0.7 * ra2) / ll;
+        lx *= lean; ly *= lean; lz *= lean;
+        const warp = (lobe * 0.3 * rad + wobM / cellSz) ; // cells
+        const ws0 = LS * 1.6 / (rad * cellSz);
+        let v = -1e9, tBest = 1, tread = 0, t0 = 1;
+        for (let i = 0; i < nT; i++) {
+          const f = i / Math.max(1, nT - 1); // 0 = base tier … 1 = crown tier
+          const hf = nT === 1 ? 1 : i === nT - 1 ? 1 : 0.34 + 0.5 * f + 0.12 * (sr - 0.5);
+          const rf = 1 - (0.42 + 0.12 * sr) * f; // setbacks
+          const ex = CELL.dx - lx * hf, ey = CELL.dy - ly * hf, ez = CELL.dz - lz * hf;
+          const d = Math.sqrt(ex * ex + ey * ey + ez * ez);
+          const t = (d + warp * (0.7 + 0.6 * f)) / (rad * rf);
+          if (i === 0) t0 = t;
+          if (t >= 1) continue;
+          const ws = Math.min(0.3, ws0 / rf);
+          const wl = 1 - smoothstep(0.78 - ws, 0.95, t);
+          let top;
+          if (i === nT - 1) {
+            // crown: dome / sugarloaf (per-tower exponent), crumpled by noise
+            const p = 1.8 + 3.0 * sr, cr = 0.18 + 0.3 * (1 - sr);
+            top = 1 - cr * Math.pow(Math.min(1, t / 0.8), p) + crownN * 0.04 * (1 - t);
+          } else top = 1 - 0.05 * t * t + crownN * 0.02;
+          const vi = Ht * hf * top * wl;
+          if (vi > v) { v = vi; tBest = t; tread = 1 - smoothstep(0.6, 0.8, t); }
+        }
+        // talus apron + dissolution moat at the foot
+        const apron = Ht * 0.06 * (1 - smoothstep(0.8, 1.0, t0)) - 10 * smoothstep(0.86, 1.0, t0) * (1 - smoothstep(1.0, 1.15, t0));
+        TW.t = tBest; TW.tread = tread;
+        return Math.max(v, apron);
+      };
       const bigC = 300, smallC = 120;
       const big = cells(nK, X, Y, Z, bigC, 11, (d, ra, rb, rc, acc) => {
         if (ra > 0.95 * dens - 0.03) return acc; // empty cell (lone towers where sparse)
-        const rad = 0.17 + 0.2 * rb; // in cells (< 0.5)
-        const t = (d + wobM / bigC) / rad;
-        if (t >= 1.0) return acc;
-        const Ht = (150 + 400 * rc * rc) * (0.6 + 0.4 * dens);
-        // flattish vegetated crown, near-vertical fluted walls, talus apron
-        const ws = Math.min(0.3, LS * 1.6 / (rad * bigC));
-        const top = 1 - 0.1 * t * t - 0.14 * t * t * t * t + crownN * 0.035 * (1 - t);
-        const wl = 1 - smoothstep(0.8 - ws, 0.97, t);
-        // dips below the blend width at the rim → smax hands back acc continuously
-        const v = Ht * top * wl + Ht * 0.05 * (1 - smoothstep(0.86, 1.0, t)) * (1 - wl) - 14 * smoothstep(0.9, 1.0, t);
-        if (v > acc) KT.t = Math.min(KT.t, t);
-        return smax(acc, v, 12);
+        const rad = 0.14 + 0.14 * rb; // in cells (< 0.5 incl. warp + lean)
+        if (d > rad * 1.8) return acc;
+        const Ht = (170 + 480 * rc * rc) * (0.6 + 0.4 * dens);
+        const sr = (rc * 7.31 + rb * 3.7) % 1;
+        const tv = tower(bigC, rad, Ht, Ht > 300 ? 3 : 2, sr, 211, (ra * 5.3) % 1);
+        if (tv > acc) { KT.t = Math.min(KT.t, TW.t); KT.tread = Math.max(KT.tread, TW.tread); }
+        return smax(acc, tv, 10);
       }, 0);
-      // slender needles / satellite pillars
+      // slender needles / satellite pillars (fused into clusters by smooth max)
       const small = cells(nK, X, Y, Z, smallC, 23, (d, ra, rb, rc, acc) => {
         if (ra > 0.6 * dens - 0.04) return acc;
-        const rad = 0.16 + 0.24 * rb;
-        const t = (d + wobM * 0.8 / smallC) / rad;
-        if (t >= 1.0) return acc;
-        const Ht = (50 + 190 * rc) * (0.4 + 0.6 * dens);
-        const ws = Math.min(0.3, LS * 1.6 / (rad * smallC));
-        const v = Ht * (1 - 0.18 * t * t + crownN * 0.04) * (1 - smoothstep(0.76 - ws, 0.97, t)) - 7 * smoothstep(0.9, 1.0, t);
-        if (v > acc) KT.t = Math.min(KT.t, t);
-        return smax(acc, v, 6);
+        const rad = 0.13 + 0.15 * rb;
+        if (d > rad * 1.8) return acc;
+        const Ht = (60 + 220 * rc) * (0.4 + 0.6 * dens);
+        const tv = tower(smallC, rad, Ht, 2, (rc * 5.77) % 1, 223, (ra * 3.1) % 1);
+        if (tv > acc) { KT.t = Math.min(KT.t, TW.t); KT.tread = Math.max(KT.tread, TW.tread); }
+        return smax(acc, tv, 6);
       }, 0);
-      towers = smax(big, small, 8);
-      // weathered horizontal bedding on the walls
-      towers = lerp(towers, terrace(towers, 9, 0.4), 0.22);
-      wall = smoothstep(0.5, 0.78, KT.t);
+      towers = smax(big, small, 10);
+      // weathered horizontal bedding on the walls (variable beds)
+      const bed = 8 + 5 * (fbmM(nS, X, Y, Z, 900, 1, 2.0, 0.5, 2.0, 0, 0) * 0.5 + 0.5);
+      towers = lerp(towers, terrace(towers + crownN * 2.0, bed, 0.55), 0.38);
+      wall = smoothstep(0.55, 0.78, KT.t) * (1 - KT.tread * 0.8);
       towerRock = smoothstep(6, 30, towers);
     }
     const out = base + mnt + towers;

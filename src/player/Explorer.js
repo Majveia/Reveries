@@ -51,15 +51,15 @@ export const PALETTE = {
   ivory: lin('#e3d9c4'),
   signal: lin('#c4632a'),
   webbing: lin('#302f2b'),
-  canvas: lin('#4d4936'),
+  canvas: lin('#6f6550'),
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#4a515d'),
-  suitDark: lin('#2c3139'),
+  suit: lin('#746c5c'),
+  suitDark: lin('#403c35'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
-  scarf: lin('#a3202a'),
+  scarf: lin('#7f1d22'),
   accent: new THREE.Color('#62f0ff'),
   glyph: new THREE.Color('#ffc865'),
 };
@@ -76,8 +76,8 @@ export function skeletonSpec() {
   J.head = [0, 1.588, -0.006];
   const beta = THREE.MathUtils.degToRad(40); // arm angle from vertical in the A-pose
   for (const [S, s] of [['L', 1], ['R', -1]]) {
-    J['clav' + S] = [s * 0.028, 1.43, -0.016];
-    const sh = [s * 0.192, 1.428, -0.03];
+    J['clav' + S] = [s * 0.03, 1.43, -0.016];
+    const sh = [s * 0.203, 1.428, -0.03];
     J['upperArm' + S] = sh;
     const dA = norm([s * Math.sin(beta), -Math.cos(beta), 0.035]);
     J['dA' + S] = dA;
@@ -211,7 +211,7 @@ function makeBody(spec) {
     });
 
     const hp = J['thigh' + S], kn = J['shin' + S], an = J['foot' + S];
-    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.1, 0.063));
+    const thigh = P('thigh' + S, (x, y, z) => sdRoundCone(x, y, z, hp[0], hp[1], hp[2], kn[0], kn[1], kn[2], 0.105, 0.065));
     const qc = add(lerp3(hp, kn, 0.4), [s * 0.004, 0, 0.02]);
     const quad = P('thigh' + S, (x, y, z) => sdEllipsoid(x, y, z, qc[0], qc[1], qc[2], 0.079, 0.14, 0.076));
     const knee = P('shin' + S, (x, y, z) => sdSphere(x, y, z, kn[0], kn[1], kn[2] + 0.002, 0.046), { bone2: B['thigh' + S] });
@@ -287,7 +287,7 @@ function makePieces(spec, body) {
       name: 'chestPlate', bone: B.chest, f, bounds: [-0.22, 1.12, -0.08, 0.22, 1.48, 0.15], h: 0.0065,
       color: (x, y, z) => (x < -0.07 && x > -0.13 && y > 1.372 && y < 1.394 && z > 0.04 ? PALETTE.signal : ivory),
       mat: () => [0.34, 0.0], split: (x, y) => y - 1.19,
-      line: (x, y, z) => (y < 1.205 ? y - 1.171 : FAR),
+      line: (x, y, z) => (x < -0.08 && x > -0.14 && y > 1.36 && y < 1.41 && z > 0.03 ? Math.hypot(x + 0.11, y - 1.383) - 0.007 : FAR), // chest status light
       seam: (x, y, z) => (y > 1.2 ? (Math.abs(x) < 0.09 ? x : (Math.abs(x) - 0.135)) : FAR),
     });
   }
@@ -340,9 +340,9 @@ function makePieces(spec, body) {
     const sh = J['upperArm' + S], el = J['foreArm' + S], wr = J['hand' + S], dA = J['dA' + S];
     // ---- pauldron ---------------------------------------------------------------------
     {
-      const c = add(sh, [s * 0.018, 0.022, -0.004]);
+      const c = add(sh, [s * 0.026, 0.03, -0.006]);
       const out = norm([s * 1, 0.25, 0]);
-      const big = s > 0 ? 1.1 : 1.0;
+      const big = s > 0 ? 1.3 : 1.2;
       const f = (x, y, z) => {
         const p = [x, y, z];
         const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.079 * big, 0.072 * big, 0.083 * big), 0.012, 0.015);
@@ -366,7 +366,7 @@ function makePieces(spec, body) {
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
         color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return s > 0 && t > 0.036 && t < 0.056 ? PALETTE.signal : ivory; },
         mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
-        line: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return t < 0.05 ? t - 0.03 : FAR; },
+        line: () => FAR,
         seam: () => FAR,
       });
     }
@@ -403,10 +403,8 @@ function makePieces(spec, body) {
             const q = sub(p, cc);
             if (dot(q, out) > 0.004 && Math.abs(dot(q, dA)) < 0.03) return Math.max(Math.abs(dot(q, dA)) - 0.022, Math.abs(dot(q, norm(cross(dA, out)))) - 0.014);
           }
-          if (t < 0.06 || t > 0.215) return FAR;
-          const rel = sub(sub(p, el), mul(dA, t));
-          const zA = norm(cross(dA, out));
-          return dot(rel, zA) * 1.0; // stripe along the outer ridge
+          void t;
+          return FAR;
         },
         seam: (x, y, z) => dot(sub([x, y, z], el), dA) - 0.13,
       });
@@ -430,10 +428,8 @@ function makePieces(spec, body) {
         color: () => ivory, mat: () => [0.3, 0],
         line: (x, y, z) => {
           const p = [x, y, z], t = dot(sub(p, hp), ax);
-          if (t < 0.12 || t > 0.3) return FAR;
-          const rel = sub(sub(p, hp), mul(ax, t));
-          const a = Math.atan2(rel[0] * s, rel[2]);
-          return (a - 1.3) * 0.09; // vertical stripe on the outer side
+          void t;
+          return FAR;
         },
         seam: (x, y, z) => dot(sub([x, y, z], hp), ax) - 0.2,
       });
@@ -460,9 +456,8 @@ function makePieces(spec, body) {
         color: () => ivory, mat: () => [0.33, 0], split: (x, y) => (kn[1] - 0.075) - y,
         line: (x, y, z) => {
           const p = [x, y, z], t = dot(sub(p, kn), ax);
-          if (t < 0.1 || t > 0.32) return FAR;
-          const rel = sub(sub(p, kn), mul(ax, t));
-          return Math.atan2(rel[0] * s, rel[2]) * 0.05 - 0.004; // front centre stripe
+          void t;
+          return FAR;
         },
         seam: (x, y, z) => dot(sub([x, y, z], kn), ax) - 0.21,
       });
@@ -484,7 +479,7 @@ function makePieces(spec, body) {
       pieces.push({
         name: 'boot' + S, bone: B['foot' + S], f, bounds: [fx - 0.08, 0.0, -0.11, fx + 0.08, 0.17, 0.13], h: 0.0062,
         color: () => ivory, mat: () => [0.36, 0], split: (x, y) => y - 0.05,
-        line: (x, y, z) => (z < -0.06 ? y - 0.075 : FAR), seam: (x, y, z) => z - 0.02,
+        line: () => FAR, seam: (x, y, z) => z - 0.02,
       });
       const toeF = (x, y, z) => {
         const d = shell(sdEllipsoid(x, y, z, fx, 0.031, 0.145, 0.045, 0.031, 0.052), 0.004, 0.008);
@@ -497,10 +492,62 @@ function makePieces(spec, body) {
     }
   }
 
+  // ---- abdominal plate: segmented lames bridging the cuirass and the belt -------------------
+  {
+    const ab = (x, y, z) => sdRoundCone(x, y, (z + 0.004) / 0.84 - 0.004, 0, 1.0, 0.0, 0, 1.19, -0.004, 0.122, 0.13) * 0.84;
+    const f = (x, y, z) => {
+      const d = shell(ab(x, y, z), 0.014, 0.012);
+      let region = Math.max(1.03 - y, y - 1.165);
+      region = Math.max(region, Math.abs(x) - (0.098 + (y - 1.03) * 0.22));
+      region = Math.max(region, 0.0 - z);
+      // two stepped grooves between the lames
+      const g = Math.min(Math.abs(y - 1.074), Math.abs(y - 1.119)) - 0.0035;
+      return smax(smax(d, region, 0.007), -g, 0.003);
+    };
+    pieces.push({
+      name: 'abdomen', bone: B.spine, f, bounds: [-0.16, 1.0, -0.02, 0.16, 1.19, 0.17], h: 0.006,
+      color: () => PALETTE.ivoryWarm, mat: () => [0.34, 0], line: () => FAR,
+      seam: (x, y) => Math.abs(y - 1.0965) - 0.0225,
+    });
+  }
+  // ---- canvas tassets: padded soft over-layer hanging from the belt over hips and rear ------
+  for (const [S, s] of [['L', 1], ['R', -1]]) {
+    const hp = J['thigh' + S], kn = J['shin' + S];
+    const ax = norm(sub(kn, hp));
+    const gl = [s * 0.07, 0.905, -0.052];
+    const f = (x, y, z) => {
+      const p = [x, y, z];
+      const base = smin(sdRoundCone(x, y, z, hp[0], hp[1] + 0.06, hp[2], kn[0], kn[1], kn[2], 0.108, 0.066),
+        sdEllipsoid(x, y, z, gl[0], gl[1], gl[2], 0.09, 0.092, 0.082), 0.04);
+      const d = shell(base, 0.03, 0.008);
+      const t = dot(sub(p, hp), ax);
+      let region = Math.max(-0.075 - t, t - 0.215 - 0.02 * Math.sin(Math.atan2(p[0] * s, p[2]) * 3.0));
+      const rel = sub(sub(p, hp), mul(ax, t));
+      let a = Math.atan2(rel[0] * s, rel[2]); if (a < 0) a += Math.PI * 2;
+      region = Math.max(region, (Math.abs(a - 2.45) - 0.95) * 0.08);
+      return smax(d, region, 0.008);
+    };
+    pieces.push({
+      name: 'tasset' + S, bone: B['thigh' + S], f, bounds: [hp[0] - 0.18, kn[1] + 0.1, -0.24, hp[0] + 0.18, hp[1] + 0.1, 0.1], h: 0.0068,
+      color: (x, y, z) => (y > hp[1] + 0.035 ? PALETTE.webbing : PALETTE.canvas),
+      mat: () => [0.88, 0], line: () => FAR,
+      seam: (x, y, z) => {
+        const t = dot(sub([x, y, z], hp), ax);
+        return Math.min(t + 0.035, Math.abs(t - 0.19) - 0.0);
+      },
+    });
+  }
+
   // ---- helmet ---------------------------------------------------------------------------
   const HC = [0, 1.668, 0.014];
   const helmetOuter = (x, y, z) => {
-    let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.006, 0.116, 0.134, 0.13);
+    let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.006, 0.127, 0.134, 0.136);
+    // faceted crown: bevelled planes turn the dome into a designed, angular shell
+    const px = x - HC[0], py = y - HC[1], pz = z - HC[2];
+    d = smax(d, py * 0.985 + pz * 0.17 - 0.122, 0.012);
+    d = smax(d, Math.abs(px) * 0.64 + py * 0.77 - 0.118, 0.012);
+    d = smax(d, py * 0.72 - pz * 0.69 - 0.124, 0.014);
+    d = smax(d, Math.abs(px) * 0.93 + pz * 0.37 - 0.142, 0.012);
     d = smin(d, sdEllipsoid(x, y, z, 0, 1.596, 0.052, 0.09, 0.07, 0.092), 0.04); // faceplate / jaw
     d = smin(d, sdEllipsoid(x, y, z, 0, 1.6, -0.058, 0.1, 0.066, 0.084), 0.04); // back of neck
     // cheek guards: subtle planes that break the egg silhouette
@@ -521,15 +568,18 @@ function makePieces(spec, body) {
       // crest ridge
       const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
-      // side pods
-      d = smin(d, sdRoundBox(x, y, z, [0.118, 1.668, -0.006], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.022, 0.034, 0.05, 0.009), 0.008);
-      d = smin(d, sdCylinder(x, y, z, 0.13, 1.683, 0.03, 0.13, 1.683, 0.058, 0.009, 0.002), 0.003); // sensor lens
-      d = smin(d, sdCylinder(x, y, z, -0.1, 1.662, -0.004, -0.13, 1.662, -0.004, 0.027, 0.006), 0.008);
+      // side pods (asymmetric: a sensor block on the left, a comms disc on the right)
+      d = smin(d, sdRoundBox(x, y, z, [0.13, 1.668, -0.012], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.026, 0.044, 0.062, 0.01), 0.008);
+      d = smin(d, sdCylinder(x, y, z, 0.142, 1.683, 0.03, 0.142, 1.683, 0.062, 0.01, 0.002), 0.003); // sensor lens
+      d = smin(d, sdCylinder(x, y, z, -0.11, 1.662, -0.006, -0.148, 1.662, -0.006, 0.036, 0.007), 0.008);
+      // chin / rebreather block under the visor
+      d = smin(d, sdRoundBox(x, y, z, [0, 1.575, 0.104], [1, 0, 0], norm([0, 1, -0.35]), norm([0, 0.35, 1]), 0.052, 0.03, 0.034, 0.013), 0.012);
+      for (const s of [1, -1]) d = smin(d, sdCylinder(x, y, z, s * 0.044, 1.566, 0.118, s * 0.05, 1.56, 0.142, 0.016, 0.004), 0.004); // filters
       return d;
     };
     pieces.push({
-      name: 'helmet', bone: B.head, f, bounds: [-0.17, 1.5, -0.17, 0.17, 1.84, 0.18], h: 0.006,
-      color: () => ivory, mat: () => [0.28, 0.0],
+      name: 'helmet', bone: B.head, f, bounds: [-0.19, 1.5, -0.17, 0.19, 1.84, 0.19], h: 0.006,
+      color: (x, y, z) => (y < 1.598 && z > 0.07 ? graphite : ivory), mat: (x, y, z) => (y < 1.598 && z > 0.07 ? [0.42, 0.5] : [0.28, 0.0]),
       split: (x, y, z) => {
         const ax = Math.abs(x);
         const pod = Math.min(ax - 0.118, 0.022 - Math.hypot(y - 1.662, z + 0.004));
@@ -538,11 +588,10 @@ function makePieces(spec, body) {
         return -Math.max(pod, crest, chin);
       },
       line: (x, y, z) => {
-        if (x > 0.128) return Math.min(Math.hypot(y - 1.646, z - 0.026) - 0.0045, Math.hypot(y - 1.683, z - 0.058) - 0.006); // status LED + lens
-        if (x < -0.124) return Math.hypot(y - 1.662, z + 0.004) - 0.006; // status LED
+        if (x > 0.14) return Math.min(Math.hypot(y - 1.646, z - 0.026) - 0.0045, Math.hypot(y - 1.683, z - 0.062) - 0.006); // status LED + lens
+        if (x < -0.146) return Math.hypot(y - 1.662, z + 0.006) - 0.006; // status LED
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
-        if (Math.abs(x) > 0.07 && z > -0.11 && z < 0.07 && y > 1.6 && y < 1.7) return y - (1.64 + z * 0.22);
         return FAR;
       },
       seam: (x, y, z) => {
@@ -560,16 +609,16 @@ function makePieces(spec, body) {
     // antenna on the left pod
     pieces.push({
       name: 'antenna', bone: B.head,
-      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.136, 1.69, -0.035, 0.146, 1.8, -0.085, 0.0035), sdSphere(x, y, z, 0.146, 1.8, -0.085, 0.0065)),
-      bounds: [0.12, 1.66, -0.1, 0.16, 1.82, 0.0], h: 0.0035,
-      color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.142, y - 1.8, z + 0.075) - 0.0068, seam: () => FAR,
+      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.146, 1.69, -0.045, 0.158, 1.82, -0.1, 0.0035), sdSphere(x, y, z, 0.158, 1.82, -0.1, 0.0065)),
+      bounds: [0.13, 1.66, -0.12, 0.18, 1.84, 0.0], h: 0.0035,
+      color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.158, y - 1.82, z + 0.1) - 0.0068, seam: () => FAR,
     });
   }
 
   // ---- jetpack ----------------------------------------------------------------------------
   const packMain = (x, y, z) => {
     const taper = 1 - (1.29 - y) * 0.32;
-    let d = sdRoundBox(x / taper, y, z, [0, 1.29, -0.198], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.118, 0.165, 0.062, 0.05) * Math.min(1, taper);
+    let d = sdRoundBox(x / taper, y, z, [0, 1.285, -0.2], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.152, 0.17, 0.07, 0.055) * Math.min(1, taper);
     d = smax(d, -(z + 0.135) , 0.02); // flat-ish face against the back
     return d;
   };
@@ -604,11 +653,10 @@ function makePieces(spec, body) {
       name: 'jetpack', bone: B.chest, f, bounds: [-0.2, 1.02, -0.3, 0.2, 1.5, 0.13], h: 0.0068,
       color: (x, y) => (Math.abs(x) > 0.1 && y > 1.205 && y < 1.228 ? PALETTE.signal : y < 1.122 && Math.abs(x) > 0.08 ? HEAT : ivory),
       mat: (x, y) => (y < 1.122 && Math.abs(x) > 0.08 ? [0.28, 0.85] : [0.31, 0.0]),
-      split: (x, y, z) => -Math.max(z + 0.15, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.12 - y, Math.abs(x) - 0.098),
+      split: (x, y, z) => -Math.max(z + 0.16, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.125 - y),
       line: (x, y, z) => {
         if (Math.abs(x) < 0.032 && z < -0.26 && y > 1.18 && y < 1.42) return Math.abs(x) - 0.006; // spine light
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth
-        if (Math.abs(x) > 0.1 && z < -0.24 && y < 1.19) return y - 1.17; // pod vent band
         return FAR;
       },
       seam: (x, y, z) => {
@@ -1018,8 +1066,8 @@ function visorUV(theta, rho) {
   return [u, v];
 }
 function visorPoint(f, u, v, out) {
-  const x = u * 0.11 * (1 - Math.max(0, -v) * 0.16);
-  const y = 1.665 - 0.85 * x * x + v * 0.052;
+  const x = u * 0.122 * (1 - Math.max(0, -v) * 0.2);
+  const y = 1.662 - 0.8 * x * x + v * 0.066;
   let z0 = 0.0, z1 = 0.26;
   for (let k = 0; k < 40; k++) { const zm = (z0 + z1) * 0.5; if (f(x, y, zm) < 0) z0 = zm; else z1 = zm; }
   const z = (z0 + z1) * 0.5, e = 0.0008;

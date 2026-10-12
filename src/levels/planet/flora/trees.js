@@ -70,6 +70,16 @@ function barkMaterial(U, depth = false) {
   float flRidge = smoothstep(0.25, 0.65, flF);
   diffuseColor.rgb *= mix(mix(0.8, 0.55, flAA2), mix(0.9, 1.12, flAA2), flRidge) * (0.9 + 0.2 * fl_vn(vBUv * vec2(1.0, 0.2)));
   float flSpot = smoothstep(0.6, 0.82, fl_vn(vBUv * vec2(1.6, 0.7) + 7.3)) * flAA2 + 0.12;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  // bark relief: furrows bump the shading normal (screen-space derivative bump)
+  {
+    vec3 flP = -vViewPosition; vec3 flDx = dFdx(flP), flDy = dFdy(flP);
+    float flHt = (flF * 0.75 + flRidge * 0.25) * 0.05 * flAA2;
+    vec3 flR1 = cross(flDy, normal), flR2 = cross(normal, flDx);
+    float flDet = dot(flDx, flR1);
+    vec3 flGr = sign(flDet) * (dFdx(flHt) * flR1 + dFdy(flHt) * flR2);
+    normal = normalize(abs(flDet) * normal - flGr);
+  }`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += mix(diffuseColor.rgb, uGlowCol, 0.75) * vBGlow * flSpot * (0.06 + 3.0 * uNight);');
   }, depth ? 'flora-bark-depth' : 'flora-bark');
 }
@@ -104,7 +114,7 @@ ${FADE_V}
   vec3 flTx = texture2D(map, vMapUv).rgb;
   float flL = clamp(dot(flTx, vec3(0.333)), 0.0, 1.0);
   // whole leaf softly lit from within, veins and leaflets brighter (no salt-and-pepper speckle)
-  float flGM = 0.28 + 1.25 * smoothstep(0.5, 0.95, flL);
+  float flGM = 0.08 + 1.35 * smoothstep(0.5, 0.95, flL);
   outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.72) * vLGlow * flGM * (0.05 + 3.6 * uNight);
 #include <opaque_fragment>`);
   }, depth ? 'flora-leaf-depth' : 'flora-leaf');
@@ -468,6 +478,20 @@ export class Trees {
       const forestK = THREE.MathUtils.smoothstep(fm + (s.biome === 2 ? 0.25 : 0) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.45, -0.02, 0.14);
       const grove = THREE.MathUtils.smoothstep(gv + 0.2, -0.1, 0.3);
       p *= forestK * (0.5 + 0.5 * grove) + (1 - forestK) * (T.lone ?? 0.035) * (0.3 + grove);
+      // flat rock crowns (karst tower tops, ledges): wind-bent pines and
+      // bushes spill over the rims (Huangshan / Wukong)
+      if (T.crownTrees) {
+        let crown = THREE.MathUtils.smoothstep(s.rock, 0.35, 0.65) * (1 - THREE.MathUtils.smoothstep(s.cliff || 0, 0.25, 0.5)) * (1 - THREE.MathUtils.smoothstep(s.snow, 0.3, 0.6));
+        if (crown > 0.05 && r1 < T.crownTrees) {
+          // only where the ground stands proud of its surroundings (a tower
+          // top or a ledge), never on broad rocky plains
+          const e = 35 / R;
+          const hA = this.world.terrain.height(_dir[0] + e, _dir[1], _dir[2]), hB = this.world.terrain.height(_dir[0], _dir[1], _dir[2] + e);
+          const hC = this.world.terrain.height(_dir[0] - e, _dir[1] - e, _dir[2]);
+          crown *= THREE.MathUtils.smoothstep(s.h - Math.min(hA, hB, hC), 8, 25);
+          p = Math.max(p, crown * T.crownTrees * (0.6 + 0.4 * grove));
+        }
+      }
       p *= this.flora.siteClear(x, y, z, 1.0);
       if (r1 > p) continue;
       const isLone = forestK < 0.3;
@@ -518,6 +542,7 @@ export class Trees {
     const imp = [];
     const mLo = this.U.uFade.value.x, mHi = this.U.uFade.value.y, mLo2 = mLo * mLo, mHi2 = mHi * mHi;
     const wantCol = new Set();
+    const pools = this.flora.profile.glowPools ? [] : null;
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
       const frac = TIER_FRAC[c.data.tier];
@@ -528,12 +553,26 @@ export class Trees {
         const fd = d2 < 90000 ? 1 : thinAt(Math.sqrt(d2));
         if (t.rank >= fd) continue;
         t.fs = 1 + 0.42 * (1 - fd) / 0.78; // thinned forests: survivors grow
+        if (pools && t.v.glow > 0.3 && d2 < 160 * 160) pools.push(d2, t);
         if (d2 < mHi2) t.v.list.push(t);
         if (d2 > mLo2) imp.push(t);
         if (player) {
           const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
           if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
         }
+      }
+    }
+    // trees planted by other modules (village gardens, avenues): always full LOD
+    for (const t of this.extra || []) {
+      const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > this.farRange * this.farRange) continue;
+      t.fs = 1;
+      if (d2 < mHi2) t.v.list.push(t);
+      if (d2 > mLo2) imp.push(t);
+      if (player) {
+        const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
+        if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
       }
     }
     if (this.ulayer) {
@@ -595,6 +634,7 @@ export class Trees {
     }
     for (const nm of ['iPos', 'iC', 'iX', 'iDat', 'iCol']) g.getAttribute(nm).needsUpdate = true;
     g.instanceCount = imp.length;
+    if (pools) this._glowPools(pools, anchor);
     // trunk colliders around the player
     const w = this.world;
     for (const [t, col] of this.colliders) if (!wantCol.has(t)) { w.removeCollider(col); this.colliders.delete(t); }
@@ -607,6 +647,50 @@ export class Trees {
     this.meshCount = this.variants.reduce((a, v) => a + (v.under ? 0 : v.list.length), 0);
     this.underCount = this.variants.reduce((a, v) => a + (v.under ? v.list.length : 0), 0);
     this.impCount = imp.length;
+  }
+
+  /**
+   * Plant trees for another module (e.g. civ's village trees) so they share
+   * the world's species, LOD, impostors, wind and colliders.
+   * list: [{ position: Vector3 (ground point), kind?: species kind, scale?: number, seed?: number }]
+   * Returns the number planted.
+   */
+  plant(list) {
+    if (!this.species?.length) return 0;
+    this.extra ||= [];
+    let n = 0;
+    for (const e of list || []) {
+      if (!e?.position) continue;
+      const sp = this.species.find((s2) => s2.kind === e.kind) || this.species[0];
+      const h = Math.abs(Math.sin((e.seed ?? (e.position.x * 12.9898 + e.position.z * 78.233)) * 43758.5453)) % 1;
+      const v = sp.variants[Math.floor(h * sp.variants.length) % sp.variants.length];
+      const up = e.position.clone().normalize();
+      this.extra.push({ x: e.position.x, y: e.position.y, z: e.position.z, nx: up.x, ny: up.y, nz: up.z, yaw: h * 97.0, scale: (e.scale ?? 1) * (0.85 + 0.3 * ((h * 7.31) % 1)), v, rank: 0, tint: (h * 3.7) % 1, sp });
+      n++;
+    }
+    if (this.layer) this.layer.dirty = true;
+    return n;
+  }
+
+  // the 16 nearest glowing crowns become soft light pools on the grass
+  _glowPools(pairs, anchor) {
+    const idx = [];
+    for (let k = 0; k < pairs.length; k += 2) idx.push(k);
+    idx.sort((a, b) => pairs[a] - pairs[b]);
+    const G = this.flora.uniforms.uGlowPts.value;
+    let n = 0;
+    for (const L of this.landmarkMeshes || []) {
+      if (n >= 3 || !(L.userData.glow > 0.3)) continue;
+      const wp = L.userData.world, up = _v.copy(wp).normalize();
+      G[n++].set(wp.x - anchor.x + up.x * 3, wp.y - anchor.y + up.y * 3, wp.z - anchor.z + up.z * 3, 26);
+    }
+    for (const k of idx) {
+      if (n >= G.length) break;
+      const t = pairs[k + 1];
+      const lift = Math.min(4, t.v.height * t.scale * 0.15);
+      G[n++].set(t.x - anchor.x + t.nx * lift, t.y - anchor.y + t.ny * lift, t.z - anchor.z + t.nz * lift, Math.max(2.5, t.v.crown * t.scale * 0.9));
+    }
+    for (; n < G.length; n++) G[n].set(1e9, 0, 0, 1);
   }
 
   update(focus, cam, player, budget, force) {
@@ -656,6 +740,7 @@ export class Trees {
       const m = new THREE.Mesh(geo, mat);
       m.customDepthMaterial = dm; m.castShadow = true; m.receiveShadow = true;
       m.quaternion.copy(q); m.userData.world = pos.clone();
+      if (!this.landmarkMeshes.length) m.userData.glow = L.pal?.glowAmt || 0;
       m.position.copy(pos).sub(fl.anchor);
       fl.group.add(m); this.landmarkMeshes.push(m);
     }

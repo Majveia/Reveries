@@ -32,7 +32,7 @@ export class Star {
     const hot = THREE.MathUtils.clamp((star.temp - 3000) / 9000, 0, 1);
     // Surface radiance (HDR): bright enough to bloom; scaled down for huge giants so they read as cooler.
     const intensity = kind === 'neutron' ? 60 : kind === 'whiteDwarf' ? 40 : kind === 'giant' ? 14 : 26;
-    const cell = kind === 'giant' ? 14.0 : kind === 'whiteDwarf' ? 120.0 : 230.0;
+    const cell = kind === 'giant' ? 18.0 : kind === 'whiteDwarf' ? 120.0 : 480.0;
     const spots = kind === 'main' ? THREE.MathUtils.clamp(1.2 - hot * 1.1, 0.15, 1.0) : kind === 'giant' ? 0.5 : 0.0;
 
     // ---- photosphere ---------------------------------------------------------------
@@ -56,51 +56,76 @@ export class Star {
         uniform float uTime, uI, uCell, uSpots, uSeed, uHot, uFilter; uniform vec3 uColor; uniform int uOct;
         varying vec3 vObj; varying vec3 vN; varying vec3 vWP;
         vec3 rotY(vec3 p, float a){ float c = cos(a), s = sin(a); return vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z); }
+        // granulation cells: F1, F2 and a per-cell random (each granule has its own temperature)
+        vec3 gcell(vec3 p){
+          vec3 id = floor(p), f = fract(p);
+          float f1 = 8.0, f2 = 8.0, hc = 0.0;
+          for (int k = -1; k <= 1; k++) for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            vec3 b = vec3(float(i), float(j), float(k));
+            vec3 h = hash33(id + b);
+            vec3 r = b + 0.15 + 0.7 * h - f;
+            float d = dot(r, r);
+            if (d < f1) { f2 = f1; f1 = d; hc = h.z; } else if (d < f2) { f2 = d; }
+          }
+          return vec3(sqrt(f1), sqrt(f2), hc);
+        }
+        // photospheric colour ramp by local brightness: cool lanes deep orange-red, hot granule tops yellow-white
+        vec3 ramp(float x){
+          vec3 a = vec3(0.5, 0.08, 0.01), b = vec3(1.0, 0.34, 0.04), c = vec3(1.0, 0.68, 0.26), d = vec3(1.0, 0.9, 0.7);
+          return x < 0.5 ? mix(a, b, smoothstep(0.0, 0.5, x)) : x < 0.8 ? mix(b, c, (x - 0.5) / 0.3) : mix(c, d, smoothstep(0.8, 1.15, x));
+        }
         void main(){
           vec3 p = normalize(vObj);
           float lat = p.y;
-          // differential rotation: the equator laps the poles
           vec3 q = rotY(p, uTime * (0.006 + 0.004 * (1.0 - lat * lat)));
           vec3 qs = q + uSeed;
           vec3 V = normalize(cameraPosition - vWP);
           float mu = clamp(dot(normalize(vN), V), 0.0, 1.0);
-          // granulation: bright domed convective cells, soft dark intergranular lanes, slowly boiling
-          vec3 wq = qs * uCell + 0.45 * vec3(snoise(qs * 11.0 + uTime * 0.02), snoise(qs * 11.0 + 17.0 - uTime * 0.02), snoise(qs * 11.0 + 31.0));
-          vec2 w1 = worley(wq + vec3(0.0, 0.0, uTime * 0.035));
-          float lane = smoothstep(0.0, 0.32, w1.y - w1.x);
-          float dome = 1.0 - smoothstep(0.0, 0.9, w1.x);
-          float cellI = 0.5 + 0.5 * snoise(wq * 0.7);
-          float gran = lane * (0.6 + 0.4 * dome) * (0.85 + 0.3 * cellI);
-          // fine fringe of smaller granules + intensity fade of the pattern toward the limb (foreshortening blur)
-          vec2 w2 = worley(wq * 2.3 + vec3(uTime * 0.05));
-          gran = mix(gran, 0.7, 0.25) * (0.88 + 0.12 * smoothstep(0.0, 0.3, w2.y - w2.x));
-          float fsh = fwidth(wq.x) + fwidth(wq.y);
-          gran = mix(gran, 0.68, smoothstep(0.25, 0.9, fsh) * 0.85 + (1.0 - smoothstep(0.05, 0.4, mu)) * 0.5);
+          // --- granulation: irregular polygonal convection cells (warped Voronoi), slowly boiling
+          vec3 wq = qs * uCell;
+          wq += 0.55 * vec3(snoise(qs * uCell * 0.23 + uTime * 0.015), snoise(qs * uCell * 0.23 + 17.0 - uTime * 0.015), snoise(qs * uCell * 0.23 + 31.0));
+          vec3 g1 = gcell(wq + vec3(0.0, 0.0, uTime * 0.03));
+          float edge = g1.y - g1.x;
+          float lane = smoothstep(0.0, 0.26 + 0.12 * g1.z, edge);            // thin dark intergranular lanes
+          float dome = 1.0 - smoothstep(0.05, 0.75, g1.x);                    // hot upflow at the cell centre
+          float cellT = 0.72 + 0.5 * g1.z;                                    // per-granule temperature
+          float sub = snoise(wq * 2.7 + uTime * 0.04);                        // exploding-granule texture
+          float gran = lane * cellT * (0.62 + 0.38 * dome) * (0.92 + 0.08 * sub);
+          gran += (1.0 - lane) * 0.12 * (0.6 + 0.4 * snoise(wq * 5.0));      // bright points in the lanes
+          // filter the pattern toward its mean where it gets sub-pixel or foreshortened at the limb
+          float fsh = fwidth(wq.x) + fwidth(wq.y) + fwidth(wq.z);
+          gran = mix(gran, 0.62, clamp(smoothstep(0.25, 1.1, fsh) + (1.0 - smoothstep(0.04, 0.35, mu)) * 0.6, 0.0, 1.0));
           // mesogranulation / supergranulation network and large-scale mottling
-          vec2 sg = worley(qs * uCell * 0.16);
-          float net = 1.0 - smoothstep(0.0, 0.25, sg.y - sg.x);
+          vec2 sg = worley(qs * uCell * 0.14);
+          float net = 1.0 - smoothstep(0.0, 0.22, sg.y - sg.x);
           float turb = fbm(qs * 4.0 + vec3(uTime * 0.008), uOct);
-          float meso = fbm(qs * uCell * 0.05 + vec3(uTime * 0.01), 3);
+          float meso = fbm(qs * uCell * 0.045 + vec3(uTime * 0.01), 3);
           // active regions: sunspots in the royal latitudes
           float belt = smoothstep(0.03, 0.12, abs(lat)) * (1.0 - smoothstep(0.42, 0.62, abs(lat)));
           float act = fbm(qs * 2.4 + 31.0, 4) * belt;
           float spotN = fbm(qs * 13.0 - 5.0, 3);
-          float sp = smoothstep(0.36, 0.43, act + spotN * 0.12) * uSpots;
-          float umbra = smoothstep(0.45, 0.5, act + spotN * 0.10) * uSpots;
+          float spotVis = uSpots * (0.2 + 0.8 * uFilter);  // a far, saturated disk shows no pockmarks
+          float sp = smoothstep(0.36, 0.43, act + spotN * 0.12) * spotVis;
+          float umbra = smoothstep(0.45, 0.5, act + spotN * 0.10) * spotVis;
           // penumbral filaments radiate from the umbra
-          float fil = 0.7 + 0.3 * sin(dot(q, vec3(173.0, 211.0, 197.0)) * 2.0 + spotN * 30.0);
+          float fil = 0.6 + 0.4 * sin(dot(q, vec3(173.0, 211.0, 197.0)) * 2.0 + spotN * 30.0 + snoise(wq * 0.5) * 2.0);
           float faculae = smoothstep(0.12, 0.33, act) * (1.0 - sp);
-          float I = (0.62 + 0.5 * gran) * (1.0 + 0.14 * turb + 0.12 * meso) * (1.0 + 0.03 * net);
-          I *= mix(1.0, 0.38 * fil, sp);
-          I *= mix(1.0, 0.07, umbra);
+          float I = (0.42 + 0.66 * gran) * (1.0 + 0.22 * turb + 0.18 * meso) * (1.0 + 0.05 * net);
+          // close-up chromospheric texture: bright plage around active regions, dark meandering filaments
+          float plage = smoothstep(0.08, 0.3, act) * (0.6 + 0.4 * fbm(qs * 40.0, 3));
+          float fr = 1.0 - abs(snoise(qs * 5.0 + vec3(0.0, 0.0, uTime * 0.002) + 0.35 * vec3(fbm(qs * 14.0, 3))));
+          float filament = pow(clamp(fr, 0.0, 1.0), 7.0) * smoothstep(0.3, 0.7, fbm(qs * 18.0, 3) + 0.5) * smoothstep(-0.2, 0.3, snoise(qs * 2.2 + 9.0)) * (1.0 - smoothstep(0.75, 0.9, abs(lat)));
+          I *= 1.0 + uFilter * (0.12 * plage - 0.3 * filament);
+          I *= mix(1.0, 0.42 * fil, sp);
+          I *= mix(1.0, 0.08, umbra);
           // limb darkening (wavelength dependent: the limb is redder and dimmer)
-          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.5, 0.85, 1.3) * mix(1.0, 0.55, uHot) * (1.0 + 0.6 * uFilter));
+          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.45, 0.8, 1.25) * mix(1.0, 0.55, uHot) * (1.0 + 0.5 * uFilter));
           limb *= 0.3 + 0.7 * smoothstep(0.0, 0.3, mu);
-          I *= 1.0 + faculae * pow(1.0 - mu, 1.5) * 1.6 + net * (1.0 - mu) * 0.12;
-          vec3 c = uColor * mix(vec3(1.0, 0.72, 0.5), vec3(1.0), 0.35 + 0.65 * gran) * I * limb * uI;
-          c *= mix(vec3(1.0), vec3(1.0, 0.5, 0.28), umbra * 0.7);
-          // close-up "solar filter": a deep, saturated photosphere (like a narrow-band image)
-          c *= mix(vec3(1.0), vec3(1.0, 0.52, 0.18) * 1.3, uFilter);
+          I *= 1.0 + faculae * pow(1.0 - mu, 1.5) * mix(1.6, 0.5, uFilter) + net * (1.0 - mu) * 0.15;
+          // far view: true stellar colour; close-up "solar filter": the temperature ramp (narrow-band look)
+          vec3 tone = mix(uColor * mix(vec3(1.0, 0.8, 0.62), vec3(1.0), clamp(I, 0.0, 1.0)) * I, ramp(I * mix(0.85, 1.0, uHot)) * (0.2 + 0.8 * I) * 0.24, uFilter);
+          vec3 c = tone * limb * uI;
+          c *= mix(vec3(1.0), vec3(1.0, 0.45, 0.22), umbra * 0.7);
           gl_FragColor = vec4(c, 1.0);
         }`,
     });
@@ -127,7 +152,7 @@ export class Star {
       uniforms: {
         uSize: { value: radius * coronaScale }, uTime: { value: 0 }, uColor: { value: col },
         uDisk: { value: 1 / coronaScale }, uSeed: { value: rng.range(0, 50) },
-        uHalpha: { value: new THREE.Color().setRGB(1.0, 0.18 + 0.4 * hot, 0.16 + 0.6 * hot) },
+        uHalpha: { value: new THREE.Color().setRGB(1.0, 0.3 + 0.2 * hot, 0.1 + 0.35 * hot) },
         uI: { value: kind === 'neutron' ? 3.0 : 1.0 },
       },
       vertexShader: FACING_VERT,
@@ -228,30 +253,37 @@ export class Star {
 
   _buildLoops(rng, col, hot) {
     const R = this.radius;
-    const hAlpha = new THREE.Color().setRGB(1.0, 0.24 + 0.4 * hot, 0.08 + 0.6 * hot).multiplyScalar(1.3);
+    const hAlpha = new THREE.Color().setRGB(1.0, 0.3 + 0.25 * hot, 0.06 + 0.3 * hot).multiplyScalar(1.4);
     const mkMat = (color, I, flow) => new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: color }, uI: { value: I }, uK: { value: 1 }, uTime: { value: 0 }, uFlow: { value: flow }, uSeed: { value: rng.range(0, 40) } },
+      uniforms: { uColor: { value: color }, uI: { value: I }, uK: { value: 1 }, uTime: { value: 0 }, uFlow: { value: flow }, uSeed: { value: rng.range(0, 40) }, uR: { value: 9.0 / this.radius } },
       vertexShader: /* glsl */`
         varying vec2 vUv; varying vec3 vN; varying vec3 vWP;
         void main(){ vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
       fragmentShader: /* glsl */`
         ${NOISE_GLSL}
-        uniform vec3 uColor; uniform float uI, uK, uTime, uFlow, uSeed;
+        uniform vec3 uColor; uniform float uI, uK, uTime, uFlow, uSeed, uR;
         varying vec2 vUv; varying vec3 vN; varying vec3 vWP;
         void main(){
           vec3 V = normalize(cameraPosition - vWP);
           float f = abs(dot(normalize(vN), V));
-          float core = pow(f, 1.6);
-          // magnetic flux threads run ALONG the loop; plasma knots drain slowly down the legs
-          float around = vUv.y * 6.2832;
-          float thr = fbm(vec2(cos(around) * 2.2 + uSeed, sin(around) * 2.2 + vUv.x * 2.0), 3);
-          float threads = smoothstep(-0.25, 0.55, thr);
+          // soft, fuzzy plasma: a gaussian column density across the tube instead of a hard edge
+          float core = exp(-pow(1.0 - f, 2.0) * 9.0) * (0.35 + 0.65 * f);
+          // magnetically aligned plasma: 3D turbulence in world space, smeared along the loop
+          // threads hang along the local vertical: compress the noise along the radial direction
+          vec3 rad = normalize(vWP);
+          vec3 wp = vWP * uR;
+          wp -= rad * dot(wp, rad) * 0.85;
+          wp += uSeed;
+          float drift = uTime * uFlow * 0.03;
+          float n1 = fbm(wp * 2.2 + vec3(0.0, drift, 0.0), 4);
+          float n2 = fbm(wp * 9.0 - vec3(drift, 0.0, drift), 3);
           float knots = 0.55 + 0.9 * smoothstep(-0.1, 0.6, fbm(vec2(vUv.x * 9.0 - uTime * uFlow * 0.4 + uSeed, vUv.y * 3.0), 3));
-          float strand = threads * knots;
-          // ragged, partially transparent edges (no hard tube silhouette)
-          core *= smoothstep(0.05, 0.6, f);
+          float cloudy = smoothstep(-0.15, 0.5, n1 + 0.7 * n2) * (0.35 + 0.65 * smoothstep(-0.1, 0.45, n2));
+          float strand = cloudy * knots;
           float ends = smoothstep(0.0, 0.07, vUv.x) * smoothstep(1.0, 0.93, vUv.x);
-          gl_FragColor = vec4(uColor * uI * uK * core * strand * (0.35 + 0.65 * ends), 1.0);
+          // footpoints glow hotter where the plasma drains back into the chromosphere
+          float foot = 1.0 + 1.4 * (exp(-vUv.x * 14.0) + exp(-(1.0 - vUv.x) * 14.0));
+          gl_FragColor = vec4(uColor * uI * uK * core * strand * foot * (0.35 + 0.65 * ends), 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
     });
@@ -280,12 +312,12 @@ export class Star {
     for (let k = 0; k < nProm; k++) {
       const dir = k === 0 ? new THREE.Vector3(0.05, 0.22, -1).normalize() : randDir(0.9);
       const tan = k === 0 ? new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize() : tangentOf(dir);
-      const mat = mkMat(hAlpha, 0.4, 0.25);
+      const mat = mkMat(hAlpha, 0.32, 0.25);
       const span = R * rng.range(0.16, 0.3) * (k === 0 ? 1.2 : 1), height = R * rng.range(0.12, 0.26) * (k === 0 ? 1.25 : 1);
       const side = new THREE.Vector3().crossVectors(dir, tan).normalize();
-      for (let s = 0; s < 11; s++) {
+      for (let s = 0; s < 12; s++) {
         const off = side.clone().multiplyScalar(R * rng.range(-0.035, 0.035)).addScaledVector(tan, R * rng.range(-0.02, 0.02));
-        arch(dir.clone().multiplyScalar(R).add(off), tan, span * rng.range(0.6, 1.2), height * rng.range(0.45, 1.1), R * rng.range(0.008, 0.024), mat, R * rng.range(-0.05, 0.05));
+        arch(dir.clone().multiplyScalar(R).add(off), tan, span * rng.range(0.6, 1.2), height * rng.range(0.45, 1.1), R * (s < 4 ? rng.range(0.025, 0.045) : rng.range(0.006, 0.016)), mat, R * rng.range(-0.06, 0.06));
       }
     }
     // Active-region arcades: nested hot loops.

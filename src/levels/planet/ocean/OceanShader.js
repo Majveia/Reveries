@@ -193,6 +193,17 @@ vec3 skyRadiance(vec3 R, vec3 n0){
   return mix(fb, skyViewLookup(R).rgb, uLutW);
 }
 
+// Anti-tiling slope lookup: the tile and a rotated / rescaled / offset copy of
+// it, blended by a low-frequency mask (whose period is incommensurate with the
+// tile's), renormalised to keep the slope variance — no visible repetition.
+vec2 dslope(vec2 uv){
+  float w = smoothstep(0.25, 0.75, texture2D(tDetail, uv * 0.217 + vec2(0.31, 0.83)).a);
+  vec2 a = texture2D(tDetail, uv).rg * 2.0 - 1.0;
+  mat2 Rb = mat2(0.906, 0.423, -0.423, 0.906);
+  vec2 b = (texture2D(tDetail, Rb * uv * 1.31 + vec2(0.37, 0.71)).rg * 2.0 - 1.0) * Rb;
+  return (a * (1.0 - w) + b * w) * inversesqrt((1.0 - w) * (1.0 - w) + w * w);
+}
+
 float ggxD(float NH, float a){ float a2 = a * a; float d = NH * NH * (a2 - 1.0) + 1.0; return a2 / (3.14159265 * d * d + 1e-7); }
 float visSmith(float NL, float NV, float a){ float k = a * 0.5; return 0.25 / ((NL * (1.0 - k) + k) * (NV * (1.0 - k) + k)); }
 // incandescent melt radiance (linear, relative to 1300 K): blackbody hue; the
@@ -267,9 +278,7 @@ void main(){
   vec2 pw = rw * vXZ;
   vec2 uv1 = pw / 7.3 + vec2(uDetail.w * 0.11, 0.0);
   vec2 uv2 = (mat2(0.8, 0.6, -0.6, 0.8) * pw) / 2.9 + vec2(uDetail.w * 0.23, uDetail.w * 0.05);
-  vec4 d1 = texture2D(tDetail, uv1);
-  vec4 d2 = texture2D(tDetail, uv2);
-  // macro variation: wind gusts roughen patches ("cat's paws"), calm slicks
+    // macro variation: wind gusts roughen patches ("cat's paws"), calm slicks
   // stay glassy — breaks the tiling and gives the far sea its mottled sheen
   float gust = texture2D(tDetail, vXZ / 1300.0 + vec2(uDetail.w * 0.0011, 0.37)).a * 0.6
              + texture2D(tDetail, (mat2(0.6, -0.8, 0.8, 0.6) * vXZ) / 340.0 + vec2(0.71, uDetail.w * 0.0023)).a * 0.4;
@@ -277,8 +286,8 @@ void main(){
   float dk = uDetail.z * (0.8 + 0.2 * clamp(shoal, 0.0, 1.0)) * mix(0.5, 1.4, gk);
   // finest capillaries (1.2 m tile) keep the near water crisp
   vec2 uv0 = (mat2(0.6, -0.8, 0.8, 0.6) * pw) / 1.23 + vec2(uDetail.w * 0.31, -uDetail.w * 0.07);
-  vec2 d0 = (texture2D(tDetail, uv0).rg * 2.0 - 1.0) * (1.0 - smoothstep(0.02, 0.09, foot));
-  vec2 ds = ((d1.rg * 2.0 - 1.0) * 0.55 + (d2.rg * 2.0 - 1.0) * 0.4 + d0 * 0.3) * dk;
+  vec2 d0 = dslope(uv0) * (1.0 - smoothstep(0.02, 0.09, foot));
+  vec2 ds = (dslope(uv1) * 0.55 + dslope(uv2) * 0.4 + d0 * 0.3) * dk;
   float dfade = smoothstep(0.6, 6.0, foot);
   var += dfade * 0.09 * dk * dk;
   ds *= 1.0 - dfade * 0.85;
@@ -286,7 +295,7 @@ void main(){
   // visible repetition once the capillary layers have faded
   vec2 uv3 = (mat2(0.94, 0.34, -0.34, 0.94) * pw) / 17.0 + vec2(uDetail.w * 0.041, uDetail.w * 0.006);
   vec2 uv4 = (mat2(0.82, -0.57, 0.57, 0.82) * pw) / 43.0 + vec2(uDetail.w * 0.024, -uDetail.w * 0.004);
-  vec2 dm = ((texture2D(tDetail, uv3).rg * 2.0 - 1.0) * 0.6 + (texture2D(tDetail, uv4).rg * 2.0 - 1.0) * 0.45) * dk * 0.75;
+  vec2 dm = (dslope(uv3) * 0.6 + dslope(uv4) * 0.45) * dk * 0.75;
   float mfade = smoothstep(0.6, 3.5, foot);
   var += mfade * 0.06 * dk * dk;
   ds += dm * (1.0 - mfade * 0.9);
@@ -328,12 +337,11 @@ void main(){
   float core = max(max(cB, c1), c2 * 0.8);
   float molten = smoothstep(0.0, 0.25, core);
   // open pools: the crust breaks into small drifting rafts
-  float pool = smoothstep(0.86, 0.98, H + 0.1 * (plB.g - 0.5));
+  float pool = smoothstep(0.9, 0.995, H + 0.12 * (plB.g - 0.5));
   // rafts: whole crust plates (irregular, varied in size) adrift in the pools,
   // their rims frayed by the churning melt
   float rn = texture2D(tDetail, vXZ / 23.0 + 0.61).a - 0.5;
-  float raft = max(smoothstep(0.05, 0.16, pl.r + rn * 0.12) * step(0.3, pl.g),
-                   smoothstep(0.08, 0.2, pl2.r + rn * 0.1) * step(0.78, pl2.g)) * (1.0 - smoothstep(0.93, 1.0, H));
+  float raft = smoothstep(0.03, 0.13, pl.r + rn * 0.14) * step(0.22, pl.g) * (1.0 - smoothstep(0.96, 1.0, H));
   molten = max(molten, pool * (1.0 - raft));
   // churning melt: flow-mapped turbulence with darker cooling skins
   vec2 fv = wdir * uLava.y * 2.0 + (vec2(texture2D(tDetail, vXZ / 600.0).a, texture2D(tDetail, vXZ / 600.0 + 0.5).a) - 0.5) * uLava.y * 4.0;
@@ -379,10 +387,12 @@ void main(){
   // Draper point — black rock, not orange)
   float nearC = max(max(exp(-max(plB.r - wB, 0.0) / max(wB * 0.9 + 0.006, 0.008)),
                         exp(-max(pl.r - w1, 0.0) / max(w1 * 1.1 + 0.004, 0.006)) * step(0.001, w1)),
-                    pool * exp(-pl.r / 0.025) * 0.9);
+                    pool * exp(-pl.r / 0.014) * 0.6);
   // fine crazing on the crust stays faintly incandescent (texture on the plates)
-  float craze = (1.0 - smoothstep(0.0, 0.03, pl2.r)) * (1.0 - aa) * smoothstep(0.5, 0.8, texture2D(tDetail, vXZ / 47.0 + 0.23).a);
-  float Tc = 440.0 + 470.0 * nearC * (0.35 + 0.65 * H) + 40.0 * H + craze * (20.0 + 300.0 * H * H) * (0.3 + 0.7 * nearC);
+  // (sparse: only fresh, hot crust near a crack crazes visibly — never a
+  // uniform net across the whole sea)
+  float craze = (1.0 - smoothstep(0.0, 0.02, pl2.r)) * (1.0 - aa) * smoothstep(0.62, 0.85, texture2D(tDetail, vXZ / 47.0 + 0.23).a) * nearC;
+  float Tc = 400.0 + 450.0 * nearC * nearC * (0.35 + 0.65 * H) + 30.0 * H + craze * 260.0 * H;
   vec3 crustGlow = lavaRad(Tc) * uLava.w * (1.0 - aa * 0.6);
   // crust surface: domed basalt plates, glassy where freshly chilled, ashen where old
   vec2 e = vec2(0.004, 0.0);
@@ -432,7 +442,9 @@ void main(){
   vec3 N = normalize(t1 * Nl.x + n0 * Nl.y + t2 * Nl.z);
   if (below) N = -N;
   vec3 nUp = below ? -n0 : n0;
-  float rough = clamp(sqrt(0.0014 + var * 1.6), 0.035, mix(0.55, 0.2, smoothstep(300.0, 4000.0, foot)));
+  // filtered-spectrum roughness; from orbit the sea's mean-square slope settles
+  // on the Cox–Munk value (α ≈ 0.12–0.16) so the sunglint stays a bright patch
+  float rough = clamp(sqrt(0.0014 + var * 1.6), 0.035, mix(0.55, 0.13 + 0.03 * uWaveScale, smoothstep(300.0, 4000.0, foot)));
 
   vec3 L = uSunDir;
   vec3 Es = lightE(L, uSunE, n0) * sunVis(vWorld);
@@ -447,7 +459,11 @@ void main(){
     vec3 skyT = skyRadiance(normalize(-Rt + n0 * 0.001), n0);
     vec3 deepU = uDeep * (uSkyIrr + Es * max(dot(n0, L), 0.0)) * 0.35;
     vec3 colB = mix(deepU, skyT * 0.85 + Es * pow(max(dot(-Rt, L), 0.0), 600.0) * 30.0, win);
+#ifdef MULPASS
+    gl_FragColor = vec4(0.0);
+#else
     gl_FragColor = vec4(colB, 1.0);
+#endif
     return;
   }
 
@@ -462,6 +478,15 @@ void main(){
   vec3 H = normalize(L + V);
   float aS = max(rough, 0.012);
   vec3 spec = Es * ggxD(max(dot(N, H), 0.0), aS) * visSmith(NL, NV, aS) * fresnel(dot(V, H), 0.02) * NL;
+  // broad glint halo seen from altitude: gusty patches and swell tilt the
+  // mean surface, so the specular patch fades out softly (the orbital cue)
+  float farG = smoothstep(20.0, 400.0, foot);
+  if (farG > 0.0) {
+    // (Cox–Munk slope statistics are heavy-tailed: a wide, soft skirt
+    // around the glint core that reaches well past it)
+    float aH = 0.42;
+    spec += Es * ggxD(max(dot(N, H), 0.0), aH) * visSmith(NL, NV, aH) * fresnel(dot(V, H), 0.02) * NL * 1.5 * farG;
+  }
   vec3 Hm = normalize(uMoonDir + V);
   float NLm = max(dot(N, uMoonDir), 0.0);
   spec += Em * ggxD(max(dot(N, Hm), 0.0), aS) * visSmith(NLm, NV, aS) * fresnel(dot(V, Hm), 0.02) * NLm;
@@ -551,9 +576,12 @@ void main(){
   vec3 foamCol = vec3(0.86) * (Es * max(dot(n0, L), 0.0) * (0.6 + 0.4 * max(dot(N, L), 0.0)) + Es * back * 0.18 + uSkyIrr * 1.1 + Em * 0.4) / 3.14159;
 
   vec3 col = (body + sss + bedLight) * (1.0 - F) + sky * F + spec;
-  float alpha = 1.0 - (1.0 - F) * Tl;
+  // what of the seabed reaches the eye, per channel (the multiply pre-pass
+  // scales the framebuffer by it, so sand under a metre of water turns
+  // turquoise instead of showing through grey)
+  vec3 Tv = (1.0 - F) * Tr;
   col = mix(col, foamCol, foam);
-  alpha = max(alpha, foam);
+  Tv *= 1.0 - foam;
   // bioluminescent plankton: agitated water flashes where waves break and
   // swash runs up the sand; specks glitter in the churned surf
   if (uBio.w > 0.0) {
@@ -561,11 +589,20 @@ void main(){
     float speck = texture2D(tFoam, vXZ / 1.7 + vec2(uTime * 0.03, 0.0)).g;
     vec3 bio = uBio.rgb * uBio.w * (agit * (0.5 + 0.8 * ft3) + speck * smoothstep(0.0, 0.4, agit + 0.15 * so.w) * 1.5);
     col += bio * (1.0 - smoothstep(30.0, 900.0, dist) * 0.7);
-    alpha = max(alpha, clamp(dot(bio, vec3(0.3)), 0.0, 1.0));
   }
   // shoreline fade (no hard edge where the mesh slides under the sand)
   float fadeIn = smoothstep(-0.25, 0.25, depth + 0.35);
-  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0)) * fadeIn;
+#ifdef MULPASS
+  gl_FragColor = vec4(1.0 - fadeIn * (1.0 - Tv), 1.0);
+#if ODBG == 4
+  gl_FragColor = vec4(0.0);
+#endif
+#else
+  gl_FragColor = vec4(col * fadeIn, 1.0);
+#if ODBG == 4
+  gl_FragColor = vec4(luma(spec), luma(Es) * 0.05, F, 1.0);
+#endif
+#endif
 #endif
 }
 `;

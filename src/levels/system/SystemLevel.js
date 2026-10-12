@@ -308,6 +308,7 @@ export default class SystemLevel {
   // ---- shots (harness) -------------------------------------------------------------------
   _pose(target, distance, yaw, pitch) {
     const r = this.rig;
+    if (this.camera.fov !== 48 && !this._keepFov) { this.camera.fov = 48; this.camera.updateProjectionMatrix(); }
     r._fly = null;
     r.target.copy(target); r._targetGoal.copy(target);
     r.distance = distance; r._logDistTarget = Math.log(distance);
@@ -336,10 +337,15 @@ export default class SystemLevel {
         const P = sp.position, R = sp.R;
         const s = P.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(100);
-        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.4).normalize();
-        const cam = P.clone().addScaledVector(dirC, R * 10.5);
-        const look = P.clone().lerp(new THREE.Vector3(0, 0, 0), 0.3).addScaledVector(up, -R * 1.2);
+        const ph = THREE.MathUtils.degToRad(116);
+        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.42).normalize();
+        const cam = P.clone().addScaledVector(dirC, R * 6.0);
+        // the ringed crescent low on the left third, the star and the inner worlds strung along their orbits
+        // upper right: look along an arc between the two
+        const toP = P.clone().sub(cam).normalize(), toS = cam.clone().multiplyScalar(-1).normalize();
+        const axis = new THREE.Vector3().crossVectors(toP, toS).normalize();
+        const lookDir = toP.clone().applyAxisAngle(axis, toP.angleTo(toS) * 0.44);
+        const look = cam.clone().addScaledVector(lookDir, R * 9.0);
         this._poseCam(cam, look);
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
@@ -363,9 +369,9 @@ export default class SystemLevel {
         const sp = this._planet(2);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
-        const dir = s.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.5);
-        dir.y += 0.3;
-        this._poseDir(sp.position, sp.R * 2.9, dir);
+        const dir = s.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.95);
+        dir.y += 0.35;
+        this._poseDir(sp.position, sp.R * 3.1, dir);
       },
       belt: async () => {
         this.focus = null;
@@ -379,13 +385,17 @@ export default class SystemLevel {
         const S = best.s;
         const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(138);
-        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.1).normalize();
-        const cam = pos.clone().addScaledVector(dirC, S * 4.6);
-        // aim between the rock (left) and the star (right) so the boulder is rim-lit against the glare
+        const ph = THREE.MathUtils.degToRad(102);
+        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.16).normalize();
+        const cam = pos.clone().addScaledVector(dirC, S * 4.4);
+        // wide lens: the star sits near the left edge of the frame, the half-lit boulder right of centre
+        this.camera.fov = 64; this.camera.updateProjectionMatrix();
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
-        const look = cam.clone().addScaledVector(toRock.add(toStar).normalize(), S * 4.0);
-        this._poseCam(cam, look);
+        const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
+        const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
+        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(hfov * 0.4, toStar.angleTo(toRock) * 0.55));
+        const look = cam.clone().addScaledVector(lookDir, S * 4.0);
+        this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },
     };
   }

@@ -94,31 +94,28 @@ float cloudField(vec3 d, int oct, bool detail){
     float la = (fi < 2.0 ? 1.0 : -1.0) * (0.55 + 0.35 * fract(uSeed * (0.37 + fi * 0.13)));
     float lo = fract(uSeed * 0.171 + fi * 0.29) * 6.2832 + uTime * 0.002;
     vec3 cc = vec3(cos(la) * cos(lo), sin(la), cos(la) * sin(lo));
-    float r = length(c - cc) / 0.32;
-    c = rotAxis(c, cc, sign(la) * 3.2 * exp(-r * r * 1.4) * (0.6 + 0.4 * r));
+    float r = length(c - cc) / 0.36;
+    c = rotAxis(c, cc, sign(la) * 4.6 * exp(-r * r * 1.3) * (0.5 + 0.5 * r));
   }
   float lat = c.y, al = abs(lat);
-  vec3 p = c * 2.6 + uSeed * 0.37;
+  vec3 p = c * 1.9 + uSeed * 0.37;
   vec3 w = vec3(fbm(p * 1.1, 3), fbm(p * 1.1 + 5.2, 3), fbm(p * 1.1 + 9.7, 3));
-  vec3 q = p + w * 0.75;
+  vec3 q = p + w * 0.95;
   q.y *= 1.6;                                   // zonal stretching: fronts lie along latitude circles
   float n1 = fbm(q * 1.2, oct);
   float clim = 0.14 * exp(-al * al / 0.006) - 0.2 * exp(-pow((al - 0.42) / 0.13, 2.0)) + 0.12 * exp(-pow((al - 0.8) / 0.14, 2.0));
   float base = n1 + clim + (uCloudCover - 0.55) * 0.6;
-  float cov = sat((base + 0.02) * 2.6);
+  float cov = smoothstep(-0.08, 0.3, base);
   if (detail) {
     float n2 = fbm(q * 4.2 + w * 1.4, 4);
-    float n3 = fbm(q * 13.0 + w * 2.0, 3);
-    // soft, graded density with texture inside the decks; billowy eroded margins
-    cov = sat((base + 0.12 * n2 + 0.02) * 2.6);
-    cov *= sat(0.62 + 0.55 * n2 + 0.3 * n3);
-    vec2 cu = worley(q * 18.0);
-    float cum = smoothstep(0.62, 0.1, cu.x);                // cumulus cells in the broken margins
-    float margin = smoothstep(-0.2, 0.0, base) * (1.0 - smoothstep(0.0, 0.25, base));
-    cov = max(cov, margin * cum * 0.55 * sat(0.6 + n3));
-    // fibrous cirrus streaks drawn out by the jets
-    float fib = fbm(vec3(q.x * 6.0, q.y * 20.0, q.z * 6.0) + w, 3);
-    cov = max(cov, smoothstep(0.15, 0.5, fib) * smoothstep(-0.12, 0.15, base) * 0.3);
+    float n3 = fbm(q * 12.0 + w * 2.0, 3);
+    // soft decks eroded at their margins into wisps; thin cirrus drawn out along the jets
+    float b2 = base + 0.1 * n2;
+    cov = smoothstep(-0.1, 0.32, b2);
+    cov *= smoothstep(-0.35, 0.35, n2 * 0.7 + n3 * 0.35 + cov * 0.6 - 0.15);
+    cov *= 0.75 + 0.25 * sat(0.5 + n3);
+    float fib = fbm(vec3(q.x * 5.0, q.y * 18.0, q.z * 5.0) + w, 3);
+    cov = max(cov, smoothstep(0.1, 0.5, fib) * smoothstep(-0.2, 0.1, base) * 0.28);
   }
   return cov;
 }
@@ -131,7 +128,8 @@ void main(){
   float micro = fbm(sd * 90.0, 3);
 #ifdef HAS_MAP
   // domain-warp the lookup so texel-scale biome boundaries become organic
-  vec3 dw = normalize(d + vec3(fbm(sd * 9.0, 3), fbm(sd * 9.0 + 4.0, 3), fbm(sd * 9.0 + 8.0, 3)) * 0.012 + vec3(detail, micro, -detail) * 0.004);
+  vec3 dw = normalize(d + vec3(fbm(sd * 9.0, 3), fbm(sd * 9.0 + 4.0, 3), fbm(sd * 9.0 + 8.0, 3)) * 0.012 + vec3(detail, micro, -detail) * 0.004
+                     + vec3(snoise(sd * 80.0), snoise(sd * 80.0 + 7.0), snoise(sd * 80.0 + 13.0)) * 0.0035);
   vec4 A = texEq(uAlbedo, dw);
   vec4 D = texEq(uData, dw);
   h = (D.r - 0.5) * 2.8 + detail * 0.10 + micro * 0.03;
@@ -139,6 +137,8 @@ void main(){
   alb = A.rgb;
   // satellite-photo albedo: darker, richer land with macro variation
   alb *= 0.72 + 0.2 * smoothstep(-0.5, 0.5, fbm(sd * 5.0 + 11.0, 3)) + 0.1 * detail;
+  // land seen from orbit is dark (albedo ≲ 0.3): compress pale biomes so clouds and ice read brightest
+  alb *= mix(1.0, 0.6, smoothstep(0.3, 0.75, dot(alb, vec3(0.3, 0.5, 0.2))));
 #else
   float cont = fbm(sd * 1.6, uOct) + 0.5 * fbm(sd * 4.0 + 3.0, 3) * 0.5;
   h = cont * 1.4 + detail * 0.25 + micro * 0.05;
@@ -193,7 +193,7 @@ void main(){
   float ndv = max(dot(Ng, V), 0.0);
   float tw = smoothstep(-0.25, 0.35, ndlG);   // twilight band
   // sunlight reddens as it grazes through the air at the terminator
-  vec3 sunCol = uSun * mix(vec3(1.0, 0.45, 0.22), vec3(1.0), mix(1.0, smoothstep(-0.03, 0.14, ndlG), sat(uAtmoDensity * 1.5)));
+  vec3 sunCol = uSun * mix(vec3(1.0, 0.62, 0.42), vec3(1.0), mix(1.0, smoothstep(-0.02, 0.07, ndlG), sat(uAtmoDensity * 1.5)));
 
   // --- weather (computed first: it shades the ground) ---------------------------
   float cloud = 0.0, cshadow = 1.0;
@@ -252,15 +252,15 @@ void main(){
     // metropolitan regions follow the habitable lowlands and coasts
     float region = smoothstep(0.3, 0.65, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.5 - 0.15) * smoothstep(0.05, 0.35, cityPot);
     float coast = smoothstep(0.25, 0.0, h);
-    vec2 wc = worley(sd * 46.0);
-    float cores = smoothstep(0.16, 0.0, wc.x);                                    // city cores
+    vec2 wc = worley(sd * 70.0);
+    float cores = smoothstep(0.13, 0.0, wc.x) * (0.6 + 0.4 * snoise(sd * 500.0));                                    // city cores
     float sprawl = smoothstep(0.42, 0.04, wc.x) * smoothstep(0.45, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
-    float roads = smoothstep(0.025, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x); // highways between cities
-    vec2 wt = worley(sd * 170.0 + 7.0);
+    float roads = smoothstep(0.02, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x) * smoothstep(0.3, 0.7, snoise(sd * 260.0) * 0.5 + 0.5); // highways between cities
+    vec2 wt = worley(sd * 260.0 + 7.0);
     float town = smoothstep(0.14, 0.0, wt.x) * smoothstep(0.2, 0.6, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
     float lights = region * (cores * 2.2 + sprawl * 0.6 + roads * 0.45 + town * 0.7) * (0.45 + 0.55 * coast);
     lights *= (uCiv - 1.0) * 0.6;
-    emis += uLights * lights * night * 2.2 * (1.0 - cloud * 0.85);
+    emis += uLights * lights * night * 3.4 * (1.0 - cloud * 0.8);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);
@@ -275,7 +275,7 @@ void main(){
   float path = uAtmoDensity * 0.09 / max(ndv, 0.06);
   float haze = 1.0 - exp(-path);
   float lit = smoothstep(-0.22, 0.4, ndlG);
-  vec3 air = uAtmo * uSun * lit * 1.1 + vec3(1.0, 0.4, 0.15) * uSun * exp(-pow((ndlG - 0.0) / 0.07, 2.0)) * 0.18 * uAtmoDensity;
+  vec3 air = uAtmo * uSun * lit * 1.1 + vec3(1.0, 0.4, 0.15) * uSun * exp(-pow((ndlG + 0.02) / 0.05, 2.0)) * 0.05 * uAtmoDensity;
   col = col * (1.0 - haze * 0.75) + air * haze;
 #endif
   gl_FragColor = vec4(col, 1.0);
@@ -328,7 +328,7 @@ void main(){
   vec3 c2 = mix(vec3(dot(uC2, vec3(0.3, 0.5, 0.2))), uC2, 0.35);
   vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
   col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
-  col *= 0.93 + 0.05 * b3 + 0.025 * b4;
+  col *= 0.92 + 0.07 * b3 + 0.04 * b4;
   col *= 0.95 + 0.07 * n;
   // small bright convective spots and dark barges in the shear zones
   vec2 wv = worley(vec3(sd.x * 14.0, sd.y * 40.0, sd.z * 14.0) + uSeed + n * 0.6);
@@ -361,7 +361,7 @@ void main(){
   // limb darkening and a thin high haze on the lit limb
   c *= 0.5 + 0.5 * pow(ndv, 0.4);
   float rim = pow(1.0 - ndv, 5.0);
-  c += uAtmo * uSun * rim * smoothstep(-0.1, 0.5, ndlG) * 0.22;
+  c += mix(col, uAtmo, 0.35) * uSun * rim * smoothstep(-0.1, 0.5, ndlG) * 0.07;
 #ifdef HAS_RINGS
   c *= ringShadow(vWP, L, uCenter, uRingN, uRingIn, uRingOut, uRingOp, uRingSeed);
   // ringshine: sunlight scattered off the rings faintly lights the night side
@@ -425,8 +425,15 @@ void main(){
   float muL = max(abs(sl), 0.05), muV = max(abs(sv), 0.05);
   float tau = dens * uOp * 2.2;
   // albedo varies ring to ring: dusty brown C ring and Cassini division, bright icy B and A rings
-  float tone = 0.8 + 0.3 * rNoise(x * 55.0 + uSeed) - 0.3 * (1.0 - smoothstep(0.22, 0.3, x));
-  vec3 alb = uCol * tone * mix(vec3(0.78, 0.66, 0.54), vec3(1.0), smoothstep(0.2, 0.45, x));
+  float tone = 0.8 + 0.22 * rNoise(x * 55.0 + uSeed) + 0.1 * rNoise(x * 310.0 + uSeed * 2.0) + 0.06 * rNoise(x * 1400.0) - 0.3 * (1.0 - smoothstep(0.22, 0.3, x));
+  // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer
+  vec3 tint = mix(vec3(0.7, 0.62, 0.55), vec3(1.04, 0.98, 0.9), smoothstep(0.22, 0.34, x));
+  tint = mix(tint, vec3(0.86, 0.85, 0.84), smoothstep(0.6, 0.68, x));
+  vec3 alb = uCol * tone * tint;
+  // self-gravity wakes: faint azimuthal clumping that gives the A ring its grain up close
+  float ang = atan(vLP.y, vLP.x);
+  float wake = rNoise(ang * 900.0 + x * 400.0 + uSeed) * smoothstep(0.66, 0.75, x) * (1.0 - smoothstep(0.003, 0.02, fw));
+  tau *= 1.0 - 0.15 * wake;
   // slant opacity: rings look denser when seen edge-on
   float opV = 1.0 - exp(-tau / muV);
   // single scattering of a particulate layer (lit face) / diffuse transmission (unlit face)

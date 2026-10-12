@@ -114,7 +114,12 @@ uniform float uStiff;
 varying vec3 vGCol;
 varying float vTrans;
 varying float vGlow;
+varying vec2 vGX;
 uniform float uGlow;
+#ifdef GLOWPOOL
+uniform vec4 uGlowPts[16];
+varying float vPool;
+#endif
 ${WIND_GLSL}
 vec3 fl_unpack(float v) {
   float r = floor(v / 65536.0); float g = floor((v - r * 65536.0) / 256.0); float b = v - r * 65536.0 - g * 256.0;
@@ -164,7 +169,8 @@ const BLADE_BODY = /* glsl */ `
   vec3 tang = gUp * shrink + lean * 2.0 * t;
 #ifdef FLOWER
   if (part > 0.5) {
-    float hs = uHeadSize * (0.55 + 0.9 * rnd * rnd) * vis * min(wk, 2.2);
+    // hero blooms close to the lens, smaller and sparser far away
+    float hs = uHeadSize * (0.55 + 0.9 * rnd * rnd) * vis * min(wk, 2.2) * (1.0 + 0.55 * (1.0 - smoothstep(2.0, 7.0, dC)));
     vec3 hup = normalize(tang + gUp * 0.6);
     vec3 hs1 = normalize(cross(hup, side)); vec3 hs2 = cross(hs1, hup);
     p += (hs1 * position.x + hs2 * position.z + hup * position.y) * hs;
@@ -202,22 +208,39 @@ const BLADE_BODY = /* glsl */ `
   float gpatch = smoothstep(0.55, 0.85, fract(sin(dot(gpc, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
   vGlow = uGlow * smoothstep(0.55, 1.0, t) * step(0.6, rnd) * gpatch;
   vTrans = t * t;
+  vGX = vec2(position.x * 2.0, smoothstep(14.0, 4.0, dC));
 #endif
   float back = pow(max(dot(normalize(toC), uKeyDir), 0.0), 5.0);
   vTrans *= 0.22 + 1.6 * back;
+#ifdef GLOWPOOL
+  // soft pools of light under glowing crowns (inverse-square-ish, smooth cut)
+  vPool = 0.0;
+  for (int k = 0; k < 16; k++) {
+    vec4 gp = uGlowPts[k];
+    vec3 gd = p - gp.xyz; float r2 = dot(gd, gd) / (gp.w * gp.w);
+    vPool += (1.0 / (1.0 + 6.0 * r2)) * (1.0 - smoothstep(0.6, 1.0, r2 * 0.25));
+  }
+  vPool *= 0.35 + 0.65 * t;
+#endif
   vec3 objectNormal = bn;
 `;
 
-function makeBladeMaterial(U, flower, spike = false) {
+function makeBladeMaterial(U, flower, spike = false, pools = false) {
   const mat = new THREE.MeshStandardMaterial({ roughness: flower ? 0.6 : 0.52, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.85 });
   return patchMaterial(mat, U, (sh) => {
     if (flower) sh.defines = { ...(sh.defines || {}), FLOWER: '' };
     if (spike) sh.defines.SPIKE = '';
+    if (pools) sh.defines.GLOWPOOL = '';
     sh.vertexShader = BLADE_VERT + sh.vertexShader
       .replace('#include <beginnormal_vertex>', BLADE_BODY)
       .replace('#include <begin_vertex>', 'vec3 transformed = p;');
-    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n#ifdef SPIKE\nvarying vec2 vQ;\n#endif\n' + sh.fragmentShader
+    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nvarying vec2 vGX;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n#ifdef SPIKE\nvarying vec2 vQ;\n#endif\n#ifdef GLOWPOOL\nvarying float vPool;\n#endif\n' + sh.fragmentShader
       .replace('#include <color_fragment>', `diffuseColor.rgb = vGCol;
+#ifndef FLOWER
+  // blade anatomy up close: a pale midrib, darker channels beside it, thin bright margins
+  float gx = abs(vGX.x);
+  diffuseColor.rgb *= mix(1.0, (1.08 - 0.2 * smoothstep(0.08, 0.45, gx) + 0.14 * smoothstep(0.75, 1.0, gx)), vGX.y);
+#endif
 #ifdef SPIKE
   // florets are five-lobed blossoms cut from their quads, brighter at the heart
   float fr = length(vQ);
@@ -228,8 +251,8 @@ function makeBladeMaterial(U, flower, spike = false) {
   }
 #endif`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
-      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#include <opaque_fragment>');
-  }, flower ? (spike ? 'flora-spike' : 'flora-flower') : 'flora-grass');
+      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#ifdef GLOWPOOL\n  outgoingLight += (vGCol * 0.6 + uGlowCol * 0.25) * uGlowCol * min(vPool, 1.4) * (0.01 + 0.85 * uNight);\n#endif\n#include <opaque_fragment>');
+  }, (flower ? (spike ? 'flora-spike' : 'flora-flower') : 'flora-grass') + (pools ? '-gp' : ''));
 }
 
 // Leaf litter: flat fallen leaves on the forest floor (maple / golden worlds).
@@ -293,16 +316,27 @@ export class Grass {
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
       uR0: { value: this.r0 }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
       uGlow: { value: P.glow || 0 }, uTransK: { value: 0.22 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
+      uGlowPts: fl.uniforms.uGlowPts,
     };
-    this.mat = makeBladeMaterial(this.U, false);
+    this.pools = !!fl.profile.glowPools;
+    this.mat = makeBladeMaterial(this.U, false, false, this.pools);
     this.geo = bladeGeometry(q.level >= 2 ? 4 : 3);
     this.mesh = this._mesh(this.geo, this.mat);
     if (this.fdens0 > 0) {
-      this.FU = { ...this.U, uStemCol: { value: new THREE.Color(P.colors[1]).multiplyScalar(0.85) }, uHeadSize: { value: this.F.size || 0.05 }, uGlow: { value: this.F.glow || 0 }, uGlowCol: { value: new THREE.Color(this.F.glowCol || P.glowCol || '#6fe8ff') }, uWidthMax: { value: 2.0 }, uTransK: { value: 0.25 } };
+      this.FU = { ...this.U, uStemCol: { value: new THREE.Color(P.colors[1]).multiplyScalar(0.85) }, uHeadSize: { value: this.F.size || 0.05 }, uGlow: { value: this.F.glow || 0 }, uGlowCol: { value: new THREE.Color(this.F.glowCol || P.glowCol || '#6fe8ff') }, uWidthMax: { value: 2.0 }, uTransK: { value: 0.55 } };
       const spike = this.F.style === 'spike';
-      this.fmat = makeBladeMaterial(this.FU, true, spike);
+      this.fmat = makeBladeMaterial(this.FU, true, spike, this.pools);
       this.fgeo = spike ? spikeGeometry(q.level >= 2 ? 7 : 5) : flowerGeometry();
       this.fmesh = this._mesh(this.fgeo, this.fmat);
+      // a second species (daisies / cups among the spikes) in its own drifts
+      const F2 = this.F.second;
+      if (F2) {
+        this.FU2 = { ...this.FU, uHeadSize: { value: F2.size || 0.06 }, uStemCol: { value: new THREE.Color(F2.stem || P.colors[0]).multiplyScalar(0.8) } };
+        const sp2 = F2.style === 'spike';
+        this.fmat2 = makeBladeMaterial(this.FU2, true, sp2, this.pools);
+        this.fgeo2 = sp2 ? spikeGeometry(q.level >= 2 ? 7 : 5) : flowerGeometry();
+        this.fmesh2 = this._mesh(this.fgeo2, this.fmat2);
+      }
     }
     this.Lt = fl.profile.litter;
     if (this.Lt) {
@@ -382,7 +416,7 @@ export class Grass {
     const cellG = Math.max(c00.g, c10.g, c01.g, c11.g);
     const shoreCell = sea > -1e8 && Math.min(c00.h, c10.h, c01.h, c11.h) < sea + 1.6 && Math.max(c00.h, c10.h, c01.h, c11.h) > sea - 0.8;
     const siteK0 = this._siteClear(cx, cy, cz);
-    const out = [], fout = [], out2 = [];
+    const out = [], fout = [], out2 = [], fout2 = [];
     if ((cellG > 0.01 || shoreCell) && siteK0 > 0) {
       const rng = cellRng(this.seed, 11, face, i, j);
       const cols = P.colors.map((h) => new THREE.Color(h));
@@ -485,6 +519,7 @@ export class Grass {
         const ratio = this.fdens0 / this.dens0, fgen = Math.ceil(gen * ratio), ffull = Math.ceil(full * ratio);
         const frng = cellRng(this.seed, 23, face, i, j);
         const fcols = F.colors.map((h) => new THREE.Color(h));
+        const F2 = F.second, fcols2 = F2 ? F2.colors.map((h) => new THREE.Color(h)) : null;
         for (let k = 0; k < fgen; k++) {
           const u = frng(), v = frng(), r1 = frng(), r2 = frng(), r3 = frng();
           const fu = u * (G - 1), fv = v * (G - 1);
@@ -501,15 +536,20 @@ export class Grass {
           if (siteK0 < 1) g *= this._siteClear(x, y, z);
           if (r1 > g) continue;
           // one colour dominates a patch, a few others sprinkle through it
-          const pc = Math.floor((valueNoise3(x * nz.flower * 0.5, y * nz.flower * 0.5, z * nz.flower * 0.5, 53) * 0.5 + 0.5) * fcols.length * 0.999);
-          const col = r3 < 0.9 ? fcols[pc] : fcols[Math.floor(r3 * 9.5 * fcols.length) % fcols.length];
+          const pn = valueNoise3(x * nz.flower * 0.5, y * nz.flower * 0.5, z * nz.flower * 0.5, 53) * 0.5 + 0.5;
+          // second species: its own drifts (low-frequency noise), 10% strays
+          const two = F2 && ((valueNoise3(x * nz.flower * 0.7, y * nz.flower * 0.7, z * nz.flower * 0.7, 71) > 0.5 - (F2.share ?? 0.4)) !== (r2 < 0.1));
+          const cs = two ? fcols2 : fcols;
+          const pc = Math.floor(pn * cs.length * 0.999);
+          const col = r3 < 0.9 ? cs[pc] : cs[Math.floor(r3 * 9.5 * cs.length) % cs.length];
           _c.copy(col).multiplyScalar(0.8 + 0.35 * r2);
-          const hh = THREE.MathUtils.lerp(F.h[0], F.h[1], r2);
-          fout.push(x - cx, y - cy, z - cz, k / ffull, r3 * 6.2832, hh, 0.012, packColor(_c));
+          const FH = two ? (F2.h || F.h) : F.h;
+          const hh = THREE.MathUtils.lerp(FH[0], FH[1], r2);
+          (two ? fout2 : fout).push(x - cx, y - cy, z - cz, k / ffull, r3 * 6.2832, hh, 0.012, packColor(_c));
         }
       }
     }
-    c.data = { gen, fine, cx, cy, cz, blades: new Float32Array(out), flowers: new Float32Array(fout), litter: new Float32Array(out2), fgen: gen };
+    c.data = { gen, fine, cx, cy, cz, blades: new Float32Array(out), flowers: new Float32Array(fout), flowers2: new Float32Array(fout2), litter: new Float32Array(out2), fgen: gen };
   }
 
   _count(c, arr) {
@@ -561,13 +601,14 @@ export class Grass {
       this.layer.dirty = false;
       this._pack(this.mesh, 'blades');
       if (this.fmesh) this._pack(this.fmesh, 'flowers');
+      if (this.fmesh2) this._pack(this.fmesh2, 'flowers2');
       if (this.lmesh) this._pack(this.lmesh, 'litter');
     }
   }
 
-  get count() { return (this.mesh?.geometry.instanceCount || 0) + (this.fmesh?.geometry.instanceCount || 0); }
+  get count() { return (this.mesh?.geometry.instanceCount || 0) + (this.fmesh?.geometry.instanceCount || 0) + (this.fmesh2?.geometry.instanceCount || 0); }
 
   dispose() {
-    this.geo?.dispose(); this.mat?.dispose(); this.fgeo?.dispose(); this.fmat?.dispose(); this.lgeo?.dispose(); this.lmat?.dispose();
+    this.geo?.dispose(); this.mat?.dispose(); this.fgeo?.dispose(); this.fmat?.dispose(); this.fgeo2?.dispose(); this.fmat2?.dispose(); this.lgeo?.dispose(); this.lmat?.dispose();
   }
 }

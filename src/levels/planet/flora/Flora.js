@@ -47,6 +47,9 @@ export default class Flora {
       uNight: { value: 0 },
       uCam: { value: new THREE.Vector3() },
       uPlayer: { value: new THREE.Vector3(1e9, 0, 0) },
+      // nearest glowing trees (xyz rel. anchor, w = pool radius m): light pools
+      // on the grass beneath bioluminescent crowns at night
+      uGlowPts: { value: Array.from({ length: 16 }, () => new THREE.Vector4(1e9, 0, 0, 1)) },
     };
     this.noiseScale = { patch: 1 / 9, color: 1 / 46, flower: 1 / 16, forest: 1 / 240 };
     this.sites = this.world.sites || [];
@@ -104,6 +107,36 @@ export default class Flora {
 
   update() {}
 
+  /** Plant world-species trees for other modules (see Trees.plant). */
+  plant(list) { try { return this.trees?.plant(list) || 0; } catch (e) { this._err('plant', e); return 0; } }
+
+  // 'flora' screenshot preset: the landmark tree from ~170 m across its
+  // meadow (forest, undergrowth and rocks in the foreground)
+  shot(name, spot) {
+    if (name !== 'flora' || !this.trees?.landmark) return false;
+    const w = this.world, L = this.trees.landmark;
+    const up = L.position.clone().normalize();
+    const away = spot.position.clone().sub(L.position); away.addScaledVector(up, -away.dot(up)).normalize();
+    const side = away.clone().cross(up).normalize();
+    const dist = Math.max(150, L.height * 1.9);
+    let best = null;
+    for (let k = 0; k < 12; k++) {
+      const a = (k % 2 ? 1 : -1) * Math.floor((k + 1) / 2) * 0.3;
+      const d = away.clone().multiplyScalar(Math.cos(a)).addScaledVector(side, Math.sin(a));
+      const dir = L.position.clone().addScaledVector(d, dist).normalize();
+      const h = w.heightAt(dir);
+      if (w.hasOcean && h < w.seaLevel + 1) continue;
+      const n = w.normalAt(dir).dot(dir);
+      if (!best || n > best.n) best = { dir, h, n };
+      if (n > 0.97) break;
+    }
+    if (!best) return false;
+    const pos = best.dir.clone().multiplyScalar(w.radius + best.h + 1.8);
+    const tgt = L.position.clone().addScaledVector(up, L.height * 0.42);
+    this.level.freeCam = { position: pos, target: tgt };
+    return true;
+  }
+
   // Streaming runs after camera rigs have placed the camera this frame.
   lateUpdate() {
     if (!this.profile || !this.parts.length) return;
@@ -137,6 +170,7 @@ export default class Flora {
     try { if (this.grass && alt < 400) { this.grass.mesh.visible = true; this.grass.update(_cam, budget * 0.8, force); } else if (this.grass) this.grass.mesh.visible = false; }
     catch (e) { this._err('grass', e); }
     if (this.grass?.fmesh) this.grass.fmesh.visible = this.grass.mesh.visible;
+    if (this.grass?.fmesh2) this.grass.fmesh2.visible = this.grass.mesh.visible;
     if (this.grass?.lmesh) this.grass.lmesh.visible = this.grass.mesh.visible;
     try { this.trees?.update(_cam, _cam, col, budget * 0.6, force); } catch (e) { this._err('trees', e); }
     try { if (this.rocks && alt < 1500) this.rocks.update(_cam, col, budget * 0.4, force); } catch (e) { this._err('rocks', e); }

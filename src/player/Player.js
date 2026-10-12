@@ -597,7 +597,7 @@ export default class Player {
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    addSc(U.uKick.value.copy(key).multiplyScalar(0.24), skyC, 0.45).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(0.32), skyC, 0.45).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
@@ -644,9 +644,81 @@ export default class Player {
       const tl = toT.length();
       const hs = w.raycast(cp, toT.normalize(), tl);
       if (hs && hs.distance < tl * 0.9) score -= 2.5;
+      score -= this._occlusion(cp, camH, up, 25, 0.5) * 3;
       if (!best || score > best.score) best = { score, camH };
     }
     return best.camH;
+  }
+
+  /** Colliders (trees, rocks, buildings) blocking a view cone: Σ angular size within maxD. */
+  _occlusion(from, dirH, up, maxD, halfAngle = 0.55) {
+    const cols = this.world.colliders;
+    if (!cols) return 0;
+    let occ = 0;
+    const rel = _v;
+    for (const c of cols) {
+      rel.copy(c.center).sub(from);
+      const along = rel.dot(up);
+      rel.addScaledVector(up, -along);
+      const d = rel.length();
+      if (d > maxD + c._r || d < 1e-3) continue;
+      const size = c.type === 'cylinder' ? c.radius : c.type === 'box' ? Math.max(c.half.x, c.half.z) : c.radius;
+      const fwd = rel.dot(dirH) / d;
+      const ang = Math.acos(clamp(fwd, -1, 1)) - Math.atan(size / d);
+      if (ang > halfAngle) continue;
+      occ += Math.min(1.2, (size * 2) / Math.max(1, d)) * (1 - d / (maxD + c._r));
+    }
+    return occ;
+  }
+
+  /** Hero-shot ground: flat, dry, no trunk or wall right in front of the lens, settlement visible. */
+  _refineHeroSpot(pos0, target, crest = false) {
+    const w = this.world;
+    const up0 = pos0.clone().normalize();
+    const t1 = new THREE.Vector3().subVectors(target, pos0); t1.addScaledVector(up0, -t1.dot(up0)).normalize();
+    const t2 = new THREE.Vector3().crossVectors(up0, t1).normalize();
+    let best = null;
+    const rings = crest ? [0, 12, 25, 42, 64, 90, 120] : [0, 7, 14, 22, 32, 44];
+    for (const rr of rings) {
+      const na = rr === 0 ? 1 : 10;
+      for (let k = 0; k < na; k++) {
+        const a = (k / na) * Math.PI * 2;
+        const dir = pos0.clone().addScaledVector(t1, Math.cos(a) * rr).addScaledVector(t2, Math.sin(a) * rr).normalize();
+        const h = w.heightAt(dir);
+        if (w.hasOcean && h < w.seaLevel + 0.8) continue;
+        const p = dir.clone().multiplyScalar(w.radius + h);
+        const n = w.normalAt(dir);
+        const slope = Math.acos(clamp(n.dot(dir), -1, 1));
+        let score = -Math.max(0, slope - 0.14) * 30 - rr * (crest ? 0.006 : 0.025);
+        if (crest) {
+          // a crest: higher than the ground around it, with the land falling away toward the site
+          let hs = 0;
+          for (let j = 0; j < 6; j++) {
+            const b = (j / 6) * Math.PI * 2;
+            hs += w.heightAt(dir.clone().addScaledVector(t1, Math.cos(b) * 18 / w.radius).addScaledVector(t2, Math.sin(b) * 18 / w.radius).normalize());
+          }
+          score += clamp(h - hs / 6, -6, 8) * 0.6;
+          const fwdH = new THREE.Vector3().subVectors(target, dir.clone().multiplyScalar(w.radius + h));
+          fwdH.addScaledVector(dir, -fwdH.dot(dir)).normalize();
+          const eye0 = dir.clone().multiplyScalar(w.radius + h + 1.7);
+          for (const el of [-0.03, 0.0, 0.03]) {
+            const hit = w.raycast(eye0, fwdH.clone().addScaledVector(dir, el).normalize(), 400);
+            if (hit) score -= (1 - hit.distance / 400) * 2;
+          }
+        }
+        const toT = new THREE.Vector3().subVectors(target, p);
+        const tH = toT.clone().addScaledVector(dir, -toT.dot(dir)).normalize();
+        // the camera stands ~3 m behind, looking past the hero toward the site
+        score -= this._occlusion(p.clone().addScaledVector(tH, -3), tH, dir, 30, 0.6) * 4;
+        score -= this._occlusion(p, tH.clone().negate(), dir, 6, 1.2) * 2; // nothing hugging the camera
+        const eye = p.clone().addScaledVector(dir, 1.6);
+        const tt = target.clone().addScaledVector(dir, 12).sub(eye); const tl = tt.length();
+        const hit = w.raycast(eye, tt.normalize(), tl);
+        if (hit && hit.distance < tl * 0.9) score -= 3;
+        if (!best || score > best.score) best = { score, p };
+      }
+    }
+    return best ? best.p : pos0;
   }
 
   _endShotPose() {
@@ -670,8 +742,9 @@ export default class Player {
       this.engine.ui.telemetry?.(null);
     }
     const target = (spot.site?.position || spot.lookAt).clone();
-    const toSite = target.clone().sub(spot.position);
-    this.ctl.place(spot.position, toSite);
+    const where = (name === 'character' || name === 'vista') ? this._refineHeroSpot(spot.position, target, name === 'vista') : spot.position;
+    const toSite = target.clone().sub(where);
+    this.ctl.place(where, toSite);
     this._afterTeleport();
     level.setMode('onfoot');
     const up = this.ctl.up;
@@ -691,32 +764,35 @@ export default class Player {
       const speed = 3.7;
       const gait = THREE.MathUtils.smoothstep(speed, 2.6, 4.6);
       const duty = THREE.MathUtils.lerp(0.6, 0.29, gait);
-      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.02], leanAdd: 0.06, air: 4.4 };
+      this.shotPose = { state: 'ground', speed, look: [-0.45, 0.04], leanAdd: 0.1, air: 3.3 };
       cam.view = 'third';
-      cam.distance = portrait ? 3.1 : 2.85; cam.shoulder = portrait ? 0.1 : 0.82;
+      cam.distance = portrait ? 2.55 : 2.6; cam.shoulder = portrait ? 0.1 : 0.62;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.3 : 1.22;
+      cam.pivotHeight = portrait ? 1.36 : 1.36;
       const camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
       this.ctl.setFacing(turn(camH, -0.62));
-      this.anim.phase = duty * 0.14;
+      this.anim.phase = duty * 0.14 + 0.5; // near arm forward in profile, far arm back
       this.anim.freezePhase = true;
-      cam.snap(this.ctl.pos, up, camH, -0.02);
+      cam.snap(this.ctl.pos, up, camH, portrait ? -0.1 : -0.13);
     } else if (name === 'fp') {
-      this.shotPose = { state: 'ground', speed: 0, look: [0, -0.05] };
+      this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);
       cam.view = 'first';
-      cam.snap(this.ctl.pos, up, siteDir, -0.06);
+      cam.snap(this.ctl.pos, up, siteDir, 0.05);
     } else if (name === 'vista') {
       this.shotPose = { state: 'ground', speed: 0, look: [0.35, 0.08] };
       this.ctl.setFacing(turn(siteDir, 0.15));
       this.anim.idleTime = 0;
-      cam.view = 'third'; cam.distance = 5.2; cam.shoulder = 0.9;
-      cam.snap(this.ctl.pos, up, turn(siteDir, -0.18), 0.02);
+      // the explorer stands low on the left third, the land opening out toward the settlement
+      cam.view = 'third'; cam.distance = 5.6; cam.shoulder = 1.25;
+      this._shotPivot = this._shotPivot ?? cam.pivotHeight;
+      cam.pivotHeight = 2.1;
+      cam.snap(this.ctl.pos, up, turn(siteDir, -0.12), -0.02);
     } else if (name === 'night') {
       this.shotPose = { state: 'ground', speed: 0, look: [0.5, 0.45] };
       this.ctl.setFacing(turn(siteDir, 0.6));
       cam.view = 'third'; cam.distance = 3.4; cam.shoulder = 0.5;
-      cam.snap(this.ctl.pos, up, turn(siteDir, -0.3), 0.28);
+      cam.snap(this.ctl.pos, up, turn(siteDir, -0.3), 0.1);
     }
     this.ctl.frozen = true;
     this.ctl.vel.set(0, 0, 0); this.ctl.vUp = 0;

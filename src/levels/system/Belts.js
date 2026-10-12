@@ -18,15 +18,26 @@ function rockGeometry(seed, detail) {
   const rng = new Random(seed);
   const pos = g.getAttribute('position');
   const v = new THREE.Vector3();
-  const sx = rng.range(0.6, 1.0), sy = rng.range(0.45, 0.85), sz = 1.0;
+  const sx = rng.range(0.55, 1.0), sy = rng.range(0.4, 0.85), sz = 1.0;
+  // impact craters (power-law sizes) and fracture planes: rubble piles are faceted, not blobs
   const craters = [];
-  for (let i = 0; i < 5; i++) { const [x, y, z] = rng.unitVector(); craters.push([new THREE.Vector3(x, y, z), rng.range(0.25, 0.6), rng.range(0.08, 0.2)]); }
+  const nc = 4 + detail * 3;
+  for (let i = 0; i < nc; i++) { const [x, y, z] = rng.unitVector(); const rad = 0.12 + 0.5 * Math.pow(rng.float(), 2.2); craters.push([new THREE.Vector3(x, y, z), rad, rad * rng.range(0.25, 0.45)]); }
+  const planes = [];
+  const np = rng.int(1, 4);
+  for (let i = 0; i < np; i++) { const [x, y, z] = rng.unitVector(); planes.push([new THREE.Vector3(x, y, z), rng.range(0.62, 0.86)]); }
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i).normalize();
-    let r = 1 + 0.32 * n.fbm3(v.x * 1.3, v.y * 1.3, v.z * 1.3, 4) + 0.12 * n.ridged3(v.x * 3, v.y * 3, v.z * 3, 3) - 0.06;
+    let r = 1 + 0.3 * n.fbm3(v.x * 1.2, v.y * 1.2, v.z * 1.2, 4) + 0.1 * n.ridged3(v.x * 3, v.y * 3, v.z * 3, 4) - 0.06;
+    if (detail >= 3) r += 0.025 * n.ridged3(v.x * 9, v.y * 9, v.z * 9, 3) + 0.012 * n.fbm3(v.x * 22, v.y * 22, v.z * 22, 2);
     for (const [c, rad, depth] of craters) {
       const d = v.distanceTo(c) / rad;
-      if (d < 1.25) r += d < 1 ? -depth * (1 - d * d) : depth * 0.6 * (1 - (d - 1) / 0.25) * 0.5;
+      if (d < 1.3) r += d < 1 ? -depth * (1 - d * d) * 0.9 : depth * 0.5 * (1 - (d - 1) / 0.3);
+    }
+    // fracture faces: clamp the radius against a few planes (soft-min keeps edges crisp but not knife-sharp)
+    for (const [pn, off] of planes) {
+      const c = v.dot(pn);
+      if (c > 0.05) { const lim = off / c; if (r > lim) r = lim + (r - lim) * 0.12; }
     }
     pos.setXYZ(i, v.x * r * sx, v.y * r * sy, v.z * r * sz);
   }
@@ -39,7 +50,7 @@ attribute vec4 aOrbit;   // r, theta0, y, omega (rad/day)
 attribute vec4 aRock;    // scale, spin (rad/s), seed, tint
 attribute vec3 aAxis;
 uniform float uDays, uTime;
-varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint;
+varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale;
 vec3 rotAxis(vec3 v, vec3 k, float a){ float c = cos(a), s = sin(a); return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
 void main(){
   float th = aOrbit.y + aOrbit.w * uDays;
@@ -47,7 +58,7 @@ void main(){
   float sa = aRock.y * uTime + aRock.z * 6.0;
   vec3 lp = rotAxis(position, aAxis, sa) * aRock.x;
   vN = rotAxis(normal, aAxis, sa);
-  vLP = position; vSeed = aRock.z; vTint = aRock.w;
+  vLP = position; vSeed = aRock.z; vTint = aRock.w; vScale = aRock.x;
   vWP = c + lp;
   gl_Position = projectionMatrix * viewMatrix * vec4(vWP, 1.0);
 }`;
@@ -55,26 +66,41 @@ void main(){
 const ROCK_FRAG = /* glsl */`
 ${NOISE_GLSL}
 uniform vec3 uCol; uniform vec3 uSun; uniform float uIce;
-varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint;
+varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale;
 void main(){
   vec3 Ng = normalize(vN);
-  float h = fbm(vLP * 2.6 + vSeed * 17.0, 4);
-  float spk = fbm(vLP * 12.0 + vSeed * 5.0, 2);
+  vec3 lp = vLP + vSeed * 17.0;
+  float h = fbm(lp * 2.6, 4);
+  float spk = fbm(lp * 12.0, 3);
+  // small craters and boulders resolved in the shader
+  vec2 cr = worley(lp * 6.0);
+  float crater = smoothstep(0.35, 0.05, cr.x) * -0.6 + smoothstep(0.3, 0.42, cr.x) * smoothstep(0.55, 0.42, cr.x) * 0.25;
+  vec2 cr2 = worley(lp * 17.0 + 3.0);
+  float crater2 = smoothstep(0.3, 0.05, cr2.x) * -0.5 + smoothstep(0.28, 0.4, cr2.x) * smoothstep(0.5, 0.4, cr2.x) * 0.2;
+  float hb = (h * 0.9 + spk * 0.35 + crater * 0.35 + crater2 * 0.15) * vScale * 0.09;
   vec3 dpdx = dFdx(vWP), dpdy = dFdy(vWP);
-  float dhdx = dFdx(h), dhdy = dFdy(h);
+  float dhdx = dFdx(hb), dhdy = dFdy(hb);
   vec3 r1 = cross(dpdy, Ng), r2 = cross(Ng, dpdx);
   float det = dot(dpdx, r1);
-  vec3 N = normalize(abs(det) * Ng - sign(det) * (dhdx * r1 + dhdy * r2) * 0.025);
+  vec3 N = normalize(abs(det) * Ng - sign(det) * (dhdx * r1 + dhdy * r2));
+  if (dot(N, Ng) < 0.2) N = Ng;
   vec3 L = normalize(-vWP);
   vec3 V = normalize(cameraPosition - vWP);
-  float ndl = max(dot(N, L), 0.0) * smoothstep(-0.05, 0.15, dot(Ng, L));
-  vec3 alb = uCol * (0.65 + 0.5 * vTint) * (0.75 + 0.35 * h + 0.12 * spk);
-  alb = mix(alb, alb * vec3(1.15, 0.92, 0.75), smoothstep(0.2, 0.7, fbm(vLP * 2.0 + vSeed, 2)) * (1.0 - uIce));
-  // regolith: rough, back-scattering (opposition surge) + a hint of ice glint
-  float opp = 1.0 + 0.4 * pow(max(dot(V, L), 0.0), 8.0);
+  float ndlG = dot(Ng, L);
+  // rough regolith: Oren-Nayar-ish flattening + a hard terminator (no air, no fill light)
+  float ndl = max(dot(N, L), 0.0);
+  ndl = mix(ndl, sqrt(ndl), 0.35) * smoothstep(-0.08, 0.12, ndlG);
+  vec3 alb = uCol * (0.6 + 0.55 * vTint) * (0.72 + 0.4 * h + 0.16 * spk);
+  // space weathering: mature reddish-brown regolith vs fresh grey-white ejecta around young craters
+  float fresh = smoothstep(0.2, 0.0, cr.x) * 0.5 + smoothstep(0.12, 0.0, cr2.x) * 0.35;
+  alb = mix(alb, alb * vec3(1.18, 0.95, 0.78), smoothstep(0.1, 0.6, fbm(lp * 1.5, 3)) * (1.0 - uIce));
+  alb = mix(alb, vec3(dot(alb, vec3(0.33))) * 1.5, fresh * (1.0 - uIce * 0.5));
+  // crater floors sit in shadow-dark material
+  alb *= 1.0 - 0.25 * smoothstep(0.25, 0.0, cr.x);
+  float opp = 1.0 + 0.5 * pow(max(dot(V, L), 0.0), 10.0);
   vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 40.0) * 0.12 * uIce;
-  vec3 c = alb * uSun * (ndl * opp + spec) + alb * vec3(0.010, 0.011, 0.014);
+  float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce) * ndl;
+  vec3 c = alb * uSun * (ndl * opp) + uSun * spec + alb * vec3(0.012, 0.014, 0.02) * (0.6 + 0.4 * max(dot(N, -L), 0.0));
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -90,7 +116,9 @@ export class Belt {
     // LOD by size class: the few big rocks get detailed meshes
     const classes = [
       { detail: 1, variants: 6, frac: 0.92, size: [0.012, 0.09] },
-      { detail: q.level >= 2 ? 3 : 2, variants: 4, frac: 0.08, size: [0.09, 0.42] },
+      { detail: q.level >= 2 ? 3 : 2, variants: 4, frac: 0.075, size: [0.09, 0.42] },
+      // a handful of large worldlets with full detail
+      { detail: q.level >= 2 ? 5 : 4, variants: 2, frac: 0.005, size: [0.42, 0.9] },
     ];
     const sun = starColor.clone().multiplyScalar(1.4);
     this.mat = new THREE.ShaderMaterial({
@@ -98,6 +126,13 @@ export class Belt {
       vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG,
     });
     this.instances = []; // CPU copy (for shots / picking)
+    // collisional families: clumps of debris sharing an orbit around a large parent body
+    const fams = [];
+    const nF = kuiper ? 10 : 28;
+    for (let f = 0; f < nF; f++) {
+      const x = kuiper ? rng.float() : THREE.MathUtils.clamp(0.5 + rng.gaussian(0, 0.17), 0, 1);
+      fams.push({ r: rIn + (rOut - rIn) * x, th: rng.range(0, Math.PI * 2), y: rng.gaussian(0, thick * 0.4), used: 0 });
+    }
     for (const cls of classes) {
       const nCls = Math.max(cls.variants, Math.round(total * cls.frac));
       const per = Math.ceil(nCls / cls.variants);
@@ -110,11 +145,19 @@ export class Belt {
           // radial distribution: Kirkwood-like gaps for the main belt
           let x = rng.float();
           if (!kuiper) x = THREE.MathUtils.clamp(0.5 + rng.gaussian(0, 0.17), 0, 1);
-          const r = rIn + (rOut - rIn) * x;
-          const aAU = layout.ra(r);
-          const omega = (Math.PI * 2) / layout.periodDays(aAU);
-          const th = rng.range(0, Math.PI * 2);
-          const y = rng.gaussian(0, thick * 0.5);
+          let r = rIn + (rOut - rIn) * x;
+          let th = rng.range(0, Math.PI * 2);
+          let y = rng.gaussian(0, thick * 0.5);
+          // the largest bodies anchor the families; a share of the rest swarms around them
+          const big = cls.size[0] >= 0.4;
+          let fam = null;
+          if (big || rng.chance(kuiper ? 0.15 : 0.32)) {
+            const F = fam = big ? fams[fams.findIndex((q) => !q.used) >= 0 ? fams.findIndex((q) => !q.used) : rng.int(0, nF - 1)] : fams[rng.int(0, nF - 1)];
+            if (big) { F.used = 1; r = F.r; th = F.th; y = F.y; }
+            else { const sp = rng.range(0.4, 2.2); r = F.r + rng.gaussian(0, sp); th = F.th + rng.gaussian(0, sp * 1.6) / F.r; y = F.y + rng.gaussian(0, sp * 0.4); }
+          }
+          // family members co-orbit with their parent (the clump persists); field rocks shear differentially
+          const omega = (Math.PI * 2) / layout.periodDays(layout.ra(fam ? fam.r : r));
           // power-law sizes: many pebbles, few boulders
           const s = cls.size[0] + (cls.size[1] - cls.size[0]) * Math.pow(rng.float(), 3.2);
           orb.set([r, th, y, omega], i * 4);

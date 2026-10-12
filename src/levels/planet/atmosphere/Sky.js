@@ -125,6 +125,7 @@ uniform float uGalaxyGain;
 uniform mat3 uCelToGal;
 uniform float uSpace;
 uniform float uStarVis;
+uniform float uStarCut;   // adaptation: faint-star cutoff (raised in orbit beside a sunlit planet)
 uniform float uPixelAng;
 uniform float uTime;
 uniform float uPlanetR;
@@ -149,7 +150,7 @@ vec3 starColor(float h){
 // One cell-hashed star layer. Fluxes follow a Euclidean power law
 // N(>F) ∝ F^-1.5 (F = Fmin·u^-2/3): a handful of bright stars over a fine dust
 // of faint ones. Energy is spread over the pixel footprint (resolution-stable).
-vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float fmax){
+vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float fmax, float cut){
   vec3 p = d * scale;
   vec3 c = floor(p);
   vec3 h = hash33(c + seed);
@@ -160,13 +161,17 @@ vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float
   if (any(lessThan(f, vec3(0.12))) || any(greaterThan(f, vec3(0.88)))) return vec3(0.0);
   vec3 sd = normalize(sp);
   float ang = length(d - sd);
-  float sig = uPixelAng * 0.7;   // >= ~1.2 px footprint: survives upsampling and FXAA
+  float sig = uPixelAng * 0.6;   // ~1 px footprint: pin-sharp but survives FXAA
   float u = max(h.y / max(density, 1e-3), 1e-4);
   // N(>F) ∝ F^-0.9 (≈ the naked-eye dN/dm ∝ 10^0.35m): a few dozen brilliant anchors over a fine dust
   float flux = min(fmin * pow(u, -1.1), fmax);
+  // eye adaptation: the faint end drops out smoothly (a magnitude hierarchy, not salt noise)
+  flux *= smoothstep(cut, cut * 2.5, flux);
+  if (flux <= 0.0) return vec3(0.0);
   float g = exp(-ang * ang / (2.0 * sig * sig)) / (6.2831853 * sig * sig);
   // mostly white with a gentle B-V tint
-  vec3 tint = mix(vec3(1.0), starColor(h.z), 0.45);
+  // brighter stars show their colour (blackbody), the faint dust stays near-white
+  vec3 tint = mix(vec3(1.0), starColor(h.z), mix(0.35, 0.8, smoothstep(0.05, 1.0, flux)));
   return tint * flux * g * 1.25e-5;
 }
 
@@ -240,7 +245,8 @@ void main(){
     float th = acos(clamp(dot(rd, md), -1.0, 1.0));
     if (th > ar * 60.0) continue;
     float frac = 0.5 * (1.0 - dot(md, uSunDir));
-    vec3 Lm = uMoonCol[i].rgb * uMoonCol[i].a * uSunE * 0.8 * frac * frac;
+    // moonlight through the night air reads cool (scotopic), never a warm daytime aureole
+    vec3 Lm = vec3(dot(uMoonCol[i].rgb * uSunE, vec3(0.3333))) * vec3(0.72, 0.86, 1.12) * uMoonCol[i].a * 0.8 * frac * frac;
     float x = max(th - ar, 0.0);
     float glow = 0.14 * exp(-x / (ar * 1.4)) + 0.03 * exp(-x / (ar * 5.0)) + 0.006 * exp(-x / (ar * 20.0));
     col += Lm * glow * (1.0 - uSpace) * mix(0.75, 1.0, step(ar, th));
@@ -270,8 +276,8 @@ void main(){
     // the bulge, cool-white in the arms; contrast lives in the dust rifts, not the hue
     float gd = gl * uGalaxyGain * 0.7;
     // blue-white star clouds in the faint arms, warm only in the luminous bulge
-    vec3 gtint = mix(vec3(0.84, 0.92, 1.1), vec3(1.1, 0.96, 0.8), smoothstep(0.03, 0.2, gd));
-    vec3 galD = mix(vec3(gl) * gtint, gal, 0.3) * uGalaxyGain * 0.7;
+    vec3 gtint = mix(vec3(0.86, 0.93, 1.1), vec3(1.1, 0.97, 0.84), smoothstep(0.08, 0.35, gd));
+    vec3 galD = mix(vec3(gl) * gtint, gal, 0.15) * uGalaxyGain * 0.7;
     galD *= smoothstep(0.007, 0.05, gd) * clamp(gd / 0.04, 0.3, 1.8);
     // dust: coherent dark rifts hugging the mid-plane (Great-Rift-like) plus mottled
     // star clouds; smooth fBm lanes, anisotropic along the plane (no crackle veins)
@@ -281,7 +287,7 @@ void main(){
       // filaments stretched along galactic longitude
       vec3 fp = vec3(dg.x, dg.y * 5.0, dg.z);
       float lanes = snoise(fp * 4.0 + 1.7) * 0.55 + snoise(fp * 11.0 + vec3(5.1, 2.3, 8.7)) * 0.3 + snoise(fp * 27.0 - 3.3) * 0.15;
-      float rift = smoothstep(0.0, 0.45, lanes) * exp(-dg.y * dg.y / 0.0025);
+      float rift = smoothstep(0.05, 0.35, lanes) * exp(-dg.y * dg.y / 0.0016);
       float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
       float mott = 0.8 + 0.4 * smoothstep(-0.5, 0.8, snoise(dc * 40.0));
       float absorb = clamp(rift * 0.92 + patchy * (1.0 - rift), 0.0, 0.94);
@@ -292,9 +298,9 @@ void main(){
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
     float dens = smoothstep(0.0, 1.0, gl * 90.0);
-    stars += starLayer(dc, 70.0, 1.0, 0.3, 0.004, 9.0);                // naked-eye stars (~6k, wide magnitude range)
-    stars += starLayer(dc, 190.0, 7.0, 0.025 + 0.6 * dens, 0.0025, 0.12); // faint field, crowded into the band
-    if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.5 * dens * dens, 0.0014, 0.035); // unresolved band grain (band only)
+    stars += starLayer(dc, 70.0, 1.0, 0.3, 0.004, 9.0, uStarCut);                         // naked-eye stars, wide magnitude range
+    stars += starLayer(dc, 190.0, 7.0, 0.006 + 0.45 * dens, 0.0025, 0.12, uStarCut * 0.6);  // faint field, crowded into the band
+    if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.3 * dens * dens, 0.0014, 0.035, uStarCut * 0.4); // band grain (band only)
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
     float el = dot(rd, up);
@@ -467,7 +473,7 @@ export default class Sky {
       uWorldToCel: { value: cel.worldToCel },
       tGalaxy: { value: this.galaxyRT.texture },
       uGalaxyGain: { value: 1 }, uCelToGal: { value: cel.celToGal }, uSpace: { value: 0 },
-      uStarVis: { value: 0 },
+      uStarVis: { value: 0 }, uStarCut: { value: 0.004 },
       uPixelAng: { value: 0.001 },
       uTime: { value: 0 },
       uPlanetR: { value: m.Rb },
@@ -546,7 +552,11 @@ export default class Sky {
     const night = 1 - THREE.MathUtils.smoothstep(sunEl, -0.16, 0.04);
     const space = m.present ? THREE.MathUtils.smoothstep(alt, m.thickness * 0.8, m.thickness * 2.0) : 1;
     u.uStarVis.value = Math.max(night, space);
-    u.uGalaxyGain.value = this.galaxyGain ?? 0.6;
+    u.uGalaxyGain.value = this.galaxyGain ?? 0.48;
+    // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
+    // on the ground at night a natural hierarchy down to a fine dusting
+    const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);
+    u.uStarCut.value = THREE.MathUtils.lerp(0.0045, 0.06, litPlanet);
     u.uSpace.value = space;
     // aurora (weather decides)
     const ws = L.weatherState;

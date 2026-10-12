@@ -27,7 +27,8 @@ export function floraProfile(kind, A) {
   switch (kind) {
     case 'lush': return {
       grass: { density: 1.15, colors: meadow(4, 0.35).concat(['#8fb04a']), dry: '#c2b46a', reed: '#5f7f3a', h: [0.15, 0.56], seedH: 0.75, w: [0.026, 0.048], stiff: 1, cover: 0.55, needsWater: 0.6, rockVeg: 0.35 },
-      flowers: { style: 'spike', density: 1.0, colors: ['#ffe14d', '#f6f3ea', '#a98cf0', '#fff27a', '#f9b3cf'], h: [0.3, 0.8], size: 0.075, patch: 0.05, scatter: 0.04 },
+      flowers: { style: 'spike', density: 1.0, colors: ['#a98cf0', '#8f78e0', '#f9b3cf', '#c8a8ff'], h: [0.3, 0.8], size: 0.075, patch: 0.05, scatter: 0.04,
+        second: { style: 'daisy', colors: ['#f6f3ea', '#ffe14d', '#fff27a', '#ffffff'], share: 0.45, size: 0.075, h: [0.2, 0.55] } },
       trees: {
         density: 0.007, cover: 0.05, lone: 0.05, grassland: 0.6, arid: 0.08, wet: 0.5, rocky: 0.12, cliffTrees: 0.25, snowy: 0.02, snowLine: 0.4,
         species: [
@@ -45,9 +46,10 @@ export function floraProfile(kind, A) {
     };
     case 'maple': return {
       grass: { density: 2.2, colors: ['#8a8a3c', '#a8904a', '#b89c52', '#7c7e3a', '#c4a24c', '#6e7436', '#9a7a3a'], dry: '#c8a456', reed: '#6a6a3a', h: [0.14, 0.52], w: [0.034, 0.062], stiff: 0.9, cover: 1.15, widthMax: 5, needsWater: 0.15, dryBias: 0.0, dryMax: 0.5, rockVeg: 0.6 },
-      flowers: { density: 0.6, colors: ['#d8342a', '#e8e0d0', '#c8282a', '#f0a030'], h: [0.3, 0.75], size: 0.07, patch: 0.15, scatter: 0.02 },
+      flowers: { density: 0.75, colors: ['#d8342a', '#c8282a', '#e0482a'], h: [0.3, 0.75], size: 0.08, patch: 0.12, scatter: 0.02,
+        second: { style: 'spike', colors: ['#f0a030', '#e8c048', '#e8e0d0'], share: 0.35, size: 0.06, h: [0.4, 0.85] } },
       trees: {
-        density: 0.0072, cover: 0.2, lone: 0.06, grassland: 0.65, arid: 0.15, wet: 0.5, rocky: 0.4, cliffTrees: 0.55, snowy: 0.05, snowLine: 0.45,
+        density: 0.0072, cover: 0.2, lone: 0.06, grassland: 0.65, arid: 0.15, wet: 0.5, rocky: 0.4, cliffTrees: 0.55, crownTrees: 0.9, snowy: 0.05, snowLine: 0.45,
         species: [
           { kind: 'maple', w: 1.0, pal: (k) => ({ leaf: C(['#c8302a', '#b82a26', '#d8502a', '#e07a2a', '#a82424'][k % 5]), leaf2: C(['#e8a03a', '#d8642a'][k % 2]), bark: C('#3a302c') }), tints: [C('#ffffff'), C('#ffd8c8'), C('#ffe8b0')] },
           { kind: 'pine', w: 0.55, cold: 0.6, rock: 1.2, pal: (k) => ({ leaf: C(['#3a4c30', '#34482e', '#425432'][k % 3]), bark: C('#4a3a32') }) },
@@ -62,6 +64,7 @@ export function floraProfile(kind, A) {
       rocks: { density: 0.007, color: rock, moss: 0.55, mossCol: '#4a5a32', size: 1.2 },
     };
     case 'bioluminescent': return {
+      glowPools: true,
       grass: { density: 1.0, colors: ['#1f5a46', '#2a6a4a', '#1a4a40', '#3a7a5a'], dry: '#4a6a4a', reed: '#2a5a4a', h: [0.22, 0.8], seedH: 0.9, w: [0.04, 0.075], stiff: 0.8, cover: 0.6, glow: 0.55, glowCol: '#4fe8ff', needsWater: 0.3, rockVeg: 0.85 },
       flowers: { density: 1.2, colors: ['#7f6aff', '#36d8ff', '#ff5ad8', '#b8ff6a'], h: [0.25, 0.7], size: 0.06, patch: 0.0, scatter: 0.08, glow: 1.4, glowCol: '#6fd8ff' },
       trees: {

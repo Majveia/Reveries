@@ -33,8 +33,8 @@ class Ribbon {
       if (r + 1 < rows) add(i, i + cols, 1);
       if (r + 1 < rows && q + 1 < cols) { add(i, i + cols + 1, 0.6); add(i + 1, i + cols, 0.6); }
       // soft bending: the cloth folds into travelling S-waves and curls across its width
-      if (r + 2 < rows) add(i, i + 2 * cols, 0.045);
-      if (q + 2 < cols) add(i, i + 2, 0.12);
+      if (r + 2 < rows) add(i, i + 2 * cols, 0.014);
+      if (q + 2 < cols) add(i, i + 2, 0.035);
     }
     this.con = new Float64Array(c);
     // rest lengths
@@ -54,10 +54,10 @@ export class Scarf {
    * opts: { material, quality }
    */
   constructor(material, quality = 2) {
-    const rows = [12, 16, 20, 22][quality] ?? 20;
+    const rows = [16, 22, 28, 30][quality] ?? 28;
     this.ribbons = [
-      new Ribbon(3, 7, rows + 2, 1.9, 0.27),
-      new Ribbon(3, 5, Math.round(rows * 0.65), 1.1, 0.2),
+      new Ribbon(3, 7, rows, 1.5, 0.25),
+      new Ribbon(3, 5, Math.round(rows * 0.6), 0.85, 0.19),
     ];
     this.object = new THREE.Group();
     this.object.name = 'explorer-scarf';
@@ -72,7 +72,8 @@ export class Scarf {
     this.gust = 0;
     this.airOffset = new THREE.Vector3(); // extra relative wind (e.g. shot pose "running")
     this.time = 0;
-    this.flutter = 26;
+    this.flutter = 18;
+    this.turbulence = 7.5;
     this.ribbons.forEach((rb, i) => { rb.phase = i * 2.1; });
   }
 
@@ -173,6 +174,15 @@ export class Scarf {
       const along = r * rb.seg;
       const wave = Math.sin(t * (7 + rel * 1.1) - along * 5.5 + rb.phase) + 0.45 * Math.sin(t * (12.3 + rel * 0.7) - along * 9.0 + q * 0.8 + rb.phase * 1.7);
       fx += nx * amp * wave; fy += ny * amp * wave; fz += nz * amp * wave;
+      // curl-like turbulence: smooth, divergence-poor swirls that vary in time and along
+      // the length, so the ribbon twists and billows instead of streaming like a plank
+      {
+        const X = p[i] * 1.7, Y = p[i + 1] * 1.7, Z = p[i + 2] * 1.7, T = t * 1.3 + rb.phase;
+        const turb = this.turbulence * (0.35 + 0.65 * s01) * (0.6 + Math.min(1.4, rel / 4));
+        fx += turb * (Math.sin(Y * 2.1 + T * 1.9) - Math.sin(Z * 1.7 - T * 1.3 + along * 3.1));
+        fy += turb * (Math.sin(Z * 2.3 + T * 1.7 + along * 2.3) - Math.sin(X * 1.9 - T * 2.1)) * 0.6;
+        fz += turb * (Math.sin(X * 2.2 - T * 1.5) - Math.sin(Y * 1.8 + T * 2.4 + along * 2.7));
+      }
       fx -= up.x * g; fy -= up.y * g; fz -= up.z * g;
       const px = p[i], py = p[i + 1], pz = p[i + 2];
       p[i] += (px - o[i]) * damping + fx * h * h;
@@ -271,6 +281,9 @@ export class Scarf {
             const v = 0.5 * (2 * P1 + (-P0 + P2) * f + (2 * P0 - 5 * P1 + 4 * P2 - P3) * f2 + (-P0 + 3 * P1 - 3 * P2 + P3) * f3);
             pos[o + c] = v - (c === 0 ? origin.x : c === 1 ? origin.y : origin.z);
           }
+          const qq = (q / (C - 1)) * 2 - 1, cup = (1 - qq * qq) * 0.011 * (1 - 0.5 * r / (R - 1));
+          const ni = Math.min(rb.rows - 1, Math.round(s)) * C + q;
+          pos[o] += rb.nrm[ni * 3] * cup; pos[o + 1] += rb.nrm[ni * 3 + 1] * cup; pos[o + 2] += rb.nrm[ni * 3 + 2] * cup;
         }
       }
       mesh.geometry.attributes.position.needsUpdate = true;

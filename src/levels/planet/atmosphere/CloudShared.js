@@ -63,8 +63,9 @@ void main(){
   // single-octave Worley at 4/8/16 cells; their weighted sum is the Worley fBm
   float w1 = worleyT(p, 4.0), w2 = worleyT(p, 8.0), w3 = worleyT(p, 16.0);
   float wf = w1 * 0.625 + w2 * 0.25 + w3 * 0.125;
-  float pf = mix(1.0, perlinFbmT(p, 4.0, uOct) * 1.4, 0.5);
-  pf = abs(pf * 2.0 - 1.0);
+  // plain (not abs/billowed) Perlin fBm: abs() creases the field along its zero sheets,
+  // which the coverage threshold turned into rope loops and bead chains
+  float pf = clamp(0.5 + 0.85 * perlinFbmT(p, 4.0, uOct), 0.0, 1.0);
   float pw = remap(pf, 0.0, 1.0, wf, 1.0);
   gl_FragColor = vec4(clamp(pw, 0.0, 1.0), w1, w2, w3);
 }`;
@@ -190,6 +191,10 @@ float cloudHeightProfile(float h, float type, float cov){
   float top = 1.0 - smoothstep(topH * 0.5, topH, h);
   return bottom * top;
 }
+// Relative top of the local cloud (0..1 of the shell) from the weather alone (used for lighting).
+float cloudTopH(vec3 wx){
+  return mix(0.28, 1.0, wx.g) * mix(0.45, 1.0, smoothstep(0.15, 0.85, wx.r));
+}
 // lod: 0 = full detail, 1 = shape only
 float cloudDensityW(vec3 P, vec3 wx, float lod){
   float r = length(P);
@@ -213,9 +218,12 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   if (lod < 0.5) {
     // erosion: wispy at the base, billowy (inverted Worley → round puffs) toward the tops
     vec3 dn = cTex3D(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1, uCloud3DInfo.y).rgb;
-    float df = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
-    float dm = mix(df, 1.0 - df, clamp(h * 5.0, 0.0, 1.0));
-    c = cRemap(c, dm * 0.5, 1.0, 0.0, 1.0);
+    // weighted toward the 100–250 m octaves: cauliflower billows, not a second shape scale
+    float df = dn.r * 0.4 + dn.g * 0.35 + dn.b * 0.25;
+    float dm = mix(df, 1.0 - df, clamp(h * 4.0, 0.0, 1.0));
+    // strong erosion: the coverage ramp is steep at the margins, so a weak threshold only
+    // nibbles a thin rim; 0.8 lets the billows bite into the silhouette
+    c = cRemap(c, dm * 0.8, 1.0, 0.0, 1.0);
   }
   // crisp cauliflower edges: steepen the density ramp; denser, darker bases where it rains
   c = max(c, 0.0);
@@ -230,15 +238,21 @@ float cloudLayer2D(vec3 P, vec3 wx){
   float cov = wx.r;
   if (cov < 0.015) return 0.0;
   vec3 q = normalize(P) * uCloudBase;
-  vec4 a = cTex3D(tCloudShape, q * (uCloudShapeScale * 0.42) + uCloudWind * 0.42, uCloud3DInfo.x);
-  vec4 b = cTex3D(tCloudShape, cRotA * q * (uCloudShapeScale * 1.3) + uCloudWind * 1.3 + 0.37, uCloud3DInfo.x);
+  vec4 a = cTex3D(tCloudShape, q * (uCloudShapeScale * 0.35) + uCloudWind * 0.35, uCloud3DInfo.x);
+  vec4 b = cTex3D(tCloudShape, cRotA * q * (uCloudShapeScale * 1.1) + uCloudWind * 1.1 + 0.37, uCloud3DInfo.x);
+  vec3 dn = cTex3D(tCloudDetail, cRotA * q * (uCloudDetailScale * 0.5) + uCloudWind * 2.0, uCloud3DInfo.y).rgb;
+  // multi-scale fractal (large Perlin-Worley, mid Worley, fine Worley) thresholded by the
+  // smooth weather coverage: dense cores, frayed wispy margins, open ocean between systems
   float wa = a.g * 0.625 + a.b * 0.25 + a.a * 0.125;
-  float base = cRemap(a.r, wa - 1.0, 1.0, 0.0, 1.0) * 0.65 + (b.r * 0.6 + b.g * 0.4) * 0.35;
-  float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
-  if (c <= 0.0) return 0.0;
-  vec3 dn = cTex3D(tCloudDetail, cRotA * q * (uCloudDetailScale * 0.55) + uCloudWind * 2.0, uCloud3DInfo.y).rgb;
-  float df = dn.r * 0.5 + dn.g * 0.3 + dn.b * 0.2;
-  c = clamp(cRemap(c, df * 0.45, 1.0, 0.0, 1.0), 0.0, 1.0);
+  float n1 = clamp(cRemap(a.r, wa - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
+  float n2 = b.r * 0.6 + b.g * 0.4;
+  float n3 = dn.r * 0.5 + dn.g * 0.3 + dn.b * 0.2;
+  float fr = n1 * 0.35 + n2 * 0.3 + n3 * 0.35;
+  // the weather map draws the systems (swirls, fronts, clear subtropics); the noise only
+  // frays their margins. Narrow window: crisp fractal edges, never a blurred camo decal
+  float c = smoothstep(0.0, 0.2, cov * cov * 1.25 - 0.12 - (1.0 - fr) * 0.7);
+  // popcorn / cloud-street texture inside the decks
+  c *= 0.62 + 0.38 * smoothstep(0.3, 0.8, n3 * 0.7 + n2 * 0.3);
   return c * (1.0 + wx.b * 0.6);
 }
 // Approximate shadow of the cloud layer on a point (sun at L).

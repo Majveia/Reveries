@@ -16,7 +16,7 @@ const CLOUD_TINT = { lava: [0.22, 0.2, 0.2], toxic: [0.85, 0.9, 0.55], exotic: [
 
 /** Bake surfaces of all landable planets in parallel workers. Resolves to Map(index → {albedo, data}). */
 export async function bakeSurfaces(planets, quality, onProgress) {
-  const W = quality.pick(256, 384, 512, 768), H = W / 2;
+  const W = quality.pick(256, 512, 768, 1024), H = W / 2;
   const jobs = planets.filter((p) => p.world);
   const out = new Map();
   if (!jobs.length) return out;
@@ -159,7 +159,7 @@ export class SystemPlanet {
     if (atmoDensity > 0.05) {
       const Ra = this.R * (planet.kind === 'gas' ? 1.035 : 1.055);
       this.atmoMat = new THREE.ShaderMaterial({
-        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.6 : 1) } },
+        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.3 : 1) } },
         vertexShader: /* glsl */`varying vec3 vWP; void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
         fragmentShader: ATMO_FRAG,
         blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.FrontSide,

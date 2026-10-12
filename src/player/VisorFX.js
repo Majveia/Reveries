@@ -2,8 +2,7 @@
 // A whisper-subtle HDR pass (runs after the atmosphere): slight barrel
 // refraction and chromatic fringe toward the glass edge, a soft rounded
 // aperture falloff (never black, never obscuring), a faint sky reflection
-// sheen across the top of the glass and a hairline heading arc with a compass
-// tick at the bottom — the HUD lives on the visor, not on the screen.
+// sheen across the top of the glass and faint compass ticks along the top edge.
 
 import * as THREE from 'three';
 
@@ -51,17 +50,12 @@ export class VisorFX {
           float sheen = smoothstep(0.35, 1.0, p.y) * (0.6 + 0.4 * sin(p.x * 1.7 + 0.6)) * 0.022;
           float glint = exp(-pow((p.x * 0.7 + p.y * 0.45 - 0.55 - 0.05 * sin(uTime * 0.2)) / 0.035, 2.0)) * smoothstep(0.1, 0.8, p.y) * 0.02;
           col += uSheen * (sheen + glint) * uAmount;
-          // HUD: soft-glow heading arc + ticks, cardinal pip, low on the glass
-          float arcY = -0.76 + 0.06 * p.x * p.x;
-          float fadeX = smoothstep(0.4, 0.16, abs(p.x));
-          float dy = abs(p.y - arcY);
-          float arc = ((1.0 - smoothstep(0.0, 0.003, dy)) * 0.6 + exp(-dy / 0.012) * 0.25) * fadeX;
+          // HUD: a single hairline compass tick at the very top of the glass (never over the view)
           float hx = p.x * 3.0 + uHeading * 3.0 / 6.2831853 * 8.0;
-          float tick = (1.0 - smoothstep(0.0, 0.012, abs(fract(hx) - 0.5) * 0.33)) * step(abs(p.y - arcY - 0.012), 0.01) * fadeX;
-          float card = p.x * 3.0 + uHeading * 3.0 / 6.2831853 * 8.0;
-          float north = exp(-pow((fract(card / 8.0 + 0.5) - 0.5) * 8.0 / 0.05, 2.0)) * exp(-pow((p.y - arcY - 0.03) / 0.008, 2.0)) * fadeX;
-          float center = (1.0 - smoothstep(0.0, 0.004, abs(p.x))) * step(abs(p.y - arcY + 0.02), 0.014);
-          col += uTint * (arc * 0.16 + tick * 0.12 + center * 0.5 + north * 0.6) * uAmount;
+          float topY = 0.93 - 0.03 * p.x * p.x;
+          float fadeX = smoothstep(0.3, 0.08, abs(p.x));
+          float tick = (1.0 - smoothstep(0.0, 0.01, abs(fract(hx) - 0.5) * 0.33)) * step(abs(p.y - topY), 0.008) * fadeX;
+          col += uTint * tick * 0.05 * uAmount;
           // faint warm cast of the smoked-gold glass
           col *= mix(vec3(1.0), vec3(1.03, 1.0, 0.95), uAmount);
           gl_FragColor = vec4(col, 1.0);

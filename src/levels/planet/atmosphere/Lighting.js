@@ -152,8 +152,8 @@ export class PlanetLighting {
       ga.b * (kc.b * cosK + sky.b * Math.PI) / Math.PI,
     );
     // starlight + airglow + scattered moonlight floor: OLED-deep but never crushed (terrain keeps form)
-    const nf = 0.0055 * this.night;
-    u.uNightFloor.value.set(nf * 0.55, nf * 0.75, nf * 1.25);
+    const nf = 0.0095 * this.night;
+    u.uNightFloor.value.set(nf * 0.5, nf * 0.72, nf * 1.3);
     const r = this.engine.renderer;
     const prevTarget = r.getRenderTarget();
     this.cubeCam.update(r, this.envScene);
@@ -302,8 +302,8 @@ export class PlanetLighting {
       }
       acc.multiplyScalar(1 / 5);
       // night floor (starlight + airglow)
-      const nf = 0.004 * this.night;
-      this.skyColor.setRGB(acc.x + nf * 0.55, acc.y + nf * 0.75, acc.z + nf * 1.25);
+      const nf = 0.007 * this.night;
+      this.skyColor.setRGB(acc.x + nf * 0.5, acc.y + nf * 0.72, acc.z + nf * 1.3);
       const cosK = Math.max(0, up.dot(this.keyDir));
       const ga = this.groundAlbedo;
       this.groundColor.setRGB(

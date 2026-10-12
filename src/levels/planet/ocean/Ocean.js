@@ -102,6 +102,13 @@ export default class Ocean {
     this.mesh.renderOrder = 2;
     this.mesh.name = 'ocean';
     level.scene.add(this.mesh);
+    if (this.mulMaterial) {
+      this.mulMesh = new THREE.Mesh(this.mesh.geometry, this.mulMaterial);
+      this.mulMesh.frustumCulled = false;
+      this.mulMesh.renderOrder = 1;
+      this.mulMesh.name = 'ocean-transmittance';
+      level.scene.add(this.mulMesh);
+    }
 
     this.fx = new OceanFX(this);
     this.effects = [this.fx];
@@ -212,7 +219,7 @@ export default class Ocean {
       uPixelAngle: { value: 0.002 }, uLutW: { value: 0 }, uUseTrans: { value: 0 },
       uSkyZenith: { value: new THREE.Color() }, uSkyHorizon: { value: new THREE.Color() }, uSkyIrr: { value: new THREE.Color() },
       uDeep: { value: deep }, uShallow: { value: shallow }, uSSS: { value: sss },
-      uAbsorb: { value: new THREE.Vector3(0.42, 0.075, 0.055) }, uBed: { value: sand.clone().multiplyScalar(0.5) },
+      uAbsorb: { value: new THREE.Vector3(0.6, 0.1, 0.07) }, uBed: { value: sand.clone().multiplyScalar(0.5) },
       uMaxAmp: { value: this.maxAmp }, uFoam: { value: 0.62 }, uSparkle: { value: 1 }, uUnder: { value: 0 },
       uBio: { value: new THREE.Vector4(0, 0, 0, 0) },
       uLava: { value: new THREE.Vector4(70, 0.35, 1.0, 14.0) },
@@ -229,9 +236,19 @@ export default class Ocean {
       transparent: !lava,
     });
     if (!lava) {
+      // water = two passes over the same mesh: a multiply pre-pass scales what
+      // lies beneath by the per-channel transmittance, then this pass adds the
+      // water's own radiance (reflection, scattering, foam)
       m.blending = THREE.CustomBlending;
-      m.blendSrc = THREE.OneFactor; m.blendDst = THREE.OneMinusSrcAlphaFactor;
-      m.blendSrcAlpha = THREE.OneFactor; m.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+      m.blendSrc = THREE.OneFactor; m.blendDst = THREE.OneFactor;
+      m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor;
+      const mm = this.mulMaterial = m.clone();
+      mm.uniforms = u; // share the very same uniform objects
+      mm.defines = { ...m.defines, MULPASS: 1 };
+      mm.depthWrite = false;
+      mm.blending = THREE.CustomBlending;
+      mm.blendSrc = THREE.ZeroFactor; mm.blendDst = THREE.SrcColorFactor;
+      mm.blendSrcAlpha = THREE.ZeroFactor; mm.blendDstAlpha = THREE.OneFactor;
     }
     m.extensions = { derivatives: true };
     return m;
@@ -504,13 +521,18 @@ export default class Ocean {
     w.setTimeOfDay(best.c.t, up);
     let position = up.clone().multiplyScalar(R + best.c.h + camH);
     if (!lava) {
-      // wade into the surf a few metres off the beach (the dune grass stays
-      // behind the lens): breakers roll in around the camera, the shore sweeps
-      // away diagonally on one side, the glitter path runs out to a low sun
+      // breakers roll in toward the lens, the shore sweeps away diagonally on
+      // one side, the glitter path runs out to a low sun
       const sh = best.c.seaH;
-      for (const out of [12, 18, 8, 26]) {
-        const pd = up.clone().multiplyScalar(R).addScaledVector(sh, out).normalize();
-        if (w.heightAt(pd) < sea - 0.25) { up = pd; position = pd.clone().multiplyScalar(R + sea + 1.9); break; }
+      // stand knee-deep in the swash: a few metres shoreward of the first
+      // point that is properly under water (dune grass grows to the waterline)
+      for (let s = 0; s <= 240; s += 2) {
+        const pd = up.clone().multiplyScalar(R).addScaledVector(sh, s).normalize();
+        if (w.heightAt(pd) < sea - 0.6) {
+          const back = up.clone().multiplyScalar(R).addScaledVector(sh, Math.max(0, s - 3)).normalize();
+          up = back; position = back.clone().multiplyScalar(R + sea + 1.5);
+          break;
+        }
       }
     }
     const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -21);
@@ -523,6 +545,8 @@ export default class Ocean {
     this.worker?.terminate();
     this.mesh?.geometry.dispose();
     this.mesh?.material.dispose();
+    this.mulMaterial?.dispose();
+    this.mulMesh?.removeFromParent();
     this.tDetail?.dispose(); this.tFoam?.dispose(); this.tPlates?.dispose(); this.tGlobal?.dispose(); this.tLocal?.dispose();
     this.fx?.dispose();
     if (this.level.ocean === this) this.level.ocean = null;

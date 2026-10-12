@@ -197,7 +197,7 @@ export default class Atmosphere {
       const L = this.level.lighting;
       const sunKey = L ? !L.keyIsMoon : true;
       const cov = c.uniforms.uCloudCov.value;
-      u.uGroundShadow.value = sunKey ? 0.85 * Math.min(1, cov) * (L ? L.sunVisible : 1) : 0;
+      u.uGroundShadow.value = sunKey ? 0.62 * Math.min(1, cov) * (L ? L.sunVisible : 1) : 0;
       u.uShadowAmt.value = 0.7;
       u.uFrameJit.value = this.engine.shotMode ? 0 : ((this._jf = ((this._jf || 0) + 1) % 64) * 0.618034) % 1;
       // march the sky (for crepuscular shafts) only when inside the air and the sun is low-ish

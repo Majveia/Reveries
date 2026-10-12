@@ -59,6 +59,30 @@ const RIM_GLSL = /* glsl */`
   }
 `;
 
+const DECAL_GLSL = /* glsl */`
+float rvSegD(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+// stencil seven-segment digit in a 1 x 1.6 cell (p.x 0..1, p.y 0..1.6), anti-aliased
+float rvDigit(vec2 p, int d) {
+  if (p.x < -0.2 || p.x > 1.2 || p.y < -0.2 || p.y > 1.8) return 0.0;
+  int m = d == 0 ? 63 : d == 1 ? 6 : d == 2 ? 91 : d == 3 ? 79 : d == 4 ? 102 : d == 5 ? 109 : d == 6 ? 125 : d == 7 ? 7 : d == 8 ? 127 : 111;
+  float w = 0.11, aa = max(fwidth(p.x) + fwidth(p.y), 1e-4);
+  vec2 A[7]; vec2 Bv[7];
+  A[0] = vec2(0.2, 1.5); Bv[0] = vec2(0.8, 1.5);
+  A[1] = vec2(0.9, 1.4); Bv[1] = vec2(0.9, 0.9);
+  A[2] = vec2(0.9, 0.7); Bv[2] = vec2(0.9, 0.2);
+  A[3] = vec2(0.2, 0.1); Bv[3] = vec2(0.8, 0.1);
+  A[4] = vec2(0.1, 0.2); Bv[4] = vec2(0.1, 0.7);
+  A[5] = vec2(0.1, 0.9); Bv[5] = vec2(0.1, 1.4);
+  A[6] = vec2(0.2, 0.8); Bv[6] = vec2(0.8, 0.8);
+  float r = 0.0;
+  for (int k = 0; k < 7; k++) {
+    if (((m >> k) & 1) == 0) continue;
+    r = max(r, 1.0 - smoothstep(w - aa, w + aa, rvSegD(p, A[k], Bv[k])));
+  }
+  return r;
+}
+`;
+
 function aoBlock(aoExpr) {
   return /* glsl */`
   float rvAO = ${aoExpr};
@@ -84,7 +108,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
     uTime: { value: 0 },
     uGlow: { value: 0 },
     uDust: { value: new THREE.Color('#8a7a62') },
-    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(5.0) },
+    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(3.2) },
     uGlyph: { value: new THREE.Color(PALETTE.glyph).multiplyScalar(3.0) },
     uVisorGlow: { value: 1 },
     uJet: { value: 0 },
@@ -114,7 +138,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
   // ---- under-suit (skinned fabric) --------------------------------------------------
   const body = new THREE.MeshPhysicalMaterial({
     vertexColors: true, roughness: 0.8, metalness: 0, sheen: 1, sheenRoughness: 0.55,
-    sheenColor: new THREE.Color('#5a6170'), envMap: env.texture, envMapIntensity: 0.6,
+    sheenColor: new THREE.Color('#9a907a'), envMap: env.texture, envMapIntensity: 0.85,
   });
   body.onBeforeCompile = (sh) => {
     bind(sh);
@@ -172,7 +196,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       .replace('#include <common>', '#include <common>\nattribute vec4 aMat;\nattribute vec3 aAO;\nvarying vec4 vMat;\nvarying vec3 vAO;\nvarying vec3 vBind;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMat = aMat; vAO = aAO; vBind = position;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uAccent;\nuniform float uJet;\nuniform vec3 uColB;\nvarying vec4 vMat;\nvarying vec3 vAO;\nvarying vec3 vBind;\n' + COMMON_GLSL)
+      .replace('#include <common>', '#include <common>\nuniform vec3 uAccent;\nuniform float uJet;\nuniform vec3 uColB;\nvarying vec4 vMat;\nvarying vec3 vAO;\nvarying vec3 vBind;\n' + COMMON_GLSL + DECAL_GLSL)
       .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
       vec3 bp = vBind;
       float px = length(fwidth(bp));
@@ -206,6 +230,34 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       diffuseColor.rgb *= 1.0 - grime * 0.45;
       float dust = smoothstep(0.62, 0.03, bp.y) * (0.3 + 0.7 * rvFbm(bp * 24.0)) * (0.55 + 0.45 * smoothstep(0.3, 0.03, bp.y));
       diffuseColor.rgb = mix(diffuseColor.rgb, uDust, dust * 0.5);
+      // stencilled decals (unit number, hazard chevrons, ID tab), worn where the paint chips
+      {
+        float dec = 0.0; vec3 dcol = vec3(0.045, 0.045, 0.05);
+        // "07" on the left pauldron's outer face
+        if (bp.x > 0.24 && bp.y > 1.36 && bp.y < 1.52) {
+          vec2 q = vec2(-(bp.z + 0.002) / 0.03, (bp.y - 1.43) / 0.03);
+          dec = max(rvDigit(q, 0), rvDigit(q - vec2(1.25, 0.0), 7));
+        }
+        // "4" + bar on the right pauldron
+        if (bp.x < -0.24 && bp.y > 1.36 && bp.y < 1.52) {
+          vec2 q = vec2((bp.z + 0.076) / 0.03, (bp.y - 1.43) / 0.03);
+          dec = max(rvDigit(q, 4), step(abs(q.x - 1.6), 0.12) * step(abs(q.y - 0.8), 0.7));
+        }
+        // hazard chevrons across the base of the pack housing
+        if (bp.z < -0.24 && bp.y > 1.135 && bp.y < 1.168 && abs(bp.x) < 0.15) {
+          float st = step(0.5, fract((abs(bp.x) * 1.0 + (bp.y - 1.135)) / 0.024));
+          dec = st; dcol = mix(vec3(0.05), vec3(0.62, 0.24, 0.07), 0.0);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.6, 0.23, 0.06), 1.0 - st);
+        }
+        // small ID tab + barcode on the right breast
+        if (bp.z > 0.06 && bp.x < -0.04 && bp.x > -0.15 && bp.y > 1.255 && bp.y < 1.3) {
+          float bar = step(0.45, rvHash(vec3(floor(bp.x / 0.0055), 1.0, 3.0))) * step(abs(bp.y - 1.268), 0.008);
+          float txt = step(abs(bp.y - 1.287), 0.0035) * step(0.35, fract(bp.x / 0.008));
+          dec = max(bar, txt * 0.8) * step(bp.x, -0.06) * step(-0.135, bp.x);
+        }
+        dec *= 1.0 - smoothstep(0.35, 0.7, chips) * 0.85;
+        diffuseColor.rgb = mix(diffuseColor.rgb, dcol, dec * 0.88);
+      }
       // accent emissive core + soft halo
       float core = 1.0 - smoothstep(lineW * 0.5, lineW * 1.25, abs(lineD));
       float halo = exp(-abs(lineD) / 0.0045) * 0.18;
@@ -246,7 +298,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
         float arc = 1.0 - smoothstep(0.0, 0.05, abs(q.y + 0.55 - q.x * q.x * 0.2));
         arc *= smoothstep(0.75, 0.2, abs(q.x));
         float scan = 0.5 + 0.5 * sin(q.y * 80.0 - uTime * 3.0);
-        vec3 glow = uAccent * (pool * 0.05 + rim * 0.06 + arc * 0.16);
+        vec3 glow = uAccent * (pool * 0.012 + rim * 0.08 + arc * 0.0);
         totalEmissiveRadiance += glow * uVisorGlow;
       }`)
       .replace('#include <opaque_fragment>', /* glsl */`
@@ -277,6 +329,12 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       // soft folds baked into the albedo
       float tone = 0.86 + 0.14 * rvFbm(vec3(across * 3.0, along * 6.0, 0.0));
       diffuseColor.rgb *= tone;
+      // rolled hem: the edges fold over (darker, raised), giving the ribbon visible thickness
+      float hemE = smoothstep(0.0, 0.055, min(across, 1.0 - across));
+      diffuseColor.rgb *= mix(0.5, 1.0, hemE);
+      bumpH += (1.0 - hemE) * 0.0014;
+      // woven value variation (dyed yarn batches)
+      diffuseColor.rgb *= 0.9 + 0.1 * sin(along * 41.0 + across * 3.0) * sin(along * 7.3);
       // embroidered borders
       float border = smoothstep(0.075, 0.06, abs(across - 0.1)) + smoothstep(0.075, 0.06, abs(across - 0.9));
       border = min(border, 1.0) * (1.0 - smoothstep(0.035, 0.0, abs(abs(across - 0.5) - 0.4) - 0.01));
@@ -308,9 +366,9 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       glyph *= band;
       vec3 gold = vec3(0.62, 0.42, 0.14);
       // embroidered (raised thread, ~55% contrast), not printed
-      diffuseColor.rgb = mix(diffuseColor.rgb, gold, bline * 0.7 + glyph * 0.5);
+      diffuseColor.rgb = mix(diffuseColor.rgb, gold * 0.8, bline * 0.55 + glyph * 0.32);
       bumpH += (glyph + bline * 0.6) * 0.00035;
-      rvEmit = uGlyph * (glyph * (0.06 + 1.9 * uGlow) + bline * 0.04 * uGlow);
+      rvEmit = uGlyph * (glyph * (0.01 + 1.4 * uGlow) + bline * 0.03 * uGlow);
       // frayed tip: loose threads of uneven length
       {
         float tip = vCloth.w;

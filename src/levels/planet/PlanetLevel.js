@@ -318,6 +318,11 @@ export default class PlanetLevel {
         w.setTimeOfDay(0.3, spot.dir);
         if (!(await delegate('fauna', spot))) free(spot.position.clone().addScaledVector(spot.dir, 1.6), spot.lookAt);
       },
+      flora: async () => { // forest / landmark-tree frame (flora subsystem composes it)
+        const spot = this.scenicSpot(0, 520, 2);
+        w.setTimeOfDay(0.31, spot.dir);
+        if (!(await delegate('flora', spot))) free(spot.position.clone().addScaledVector(spot.dir, 1.6), spot.lookAt);
+      },
     };
     // Every preset starts from a clean slate: subsystems drop any camera /
     // vehicle / pose state a previous preset left behind (shotReset), so one

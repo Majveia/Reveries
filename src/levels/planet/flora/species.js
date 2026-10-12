@@ -98,7 +98,7 @@ function lathe(B, o, prof, sides, col, H, opts = {}) {
       if (opts.flipN) n.negate();
       const t = k / (prof.length - 1);
       c.copy(col).multiplyScalar(opts.shade ? opts.shade(t, a) : 1);
-      B.vert(p, n, c, (s / sides) * 6, y, swayAt(p.y, H, opts.swayK ?? 0.4), 0, opts.glow ? opts.glow(t) : 0);
+      B.vert(p, n, c, (s / sides) * 6, y, swayAt(p.y, H, opts.swayK ?? 0.4), 0, opts.glow ? opts.glow(t, s) : 0);
     }
   }
   for (let k = 0; k < prof.length - 1; k++) for (let s = 0; s < sides; s++) {
@@ -406,8 +406,11 @@ function fungus(P, rng) {
   const capProf = prof.slice().reverse();
   lathe(B, top, capProf, 24, P.capCol, H, { swayK: 0.3, wob: 0.04, shade: (t) => 0.75 + 0.25 * (1 - t), glow: (t) => (P.spotGlow || 0) * (t > 0.4 && t < 0.9 ? 0.6 : 0.1) });
   // gills (underside): flat-ish disc facing down, glowing on bioluminescent worlds
-  const under = [[capR * 0.98, -capH * 0.15], [capR * 0.6, -capH * 0.32], [sr * 1.2, -capH * 0.4]];
-  lathe(B, top, under, 24, P.gillCol || P.capCol.clone().multiplyScalar(0.55), H, { swayK: 0.3, flipN: true, glow: () => P.gillGlow || 0 });
+  // radial gills: alternate lathe spokes light/dark, glowing brightest toward the rim
+  const under = [[capR * 0.98, -capH * 0.15], [capR * 0.8, -capH * 0.24], [capR * 0.55, -capH * 0.32], [sr * 1.2, -capH * 0.4]];
+  lathe(B, top, under, 64, P.gillCol || P.capCol.clone().multiplyScalar(0.55), H, { swayK: 0.3, flipN: true,
+    shade: (t, a) => (0.45 + 0.55 * Math.abs(Math.cos(a * 32))) * (1 - 0.55 * t),
+    glow: (t, s2) => (P.gillGlow || 0) * 0.7 * (s2 % 2 ? 0.12 : 1) * (1 - 0.85 * t) });
   return { bark: B.geometry(), leaves: null, height: H + capH, crown: capR, trunkR: sr };
 }
 
@@ -527,7 +530,7 @@ export function buildPlant(kind, rng, pal = {}, opts = {}) {
     case 'maple': return deciduous({ H: (10.5 + r() * 6) * s, trunkR: (0.4 + r() * 0.2) * s, depth: 3, kids: [5 + Math.floor(r() * 3), 3, 3], angle: 0.95, lenK: 0.7, wiggle: 0.85, trop: 0.06, leafTile: TILE.maple, leafSize: 1.3 * s, perPoint: 2, fill: 0.4, leafCol: pal.leaf || C('#b8322a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3e3430'), leafDensity: 0.75, crownStart: 0.3, trunkK: 0.38 }, rng);
     case 'golden': return deciduous({ H: (12 + r() * 7) * s, trunkR: (0.44 + r() * 0.2) * s, depth: 3, kids: [6, 3, 3], angle: 0.8, lenK: 0.68, wiggle: 0.75, trop: 0.1, leafTile: TILE.broad, leafSize: 1.35 * s, perPoint: 2, leafCol: pal.leaf || C('#d8a83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#6a6258'), leafDensity: 0.6, crownStart: 0.4, glow: pal.glowAmt || 0.0, trunkK: 0.42 }, rng);
     case 'birch': return deciduous({ H: (11 + r() * 6) * s, trunkR: (0.16 + r() * 0.07) * s, depth: 2, kids: [12 + Math.floor(r() * 4), 5], angle: 0.65, lenK: 0.4, wiggle: 0.5, trop: -0.02, droop: 0.4, leafTile: TILE.small, leafSize: 2.0 * s, leafCol: pal.leaf || C('#8aa83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#d8d4c8'), leafDensity: 1.0, crownStart: 0.3, flare: 0.1, leaderLeaves: true, trunkK: 0.95 }, rng);
-    case 'biolum': return deciduous({ H: (11 + r() * 9) * s, trunkR: (0.4 + r() * 0.22) * s, depth: 3, kids: [6, 3, 3], angle: 1.0, lenK: 0.7, wiggle: 0.8, trop: 0.02, droop: 0.3, leafTile: TILE.broad, leafSize: 1.5 * s, perPoint: 2, leafCol: pal.leaf || C('#2f8a5a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3a3440'), leafDensity: 0.8, fill: 0.6, crownStart: 0.4, glow: pal.glowAmt ?? 0.6, strands: 22, strandLen: 4.5 * s, strandCol: pal.glow || C('#5ae0ff'), strandGlow: 1.6, flare: 0.6, trunkK: 0.5 }, rng);
+    case 'biolum': return deciduous({ H: (11 + r() * 9) * s, trunkR: (0.4 + r() * 0.22) * s, depth: 3, kids: [6, 3, 3], angle: 1.0, lenK: 0.7, wiggle: 0.8, trop: 0.02, droop: 0.3, leafTile: TILE.broad, leafSize: 1.5 * s, perPoint: 2, leafCol: pal.leaf || C('#2f8a5a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3a3440'), leafDensity: 0.8, fill: 0.6, crownStart: 0.4, glow: pal.glowAmt ?? 0.6, strands: 14, strandLen: 4.5 * s, strandCol: pal.glow || C('#5ae0ff'), strandGlow: 1.15, flare: 0.6, trunkK: 0.5 }, rng);
     case 'willow': return deciduous({ H: (8 + r() * 4) * s, trunkR: (0.4 + r() * 0.15) * s, depth: 2, kids: [7, 4], angle: 1.0, lenK: 0.7, wiggle: 0.6, trop: 0.05, leafTile: TILE.small, leafSize: 1.6 * s, leafCol: pal.leaf || C('#7a9a4a'), barkCol: pal.bark || C('#4a4238'), leafDensity: 0.7, crownStart: 0.4, strands: 26, strandLen: 4.2 * s, strandCol: (pal.leaf || C('#7a9a4a')).clone().multiplyScalar(0.8), trunkK: 0.45 }, rng);
     case 'conifer': return conifer({ H: (13 + r() * 10) * s, trunkR: (0.3 + r() * 0.12) * s, width: 0.2 + r() * 0.06, whorls: 13 + Math.floor(r() * 5), perWhorl: 6, droop: 0.35, leafSize: 1.9 * s, leafCol: pal.leaf || C('#2f4a2c'), barkCol: pal.bark || C('#4a3a30'), snow: pal.snow || 0 }, rng);
     case 'pine': return conifer({ H: (10 + r() * 6) * s, trunkR: (0.48 + r() * 0.16) * s, width: 0.36 + r() * 0.1, whorls: 10 + Math.floor(r() * 3), perWhorl: 6, droop: -0.05, shape: 0.35, clearTrunk: 0.3, pads: true, leafSize: 2.3 * s, leafCol: pal.leaf || C('#2a3a28'), barkCol: pal.bark || C('#5a4034') }, rng);

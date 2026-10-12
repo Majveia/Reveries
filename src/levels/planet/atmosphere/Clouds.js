@@ -44,6 +44,7 @@ uniform float uSteps, uLightSteps, uMaxDist, uFrame, uOrbitLod;
 uniform sampler2D tHistory;
 uniform mat4 uPrevViewProj;
 uniform float uHistoryBlend;
+uniform float uCurveK;         // 0..1: compress the tiny planet's curvature for cloud lighting (night stays night)
 varying vec2 vUv;
 
 float hg(float c, float g){ float g2 = g * g; return 0.0795775 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5); }
@@ -78,15 +79,16 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float mu = abs(dot(rd, n));
   // soft optical-depth ramp (no hard decal edges); thins out toward the limb where the
   // long air path veils it
-  float tau = pow(c, 1.6) * 16.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.25);
+  float tau = c * (5.0 + 9.0 * c) * (0.55 + 0.9 * wx.g) / max(mu, 0.25);
   float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.3, mu);
   float muS = dot(n, uKeyDir);
   vec3 Tl = transmittanceToLight(r + 600.0, muS);
   float ndl = dot(nn, uKeyDir);
   float cosV = dot(rd, uKeyDir);
   float thick = 1.0 - exp(-tau * 0.35);
-  float shade = clamp(ndl * 0.8 + 0.2, 0.0, 1.0) * smoothstep(-0.12, 0.08, muS);
-  vec3 Ld = uKeyE * Tl * (shade * 0.30 * thick + hg(cosV, 0.7) * 0.5 * (1.0 - thick) + 0.04);
+  // thick decks: bright multiple-scattering Lambert-like reflectance; thin veils: forward lobe
+  float shade = (0.72 + 0.28 * clamp(ndl * 1.4, -1.0, 1.0)) * smoothstep(-0.1, 0.22, muS) * max(muS, 0.0);
+  vec3 Ld = uKeyE * Tl * (shade * 0.42 * thick + hg(cosV, 0.6) * 0.35 * (1.0 - thick) * smoothstep(-0.1, 0.1, muS));
   vec3 Sa = cloudSkyAmb(n, r) * PI * (0.35 + 0.25 * clamp(dot(nn, n), 0.0, 1.0));
   vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.35 * wx.b);
   vec2 ta = raySphere(ro, rd, uRt);
@@ -133,6 +135,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   float jit = fract(ign(gl_FragCoord.xy) + uFrame * 0.618034);
   float cosK = dot(rd, uKeyDir);
   float phase = mix(hg(cosK, 0.8), hg(cosK, -0.3), 0.3);
+  vec3 camUp = normalize(ro);
   float silverPh = hg(cosK, 0.93);
   float cosK2 = dot(rd, uKey2Dir);
   float phase2 = mix(hg(cosK2, 0.8), hg(cosK2, -0.3), 0.3);
@@ -156,7 +159,11 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     if (d <= 0.002) continue;
     float r = length(P);
     vec3 up = P / r;
+    // lighting frame: on a 20–70 km world a cloud 40 km away sits a third of the way to the
+    // terminator; pull its "up" toward the camera's so night clouds stay night
+    vec3 upL = normalize(mix(up, camUp, uCurveK));
     float h01 = clamp((r - uCloudBase) / shellH, 0.0, 1.0);
+    float hl = clamp(h01 / max(cloudTopH(wx), 0.05), 0.0, 1.0);
     // light march toward the key light
     float od = 0.0;
     float ls = shellH * 0.05;
@@ -170,16 +177,17 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     }
     od *= sigma;
     // atmospheric transmittance of the key light at this sample (sunset colour, planet shadow)
-    vec3 Tl = transmittanceToLight(r, dot(up, uKeyDir));
+    vec3 Tl = transmittanceToLight(r, dot(upL, uKeyDir));
     float ext = d * sigma;
     // multiple-scattering octaves (Wrenninge)
+    // (4 octaves: deep interiors keep a soft multiply-scattered glow instead of going flat)
     float ms = 0.0, a = 1.0, b = 1.0, c = 1.0;
-    for (int o = 0; o < 3; o++) {
+    for (int o = 0; o < 4; o++) {
       ms += a * exp(-od * b) * mix(phase, 0.0795775, 1.0 - c);
-      a *= 0.5; b *= 0.5; c *= 0.5;
+      a *= 0.55; b *= 0.45; c *= 0.5;
     }
-    // silver lining: thin, low-optical-depth edges forward-scatter the key light
-    ms += 0.55 * silverPh * exp(-od * 0.3) * (1.0 - smoothstep(0.0, 0.35, d));
+    // silver lining: only the thinnest, least-shadowed margins, a fraction of the main lobe
+    ms += 0.12 * silverPh * exp(-od) * (1.0 - smoothstep(0.0, 0.25, d));
     float powder = 1.0 - exp(-ext * 380.0);
     powder = mix(1.0, powder, 0.7 * smoothstep(-0.2, 0.6, -cosK));
     vec3 Sk = uKeyE * Tl * ms * powder * 3.14159;
@@ -187,14 +195,16 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
       // moon: two shape-only light samples, same multiple-scattering octaves
       float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.12, 1.0) * 0.24 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
       float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.5) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.25) * 0.0795775;
-      Sk += uKey2E * transmittanceToLight(r, dot(up, uKey2Dir)) * ms2 * 3.14159;
+      Sk += uKey2E * transmittanceToLight(r, dot(upL, uKey2Dir)) * ms2 * 3.14159;
     }
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
-    float ambOcc = exp(-d * sigma * shellH * 0.2 * (1.0 - h01));
-    vec3 skyA = cloudSkyAmb(up, r);
-    float muSun = dot(up, uSunDir);
+    // vertical gradient within each cloud (relative to its own top): luminous tops,
+    // blue-grey (never charcoal) bases lit by the ground bounce
+    float ambOcc = exp(-d * sigma * 40.0);
+    vec3 skyA = cloudSkyAmb(upL, r);
+    float muSun = dot(upL, uSunDir);
     vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA) + uCityGlow;
-    vec3 Sa = mix(gndA, skyA, 0.25 + 0.75 * h01) * (0.45 + 0.55 * ambOcc) * PI * 0.25;
+    vec3 Sa = (skyA * (0.32 + 0.68 * sqrt(hl)) + gndA * 0.5 * (1.0 - hl)) * (0.6 + 0.4 * ambOcc) * PI * 0.3;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -282,7 +292,7 @@ export const CLOUD_PRESETS = {
   cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.045 },
   rain: { coverage: 0.72, type: 0.75, wet: 0.7, bands: 0.5, density: 0.06 },
   storm: { coverage: 0.8, type: 0.95, wet: 0.9, bands: 0.4, density: 0.07 },
-  fog: { coverage: 0.42, type: 0.15, wet: 0.2, bands: 0.4, density: 0.04 },
+  fog: { coverage: 0.38, type: 0.3, wet: 0.15, bands: 0.4, density: 0.04 },
   snow: { coverage: 0.66, type: 0.3, wet: 0.5, bands: 0.5, density: 0.05 },
   dust: { coverage: 0.18, type: 0.2, wet: 0.0, bands: 0.3, density: 0.03 },
   ash: { coverage: 0.7, type: 0.55, wet: 0.3, bands: 0.2, density: 0.06 },
@@ -329,7 +339,7 @@ export default class Clouds {
       uCloudBase: { value: m.Rb + this.baseH }, uCloudTop: { value: m.Rb + this.topH },
       uCloudCov: { value: 1 }, uCloudDensity: { value: this.preset.density },
       uCloudWind: { value: new THREE.Vector3() },
-      uCloudShapeScale: { value: 1 / 5600 }, uCloudDetailScale: { value: 1 / 1500 },
+      uCloudShapeScale: { value: 1 / 5600 }, uCloudDetailScale: { value: 1 / 1150 },
       uCloudWeatherSize: { value: r.weatherSize }, uCloudFlat: { value: 0 },
       uCloud3DInfo: { value: new THREE.Vector3(r.shapeSize, r.detailSize, r.manual3D ? 1 : 0) },
     };
@@ -346,6 +356,7 @@ export default class Clouds {
         uCloudAlbedo: { value: new THREE.Vector3(1, 1, 1) },
         uSteps: { value: 64 }, uLightSteps: { value: 6 }, uMaxDist: { value: 90000 }, uFrame: { value: 0 }, uOrbitLod: { value: 0 },
         tHistory: { value: null }, uPrevViewProj: { value: new THREE.Matrix4() }, uHistoryBlend: { value: 0 },
+        uCurveK: { value: 0.6 },
       },
     });
     if ((this.engine.params.get('atmo') || '').includes('dbgw')) this.marchMat.defines = { CLOUD_DEBUG_WEATHER: 1 };
@@ -413,9 +424,13 @@ export default class Clouds {
     const k2 = sunUp > 0 && moonUp > 1e-6 ? 1 - THREE.MathUtils.smoothstep(sunEl, -0.25, 0.05) : 0;
     mu.uKey2Dir.value.copy(m.moonDir);
     // scotopic tint: moonlit cloud tops read cool silver, never cream
-    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2);
+    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 2.2);
     const nightK = light ? light.night : 0;
-    mu.uNightAmb.value.set(1.2e-4, 1.8e-4, 3.0e-4).multiplyScalar(nightK);
+    // starlight + airglow + scattered moonlight: unlit clouds read as dark blue-grey shapes over the stars
+    mu.uNightAmb.value.set(7e-4, 1.0e-3, 1.6e-3).multiplyScalar(nightK);
+    // curvature compression fades out with altitude (from high up the true terminator shows)
+    const altK = ctx.cameraPosition.length() - m.Rb;
+    mu.uCurveK.value = 0.65 * (1 - THREE.MathUtils.smoothstep(altK, this.topH, this.topH * 2.4));
     mu.uCityGlow.value.set(0, 0, 0);
     if (light && light.night > 0.05) {
       // night: settlements within a few km light the cloud bases from below
@@ -450,7 +465,14 @@ export default class Clouds {
     mu.tHistory.value = this.rtPrev.texture;
     if (this._wasOrbit !== orbit) this._historyValid = false;
     this._wasOrbit = orbit;
-    mu.uHistoryBlend.value = !this._historyValid || orbit ? 0 : (this.engine.shotMode ? 0.78 : 0.86);
+    // camera cuts (shot presets, respawns, a rig snapping into place): drop the history,
+    // otherwise the previous view's cloud edges linger as bright ghost outlines
+    const cam = ctx.camera;
+    if (!this._lastCamPos) { this._lastCamPos = new THREE.Vector3(); this._lastCamQ = new THREE.Quaternion(); }
+    const jump = this._lastCamPos.distanceTo(cam.position) > 25 || 2 * Math.acos(Math.min(1, Math.abs(this._lastCamQ.dot(cam.quaternion)))) > 0.035;
+    this._lastCamPos.copy(cam.position); this._lastCamQ.copy(cam.quaternion);
+    if (jump) this._historyValid = false;
+    mu.uHistoryBlend.value = !this._historyValid || orbit ? 0 : (this.engine.shotMode ? 0.6 : 0.86);
     ctx.fullscreen(this.marchMat, this.rt);
     this._historyValid = true;
     mu.uPrevViewProj.value.multiplyMatrices(ctx.camera.projectionMatrix, ctx.camera.matrixWorldInverse);

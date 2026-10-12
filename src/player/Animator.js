@@ -255,7 +255,7 @@ export class Animator {
     }
     // also sink when both feet are below the root (standing across a dip)
     const lowGround = Math.min(0, Math.min(legs[0].ground, legs[1].ground));
-    this.pelvisDrop = damp(this.pelvisDrop, Math.min(need, 0.35) * w - lowGround * w * 0.0, 20, dt);
+    this.pelvisDrop = damp(this.pelvisDrop, Math.min(need, 0.2) * w - lowGround * w * 0.0, 20, dt);
     if (this.pelvisDrop > 1e-4 || lowGround < 0) {
       const dy = -this.pelvisDrop + lowGround * w;
       pose.root.y += dy;
@@ -412,8 +412,8 @@ export class Animator {
     const A = lerp(lerp(0.45, 0.92, g), 1.0, spr) * move;
     const swingL = -Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const swingR = Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
-    const elBase = lerp(lerp(0.3, 0.92, g), 1.25, spr) * move + 0.22 * (1 - move);
-    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.42 - Math.max(0, -swingL) * 0.18, elBase + Math.max(0, swingR) * 0.42 - Math.max(0, -swingR) * 0.18, lerp(0.08, 0.16, g * move), 0.3 * g * move);
+    const elBase = lerp(lerp(0.32, 0.86, g), 1.2, spr) * move + 0.22 * (1 - move);
+    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.16 - Math.max(0, -swingL) * 0.22, elBase + Math.max(0, swingR) * 0.16 - Math.max(0, -swingR) * 0.22, lerp(0.08, 0.16, g * move), 0.3 * g * move);
     // shoulders lift with breathing / run; the forward-swinging arm's shoulder protracts
     for (const [S, s, sw] of [['L', 1, swingL], ['R', -1, swingR]]) qYXZ(p.D[B['clav' + S]], 0, -s * clamp(sw, -1, 1) * 0.13 * move, s * (0.03 * br * (1 - move) + 0.04 * g * move));
   }
