@@ -103,9 +103,9 @@ export default class SystemLevel {
     this.raycaster = new THREE.Raycaster();
 
     this.grade = {
-      exposure: 1.0, agxPunch: 0.55, contrast: 1.1, saturation: 1.12, blackPoint: 0.006, temperature: 0.0,
+      exposure: 1.0, agxPunch: 0.55, contrast: 1.1, saturation: 1.12, blackPoint: 0.003, temperature: 0.0,
       vignette: 0.3, vignetteSoftness: 0.6, grain: 0.006, chroma: 0.0, sharpen: 0.12,
-      bloomStrength: 0.07, bloomRadius: 0.7, bloomThreshold: 0.0,
+      bloomStrength: 0.11, bloomRadius: 0.7, bloomThreshold: 0.0,
       autoExposure: 0.0, flare: 0.05, flareThreshold: 14.0, streak: 0.03, halation: 0.04, look: 'cosmic', lookStrength: 0.5,
     };
     this.crumbs = U.crumbs(this.addr);
@@ -183,9 +183,13 @@ export default class SystemLevel {
     // orbit lines brighten for the hovered / selected world
     const close = this.rig.distance < this.extent * 0.2;
     const far = THREE.MathUtils.smoothstep(this.rig.distance, 3, 30);
+    // close to any world, orbit lines fade out entirely so they never slice a close-up
+    let nearR = Infinity;
+    for (const sp of this.planets) nearR = Math.min(nearR, cam.position.distanceTo(sp.position) / sp.R);
+    const lineFade = THREE.MathUtils.smoothstep(nearR, 4, 16);
     for (const sp of this.planets) {
       sp.orbitMat.uniforms.uHi.value = sp === this.hover || sp === this.focus ? 1 : 0;
-      sp.orbitMat.uniforms.uDim.value = sp === this.focus ? 0.6 : close ? 0.1 + 0.4 * far : 1;
+      sp.orbitMat.uniforms.uDim.value = (sp === this.focus ? 0.6 : close ? 0.1 + 0.4 * far : 1) * lineFade;
     }
   }
 
@@ -344,7 +348,7 @@ export default class SystemLevel {
         // elevation and distance so the star sits on the left third and the ringed giant fills the right
         this.camera.fov = 46; this.camera.updateProjectionMatrix();
         const tanH = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect;
-        const aS = Math.atan(0.62 * tanH), aP = Math.atan(0.4 * tanH);
+        const aS = Math.atan(0.74 * tanH), aP = Math.atan(0.5 * tanH);
         let best = null, bestScore = -Infinity;
         for (let ph = 112; ph <= 166; ph += 3) for (let el = -0.5; el <= 0.7; el += 0.1) for (let k = 5.5; k <= 10; k += 0.75) {
           const a = THREE.MathUtils.degToRad(ph);
@@ -354,7 +358,7 @@ export default class SystemLevel {
           const sep = toP.angleTo(toS);
           const ringAng = Math.asin(Math.min(1, (sp.ringOut || R * 1.2) / cam.distanceTo(P)));
           if (sep > aS + aP + 0.04 || sep < aS + 0.12) continue;
-          if (sep - aS + ringAng * 0.8 > Math.atan(0.98 * tanH)) continue;   // the rings must stay in frame
+          if (sep - aS + ringAng * 1.02 > Math.atan(0.93 * tanH)) continue;   // the whole ring system stays in frame
           const open = Math.abs(d.dot(sp.ringN));
           const lit = 0.5 * (1 + d.dot(s));                                     // illuminated fraction of the disk
           const size = ringAng;                                                 // bigger giant = more awe
@@ -405,21 +409,32 @@ export default class SystemLevel {
         if (!b) { this._pose(new THREE.Vector3(), this.extent, 0.4, 0.1); return; }
         // a big boulder at ~75° phase (mostly lit, hard terminator), the star low in the frame corner,
         // the belt streaming away toward it
-        let best = b.instances[0];
-        for (const it of b.instances) if (it.s > best.s) best = it;
-        const pos = b.instancePosition(best, this.days, new THREE.Vector3());
+        // hero boulder: a large rock with company — mid-size neighbours give foreground/background depth
+        const P = b.instances.map((it) => b.instancePosition(it, this.days, new THREE.Vector3()));
+        let bi = 0, bScore = -Infinity;
+        b.instances.forEach((it, i) => {
+          if (it.s < 0.3) return;
+          let nb = 0;
+          for (let j = 0; j < P.length; j++) { const o = b.instances[j]; if (j !== i && o.s > 0.06) { const dd = P[j].distanceTo(P[i]); if (dd < it.s * 9) nb += Math.min(1, o.s / 0.15); } }
+          const sc = it.s * 4 + Math.min(nb, 8);
+          if (sc > bScore) { bScore = sc; bi = i; }
+        });
+        const best = b.instances[bi];
+        const pos = P[bi];
         const S = best.s;
         const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(138);   // backlit: a rim-lit crescent, the belt haze glowing toward the star
-        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.16).normalize();
-        const cam = pos.clone().addScaledVector(dirC, S * 4.4);
+        const ph = THREE.MathUtils.degToRad(121);   // ~1/4 lit: a hot regolith crescent, the belt haze glowing toward the star
+        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.22).normalize();
+        const cam = pos.clone().addScaledVector(dirC, S * 3.6);
         // wide lens: the star sits near the left edge of the frame, the half-lit boulder right of centre
-        this.camera.fov = 48; this.camera.updateProjectionMatrix();
+        this.camera.fov = 54; this.camera.updateProjectionMatrix();
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
         const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
-        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(Math.atan(0.45 * Math.tan(hfov / 2)), toStar.angleTo(toRock) * 0.5));
+        // the boulder sits right of centre, the star just inside the left edge
+        const sepSR = toStar.angleTo(toRock);
+        const lookDir = toStar.clone().applyAxisAngle(axis, Math.max(sepSR * 0.5, sepSR - Math.atan(0.42 * Math.tan(hfov / 2))));
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },

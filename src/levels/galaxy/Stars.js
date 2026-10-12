@@ -56,7 +56,7 @@ const STAR_VERT = /* glsl */ `
 ${GAL_GLSL}
 ${CLOUD_GLSL}
 attribute vec4 aCol;          // linear color (rgb) + log2 luminosity code (a)
-uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade, uOldFade;
+uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade, uOldFade, uUnres;
 varying vec3 vColor; varying float vSharp, vRc;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -67,7 +67,10 @@ void main(){
   // seen from afar the old disk/bulge is unresolved light (the volume carries it): only the
   // luminous young OB stars and the rare red supergiants stay resolved as points
   float hot = step(aCol.r, aCol.b * 1.05);
-  flux *= mix(1.0, mix(smoothstep(24.0, 60.0, L) * 0.6, smoothstep(3.0, 14.0, L), hot), uOldFade);
+  // at whole-galaxy scale the arms are unresolved (stars < 1 px apart): only the rare
+  // supergiants and OB complexes stay as points, the rest is the volume's smooth arm light
+  float hotK = mix(smoothstep(3.0, 14.0, L), smoothstep(30.0, 120.0, L) * 0.75, uUnres);
+  flux *= mix(1.0, mix(smoothstep(24.0, 60.0, L) * 0.6 * (1.0 - 0.6 * uUnres), hotK, hot), uOldFade);
   flux = uSat * (1.0 - exp(-flux / uSat));
   float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
   flux *= exp(-starTau(cameraPosition, position, int(uTauSteps), lod));
@@ -229,7 +232,18 @@ void main(){
   // home: warm gold reticle with a soft halo so it is easy to find among thousands of stars
   float halo = vHome * vAlpha * exp(-r * r * 5.0) * 0.18 * (1.0 - smoothstep(0.7, 1.0, r));
   vec3 rc = mix(mix(vec3(0.75, 0.85, 1.0), vColor, 0.35), vec3(1.0, 0.8, 0.45), vHome);
-  gl_FragColor = vec4(rc * (a * (0.9 + 0.6 * vHome) + halo), 1.0);
+  // the selected / home star itself: a crisp PSF core with faint JWST spikes inside the reticle
+  float pick = max(vSel, vHome) * vAlpha;
+  float core = exp(-r * r / 0.006) * 3.0 + exp(-r * r / 0.03) * 0.5;
+  float sp = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float an = 1.5708 + float(k) * 1.0472;
+    vec2 ax = vec2(cos(an), sin(an));
+    float ac = abs(dot(c, vec2(-ax.y, ax.x)));
+    sp += exp(-ac * ac / 0.0006) * exp(-r / 0.22);
+  }
+  vec3 sc = mix(vec3(1.0, 0.93, 0.82), vColor, 0.3);
+  gl_FragColor = vec4(rc * (a * (0.9 + 0.6 * vHome) + halo) + sc * (core + sp * 0.5) * pick * (1.0 - smoothstep(0.6, 0.72, r)), 1.0);
 }`;
 
 export class Stars {
@@ -321,7 +335,7 @@ export class Stars {
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 2);
     this.starMat = this._mat(STAR_VERT, STAR_FRAG, {
       uBright: { value: 5.0 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
-      uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 }, uOldFade: { value: 0 },
+      uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 }, uOldFade: { value: 0 }, uUnres: { value: 0 },
     });
     this.field = new THREE.Points(geo, this.starMat);
     this.field.frustumCulled = false;
@@ -465,6 +479,7 @@ export class Stars {
     const s = Math.max(1, height / 720);
     this.starMat.uniforms.uMaxPx.value = 18 * s;
     if (this.starMat.uniforms.uOldFade) this.starMat.uniforms.uOldFade.value = Math.min(1, Math.max(0, (zoom - 3) / 12)) ** 0.7;
+    if (this.starMat.uniforms.uUnres) this.starMat.uniforms.uUnres.value = Math.min(1, Math.max(0, (zoom - 9) / 14));
     // HII sprites recede at galaxy scale: the volume's HII channel carries the knots there
     if (this.blobMat) this.blobMat.uniforms.uGain.value = 0.5 * (1 - 0.55 * this.starMat.uniforms.uOldFade.value);
     if (this.markMat) this.markMat.uniforms.uPx.value = 18 * s;

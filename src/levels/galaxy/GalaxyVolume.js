@@ -73,7 +73,7 @@ void main(){
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
   vec3 T = vec3(1.0);
-  const vec3 KRGB = vec3(0.74, 1.0, 1.32);   // wavelength-dependent extinction: lane edges redden
+  vec3 KRGB = mix(vec3(0.62, 1.0, 1.48), vec3(0.85, 1.0, 1.18), uInside);   // milder inside: rifts read dark brown, not glowing orange   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
@@ -120,6 +120,10 @@ void main(){
       vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * 1.6;
       vec4 m = galMap(pmS, max(lod + 1.7 * log2(1.0 + ay / uHYoung), 0.0));
       vec4 mS = galMap(pmS, max(lod + 3.0, 0.0));
+      // dust is sampled sharper than the light (no height LOD bias, one level finer) and given a
+      // contrast curve: hairline HST filaments go near-opaque, inter-lane disk stays clear
+      float mD = galMap(pmS, max(lod - 1.0, 0.0)).b;
+      mD = pow(mD, 1.35) * 1.15;
       float ya = pa.y - wy, yb = pb.y - wy;
       float hDv = uHDust * (0.55 + 0.9 * nsh.y);             // the lane swells and pinches
       float det = 1.0;
@@ -141,21 +145,23 @@ void main(){
         vec4 c1 = texture(uNoise, pm * vec3(0.4, 1.2, 0.4) + 0.37 + c0.xyz * 0.2);
         vec4 c2 = texture(uNoise, pm * vec3(1.25, 2.6, 1.25) + c1.xyz * 0.3);
         float cv = c0.g * 0.45 + c1.r * 0.35 + c2.b * 0.2;
-        float cl = smoothstep(0.47, 0.6, cv);
+        float cl = smoothstep(0.42, 0.62, cv);
         dIn = mix(det * det * 1.3, (0.02 + cl * cl * 20.0) * (0.55 + c2.r), 1.0 - smoothstep(1.2, 3.0, tm));
         // bright star clouds (Sagittarius / Scutum) where the clouds open up
         starCl = mix(1.0, 0.55 + 1.6 * smoothstep(0.5, 0.3, cv), uInside);
       }
       // (inside the disk a molecular-cloud floor: the local map may be dust-poor, e.g. within the bar)
-      float tau = (m.b + 0.14 * uInside * (1.0 - smoothstep(1.2, 3.0, tm))) * pD * seg * uKappa * mix(det, dIn, uInside);
+      float tau = (mix(m.b, mD, 1.0 - uInside) + 0.14 * uInside * (1.0 - smoothstep(1.2, 3.0, tm))) * pD * seg * uKappa * mix(det, dIn, uInside);
       // extraplanar dust: sparse filaments and plumes rising off the plane (NGC 891 / Sombrero)
       if (uInside < 0.5) {
         float xn = texture(uNoise, pm * vec3(0.22, 0.6, 0.22) + 0.31).b;
         float xn2 = texture(uNoise, pm * vec3(0.9, 1.8, 0.9) + 0.57).r;
-        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 4.0) * (0.4 + xn2) * 1.1;
+        float exB = smoothstep(uBulgeScale * 0.8, uBulgeScale * 2.2, length(pm.xz));   // keep bulge light smooth
+        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 4.0) * (0.4 + xn2) * 1.1 * exB;
       }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
-      vec3 j = starCl * (m.r * uColYoung * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
+      vec3 cY = mix(uColYoung, vec3(0.8, 0.88, 1.0), smoothstep(0.3, 1.6, m.r) * 0.6 * (1.0 - uInside));   // white-blue arm ridges
+      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit;
       float near = smoothstep(0.0, uNearFade, tm);
       vec3 tr = exp(-tau * KRGB);
@@ -232,11 +238,11 @@ export class GalaxyVolume {
         uKappa: { value: 2.4 }, uMapTexel: { value: (2 * P.extent) / mapSize },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
-        uBulgeDim: { value: 1 }, uStretch: { value: 2.5 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.66 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 9.0 },
+        uBulgeDim: { value: 1 }, uStretch: { value: 1.6 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.95 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 9.0 },
         uColYoung: { value: new THREE.Color(0.33, 0.53, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
-        uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
-        uColDustGlow: { value: new THREE.Color(0.007, 0.0045, 0.0038) },
+        uColHII: { value: new THREE.Color(1.0, 0.2, 0.24) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
+        uColDustGlow: { value: new THREE.Color(0.0026, 0.0017, 0.0015) },
       },
     });
     this.comp = new THREE.ShaderMaterial({

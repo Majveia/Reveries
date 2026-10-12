@@ -188,14 +188,15 @@ void main(){
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float thr = mix(0.46, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
-  float lum = smoothstep(thr, thr + 0.5, heat) * (0.2 + 3.2 * u * u * u * u);
+  float thr = mix(0.40, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
+  // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
+  float lum = smoothstep(thr, thr + 0.32, heat) * (0.25 + 3.4 * u * u * u * u);
   if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
-  float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 360.0 / max(dist, 5.0);
-  float core = clamp(uPxK * (0.9 + 1.2 * u * u) * sqrt(30.0 / max(dist, 4.0)), 1.0, 3.2);
+  float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 620.0 / max(dist, 5.0);
+  float core = clamp(uPxK * (0.7 + 1.0 * u * u) * sqrt(30.0 / max(dist, 4.0)), 1.0, 2.6);   // sharp, sub-3px HDR points
   // the brightest ~0.3% get diffraction spikes (a much larger, mostly empty sprite)
-  float spike = step(0.9985, u) * smoothstep(0.55, 0.75, heat) * (1.0 - uWarm);
+  float spike = step(0.997, u) * smoothstep(0.55, 0.75, heat) * (1.0 - uWarm);
   float px = spike > 0.0 ? clamp(uPxK * 26.0 * sqrt(30.0 / max(dist, 8.0)), 8.0, 40.0) : core;
   gl_PointSize = px;
   vPx = px / core;
@@ -226,10 +227,27 @@ void main(){
 
 const COMPOSITE_FRAG = /* glsl */ `
 uniform sampler2D tInput; uniform sampler2D tAccum; uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
+uniform vec2 uTexel; uniform float uSmooth; uniform float uSharpA;
 varying vec2 vUv;
 void main(){
   vec3 base = texture2D(tInput, vUv).rgb;
   vec4 acc = texture2D(tAccum, vUv);
+  // Adaptive screen-space kernel smoothing (SPH-style): where the projected sheet is thin and
+  // sparsely sampled (sheets, void walls, filament skirts) the discrete tracer sprites are
+  // integrated over a wider disc, so matter reads as a continuous luminous medium instead of
+  // speckle; dense spines and nodes keep the sharp full-resolution kernel.
+  vec4 bl = acc * 0.16; float ws = 0.16;
+  for (int i = 0; i < 14; i++) {
+    float fi = float(i) + 0.5;
+    float r = sqrt(fi / 14.0) * uSmooth;
+    float an = fi * 2.3999632;
+    float w = exp(-2.0 * fi / 14.0);
+    bl += texture2D(tAccum, vUv + vec2(cos(an), sin(an)) * r * uTexel) * w; ws += w;
+  }
+  bl /= ws;
+  float Ab = min(bl.a, 60000.0) * 1000.0;
+  float k = smoothstep(0.0, 1.0, log2(max(Ab, 1e-3) / uSharpA) * 0.2 + 0.5);   // wide log-space crossfade: no seams
+  acc = mix(bl, acc, k);
   float A = min(acc.a, 60000.0) * 1000.0;
   vec3 C = min(acc.rgb, vec3(60000.0)) * 1000.0 / max(A, 1e-6);
   // log column-density response with a black floor (faint sheets fall to true black, OLED)
@@ -246,7 +264,7 @@ export class WebRenderer {
     this.sim = sim;
     const { TW, m, L, T } = sim;
     this.params = {
-      gain: 0.30, a0: 60, hi: 0.015, toe: 1.4, floor: 1.2, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 60, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0, pxMax: 5, near: 10, early: 0, dim: 1, clampK: 1.0,
+      gain: 0.30, a0: 60, hi: 0.015, toe: 1.4, floor: 1.2, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 60, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0, pxMax: 5, near: 10, early: 0, dim: 1, clampK: 1.0, smooth: 3.2, sharpA: 4000,
     };
     const geo = new THREE.BufferGeometry();
     const SUBS = Math.max(1, opts.subs ?? 1);
@@ -293,7 +311,7 @@ export class WebRenderer {
     const self = this;
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 } },
+      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uTexel: { value: new THREE.Vector2() }, uSmooth: { value: 3 }, uSharpA: { value: 600 } },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
     this.effect = {
@@ -302,6 +320,8 @@ export class WebRenderer {
         const u = self.compMat.uniforms;
         u.tInput.value = input; u.tAccum.value = self.accRT?.texture || null;
         u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe; u.uFloor.value = self.params.floor;
+        const pxK = (self.accRT?.height || 720) / 720;
+        u.uTexel.value.set(1 / (self.accRT?.width || 1), 1 / (self.accRT?.height || 1)); u.uSmooth.value = self.params.smooth * pxK; u.uSharpA.value = self.params.sharpA;
         ctx.fullscreen(self.compMat, output);
       },
     };

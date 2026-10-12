@@ -31,8 +31,8 @@ export function galaxyParams(g) {
     hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.06, thick * 0.17),
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
-    bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12) * (1 - 0.45 * Math.min(1, g.bar || 0)),
-    bulgeAmp: t === 2 ? 2.2 : (0.55 + g.bulge * 1.4) * (1 - 0.3 * Math.min(1, g.bar || 0)) * (t === 1 ? 0.62 : 1),
+    bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12) * (1 - 0.45 * Math.min(1, g.bar || 0)) * (t === 1 ? 0.62 : 1),
+    bulgeAmp: t === 2 ? 2.2 : (0.55 + g.bulge * 1.4) * (1 - 0.3 * Math.min(1, g.bar || 0)) * (t === 1 ? 0.5 : 1),
     seed: (g.seed % 9973) * 0.137,
   };
 }
@@ -227,9 +227,14 @@ void main(){
   }
   // bar (along x, as in galaxySample) + straight dust lanes on its leading edges
   if (uBar > 0.0) {
-    float a = uR * uBar * 0.5, b = uR * 0.06;
-    float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 2.4) + pow(p.y * p.y / (b * b), 1.3)));   // boxy
-    old += bar * 3.6;
+    float a = uR * uBar * 0.56, b = uR * 0.04;
+    // boxy, smooth bar with a luminance gradient toward the nucleus (NGC 1300): a flat-topped
+    // super-Gaussian body plus an exponential ridge along its axis
+    float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 2.4) + pow(p.y * p.y / (b * b), 1.3)));
+    float barRidge = exp(-abs(p.x) / (0.35 * a)) * exp(-0.5 * p.y * p.y / (b * b * 0.5));
+    old += bar * 4.2 + barRidge * 2.5;
+    // ansae: brightened bar ends where the bar meets the arms
+    old += 1.4 * exp(-0.5 * (pow((abs(p.x) - a * 0.92) / (0.12 * a), 2.0) + p.y * p.y / (b * b * 0.8)));
     young += bar * smoothstep(0.35, 0.9, abs(p.x) / a) * 0.5 * (0.4 + clumpBar(p));
     // leading-edge bar lanes: offset, curved (S-shaped through the centre), wandering in width,
     // fragmented into filaments, swinging out into the inner arm lanes at the bar ends
@@ -241,7 +246,7 @@ void main(){
     ln += 0.5 * exp(-pow(p.y + lanePos * 1.35, 2.0) / (2.0 * pow(lw * 0.6, 2.0))) * smoothstep(0.3, 0.9, ax);  // secondary strand
     float along = smoothstep(0.015 * uR, 0.07 * uR, abs(p.x)) * (1.0 - smoothstep(1.3 * a, 2.3 * a, abs(p.x)));
     float bfil = ridge2(vec2(p.x * 2.5, p.y * 6.0) + 21.0, 4);
-    dust += ln * along * (0.08 + 2.2 * smoothstep(0.45, 0.72, bfil)) * 3.0;
+    dust += ln * along * (0.12 + 2.2 * smoothstep(0.45, 0.72, bfil)) * 6.5;
     // dust spurs feathering off the lanes across the bar
     dust += pow(ridge2(vec2(p.x * 9.0 + p.y * 3.0, p.y * 2.0), 3), 5.0) * bar * 0.9;
     // nuclear star-forming ring / mini spiral

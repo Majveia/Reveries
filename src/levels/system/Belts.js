@@ -92,20 +92,28 @@ void main(){
   ndl = mix(ndl, sqrt(ndl), 0.35) * smoothstep(-0.08, 0.12, ndlG);
   vec3 alb = uCol * (0.6 + 0.55 * vTint) * (0.72 + 0.4 * h + 0.16 * spk);
   // space weathering: mature reddish-brown regolith vs fresh grey-white ejecta around young craters
-  float fresh = smoothstep(0.2, 0.0, cr.x) * 0.5 + smoothstep(0.12, 0.0, cr2.x) * 0.35;
+  float fresh = smoothstep(0.2, 0.0, cr.x) * 0.5 + smoothstep(0.12, 0.0, cr2.x) * 0.35 + smoothstep(0.62, 0.8, fbm(lp * 4.0 + 9.0, 3)) * 0.4;
   alb = mix(alb, alb * vec3(1.18, 0.95, 0.78), smoothstep(0.1, 0.6, fbm(lp * 1.5, 3)) * (1.0 - uIce));
   alb = mix(alb, vec3(dot(alb, vec3(0.33))) * 1.5, fresh * (1.0 - uIce * 0.5));
   // crater floors sit in shadow-dark material
   alb *= 1.0 - 0.25 * smoothstep(0.25, 0.0, cr.x);
-  float opp = 1.0 + 0.5 * pow(max(dot(V, L), 0.0), 10.0);
+  float opp = 1.0 + 0.6 * pow(max(dot(V, L), 0.0), 10.0);
+  // Lommel-Seeliger blend: regolith stays bright toward the limb on the lit side (no Lambert falloff)
+  float ndvL = max(dot(N, V), 0.0);
+  float ls = 2.0 * ndl / (ndl + ndvL + 0.05);
+  float lit = mix(ndl, ls * ndl * 1.6, 0.45);
   vec3 H = normalize(L + V);
   float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce) * ndl;
-  vec3 c = alb * uSun * (ndl * opp) + uSun * spec + alb * vec3(0.022, 0.025, 0.034) * (0.6 + 0.4 * max(dot(N, -L), 0.0));
-  // backlit rim: dust and regolith fringe catch the star when it sits behind the rock
+  // fill: starlight scattered by the belt's own dust + the galactic band (cool, from the shadow side)
+  float fillW = 0.55 + 0.45 * max(dot(N, -L), 0.0);
+  vec3 c = alb * uSun * (lit * opp) + uSun * spec + alb * uSun * vec3(0.045, 0.05, 0.068) * fillW;
+  // backlit fringe: a dust-coated limb forward-scatters the star (Henyey-Greenstein, g = 0.7)
   float ndv = max(dot(Ng, V), 0.0);
+  float cosT = dot(-V, L);
+  float hg = 0.51 / pow(1.49 - 1.4 * cosT, 1.5) / 6.0;
   // pixel-sized rocks: no rim and a dimmer disc, so the far belt reads as texture, not salt
   float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
-  c += uSun * alb * pow(1.0 - ndv, 4.0) * pow(max(dot(-V, L), 0.0), 4.0) * 0.3 * (1.0 - tiny);
+  c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 0.9 * (1.0 - tiny);
   c *= 1.0 - 0.55 * tiny;
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -128,7 +136,7 @@ export class Belt {
     ];
     const sun = starColor.clone().multiplyScalar(1.4);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.62).lerp(new THREE.Color(0.3, 0.27, 0.24), kuiper ? 0 : 0.35) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 } },
+      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.8).lerp(new THREE.Color(0.36, 0.3, 0.25), kuiper ? 0 : 0.3) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 } },
       vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG,
     });
     this.instances = []; // CPU copy (for shots / picking)
@@ -207,8 +215,8 @@ export class Belt {
           float dist = -mv.z;
           // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
           // backlit, the motes swell into a soft forward-scattering haze (energy spread over a larger sprite)
-          float sz = clamp(70.0 / dist, 2.0, 5.0) * (1.0 + 2.5 * fwd);
-          vC = uSun * (0.0022 + 0.12 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
+          float sz = clamp(150.0 / dist, 2.5, 11.0) * (1.0 + 1.5 * fwd);
+          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.12 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
           gl_PointSize = sz * uDpr;
         }`,
       fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,

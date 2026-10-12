@@ -242,14 +242,15 @@ export class Trees {
     const fl = this.flora, w = this.world, q = fl.engine.quality, T = this.T;
     this.R = w.radius;
     this.sea = w.hasOcean ? w.seaLevel : -Infinity;
-    this.meshRange = q.pick(50, 70, 95, 150); // mesh ↔ impostor switch (impostors are relit multi-view bakes)
+    this.meshRange = q.pick(34, 52, 78, 150); // mesh ↔ impostor switch (impostors are relit multi-view bakes)
+    this.shadowCastR = q.pick(30, 42, 62, 110); // mesh trees beyond this skip the sun shadow map (frame budget)
     this.farRange = Math.min(w.radius * 0.12, q.pick(1100, 1700, 2400, 3200));
     this.colRange = 45;
     this.atlas = foliageAtlas();
     const U = {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind, uGlowCol: { value: new THREE.Color(T.glowCol || '#7fe6ff') },
-      uFade: { value: new THREE.Vector2(this.meshRange - 22, this.meshRange + 22) },
+      uFade: { value: new THREE.Vector2(this.meshRange - q.pick(12, 16, 22, 22), this.meshRange + q.pick(12, 16, 22, 22)) },
     };
     this.U = U;
     this.barkMat = barkMaterial(U); this.barkDepth = barkMaterial(U, true);
@@ -334,6 +335,11 @@ export class Trees {
     m.customDepthMaterial = depthMat;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.frustumCulled = true;
+    // instances are packed nearest-first: the sun shadow pass draws only the first
+    // shadowCount (trees within shadowCastR); farther trees keep their terrain-vis/AO shadows
+    m.shadowCount = 0;
+    m.onBeforeShadow = function () { this._fullCount = this.count; this.count = Math.min(this.count, this.shadowCount); };
+    m.onAfterShadow = function () { this.count = this._fullCount; };
     this.flora.group.add(m);
     return m;
   }
@@ -585,7 +591,18 @@ export class Trees {
         }
       }
     }
-    // mesh instances
+    // mesh instances (nearest first, so the shadow pass can take a prefix)
+    const sR2 = this.shadowCastR * this.shadowCastR;
+    for (const v of this.variants) {
+      const L = v.list;
+      let ns = 0;
+      if (!v.under && L.length) {
+        for (const t of L) { const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z; t._d2 = dx * dx + dy * dy + dz * dz; }
+        L.sort((a, b) => a._d2 - b._d2);
+        while (ns < L.length && L[ns]._d2 < sR2) ns++;
+      }
+      v.shadowN = ns;
+    }
     for (const v of this.variants) {
       const n = v.list.length;
       if (n > v.barkMesh.instanceMatrix.count) { this._growInst(v, 'barkMesh', Math.ceil(n * 1.5)); if (v.leafMesh) this._growInst(v, 'leafMesh', Math.ceil(n * 1.5)); }
@@ -609,6 +626,8 @@ export class Trees {
       for (const m of [v.barkMesh, v.leafMesh]) {
         if (!m) continue;
         m.count = n;
+        m.shadowCount = v.shadowN;
+        if (!v.under) m.castShadow = v.shadowN > 0;
         m.instanceMatrix.clearUpdateRanges?.(); m.instanceMatrix.needsUpdate = true;
         if (m.instanceColor) m.instanceColor.needsUpdate = true;
         if (n) m.computeBoundingSphere(); else m.boundingSphere = null;

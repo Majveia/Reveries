@@ -48,7 +48,7 @@ void main(){
       float edge = 1.0 - smoothstep(0.75, 1.0, r);
       // depth-weighted tint: violet warm-hot medium far away, cyan near; gold intracluster plasma
       float tr = exp(-max(t - uFogNear, 0.0) / uFog);
-      vec3 col = mix(vec3(0.30, 0.08, 0.95), vec3(0.12, 0.50, 1.0), smoothstep(3.0, 10.0, rho) * (0.4 + 0.6 * tr));
+      vec3 col = mix(vec3(0.16, 0.05, 0.62), vec3(0.12, 0.50, 1.0), smoothstep(5.0, 14.0, rho) * (0.4 + 0.6 * tr));
       col = mix(col, vec3(1.45, 0.72, 0.30), smoothstep(16.0, 90.0, rho));
       acc += col * e * edge * tr;
     }

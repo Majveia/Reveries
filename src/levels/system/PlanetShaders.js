@@ -15,12 +15,12 @@ float ringDensity(float x, float seed){
   d += smoothstep(0.0, 0.05, x) * (0.10 + 0.16 * x / 0.25) * (1.0 - smoothstep(0.25, 0.27, x));  // C ring: faint, dusty
   d += smoothstep(0.255, 0.29, x) * (0.62 + 0.36 * smoothstep(0.32, 0.52, x)) * (1.0 - smoothstep(0.575, 0.592, x)); // B ring: dense
   d += smoothstep(0.64, 0.66, x) * (0.58 - 0.12 * smoothstep(0.8, 0.95, x)) * (1.0 - smoothstep(0.955, 0.965, x)); // A ring
-  d += smoothstep(0.592, 0.6, x) * (1.0 - smoothstep(0.62, 0.64, x)) * 0.06;                       // dusty Cassini division
-  d *= 1.0 - 0.92 * exp(-pow((x - 0.888) / 0.0035, 2.0));                                          // Encke gap
-  d *= 1.0 - 0.7 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
-  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.5;                                                  // F ring
+  d += smoothstep(0.592, 0.6, x) * (1.0 - smoothstep(0.62, 0.64, x)) * (0.13 + 0.05 * rNoise(x * 300.0 + seed));                       // dusty Cassini division
+  d *= 1.0 - 0.75 * exp(-pow((x - 0.888) / 0.0035, 2.0));                                          // Encke gap
+  d *= 1.0 - 0.45 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
+  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.24;                                                  // F ring
   // plateaus and ringlets at every scale
-  float fine = 0.66 + 0.2 * rNoise(x * 70.0 + seed) + 0.16 * rNoise(x * 260.0 + seed * 3.0) + 0.1 * rNoise(x * 900.0 + seed) + 0.06 * rNoise(x * 2600.0);
+  float fine = 0.56 + 0.22 * rNoise(x * 70.0 + seed) + 0.2 * rNoise(x * 260.0 + seed * 3.0) + 0.14 * rNoise(x * 900.0 + seed) + 0.08 * rNoise(x * 2600.0);
   float plateau = 1.0 + 0.35 * smoothstep(0.55, 0.9, rNoise(x * 34.0 + seed * 7.0)) * step(x, 0.25);
   return clamp(d * fine * plateau, 0.0, 1.0);
 }
@@ -95,16 +95,16 @@ float cloudField(vec3 d, int oct, bool detail){
     float lo = fract(uSeed * 0.171 + fi * 0.29) * 6.2832 + uTime * 0.002;
     vec3 cc = vec3(cos(la) * cos(lo), sin(la), cos(la) * sin(lo));
     float r = length(c - cc) / 0.36;
-    c = rotAxis(c, cc, sign(la) * 4.6 * exp(-r * r * 1.3) * (0.5 + 0.5 * r));
+    c = rotAxis(c, cc, sign(la) * 2.2 * exp(-r * r * 1.6) * (0.5 + 0.5 * r));
   }
   float lat = c.y, al = abs(lat);
   vec3 p = c * 1.9 + uSeed * 0.37;
   vec3 w = vec3(fbm(p * 1.1, 3), fbm(p * 1.1 + 5.2, 3), fbm(p * 1.1 + 9.7, 3));
-  vec3 q = p + w * 0.95;
+  vec3 q = p + w * 0.5;
   q.y *= 2.1;                                   // zonal stretching: fronts lie along latitude circles
   float n1 = fbm(q * 1.2, oct);
-  float clim = 0.14 * exp(-al * al / 0.006) - 0.2 * exp(-pow((al - 0.42) / 0.13, 2.0)) + 0.12 * exp(-pow((al - 0.8) / 0.14, 2.0));
-  float base = n1 + clim + (uCloudCover - 0.55) * 0.6;
+  float clim = 0.14 * exp(-al * al / 0.006) - 0.32 * exp(-pow((al - 0.4) / 0.14, 2.0)) + 0.12 * exp(-pow((al - 0.8) / 0.14, 2.0));
+  float base = n1 + clim + (uCloudCover - 0.55) * 0.6 - 0.06;
   float cov = smoothstep(-0.08, 0.3, base);
   if (detail) {
     float n2 = fbm(q * 4.2 + w * 1.4, 4);
@@ -256,7 +256,7 @@ void main(){
   if (uCiv > 0.5 && !ocean) {
     // metropolitan regions follow the habitable lowlands and coasts
     float region = smoothstep(0.3, 0.65, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.5 - 0.15) * smoothstep(0.05, 0.35, cityPot);
-    float coast = smoothstep(0.2, 0.0, h);
+    float coast = smoothstep(0.2, 0.0, h) * 0.6 + smoothstep(0.06, 0.0, abs(h)) * 0.6;
     vec2 wc = worley(sd * 70.0);
     // heavy-tailed metropolitan hierarchy: a few megalopolises outshine everything else
     float mega = pow(0.5 + 0.5 * snoise(sd * 9.0 + 3.0), 4.0) * 7.0 + 0.35;
@@ -271,7 +271,7 @@ void main(){
     lights *= 1.0 - smoothstep(0.3, 0.6, snow);
     // sodium amber suburbs vs LED-white downtowns
     vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);
-    lights *= (uCiv - 1.0) * 0.6;
+    lights *= (uCiv - 1.0) * 1.3;
     emis += lc * lights * night * 3.4 * (1.0 - cloud * 0.8);
   }
 #endif
@@ -340,13 +340,13 @@ void main(){
   float b4 = prof(y, 140.0, uSeed + 11.0);
   // Cassini-like restraint: pale butterscotch zones, muted belts, grey-blue accents in a narrow value range
   float l0 = dot(uC0, vec3(0.3, 0.5, 0.2)), l1 = dot(uC1, vec3(0.3, 0.5, 0.2)), l2 = dot(uC2, vec3(0.3, 0.5, 0.2));
-  vec3 c0 = mix(vec3(l0), uC0, 0.5) * mix(vec3(1.06, 1.0, 0.86), vec3(1.0), 0.3) * 1.15;
-  vec3 c1 = mix(vec3(l1), uC1, 0.48) * 1.08;
+  vec3 c0 = mix(vec3(l0), uC0, 0.36) * mix(vec3(1.06, 1.0, 0.86), vec3(1.0), 0.3) * 1.15;
+  vec3 c1 = mix(vec3(l1), uC1, 0.36) * 1.08;
   c1 = mix(c1, c0, 0.3);
   vec3 c2 = mix(vec3(l2), uC2, 0.3);
   vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
   col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
-  col *= 0.95 + 0.035 * b3 + 0.012 * b4;
+  col *= 0.92 + 0.065 * b3 + 0.04 * b4;
   col *= 0.95 + 0.07 * n;
   // small bright convective spots and dark barges in the shear zones
   vec2 wv = worley(vec3(sd.x * 14.0, sd.y * 40.0, sd.z * 14.0) + uSeed + n * 0.6);
@@ -378,7 +378,7 @@ void main(){
   float ndlG = dot(Ng, L);
   float ndv = max(dot(Ng, V), 0.0);
   // deep atmosphere: soft terminator (light diffuses below the cloud deck)
-  float diff = sat((ndlG + 0.08) / 1.08);
+  float diff = sat((ndlG + 0.025) / 1.025);
   diff = mix(diff * diff * (3.0 - 2.0 * diff), max(ndlG, 0.0), 0.6);
   vec3 sunC = uSun * mix(vec3(1.0, 0.62, 0.4), vec3(1.0), smoothstep(-0.02, 0.2, ndlG));
   vec3 c = col * sunC * diff;
@@ -390,7 +390,7 @@ void main(){
   c *= ringShadow(vWP, L, uCenter, uRingN, uRingIn, uRingOut, uRingOp, uRingSeed);
   // ringshine: sunlight scattered off the rings faintly lights the night side
   float rs = sat(abs(dot(Ng, uRingN))) * smoothstep(0.1, -0.3, ndlG);
-  c += col * uSun * 0.045 * rs;
+  c += col * uSun * 0.01 * rs;
 #endif
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -423,7 +423,11 @@ void main(){
   vec3 ray = mix(vec3(1.0, 0.4, 0.15), uAtmo, smoothstep(-0.12, 0.3, mu));
   vec3 c = uSun * (ray * phaseR + vec3(1.0, 0.85, 0.7) * phaseM) * (1.0 - exp(-tau)) * lit * hit;
   // backlit ring of light at the terminator (sunlight through the limb)
-  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * uBack * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
+  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * min(uBack, 1.0) * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
+  // backlit halo: when the star sits behind the world the whole limb lights up by forward (Mie) scattering
+  float hgB = 0.4375 / pow(1.5625 - 1.5 * cosT, 1.5);
+  vec3 tintB = mix(vec3(1.0, 0.72, 0.45), mix(uAtmo, vec3(1.0), 0.4), smoothstep(-0.2, 0.2, mu));
+  c += tintB * uSun * hgB * 0.16 * uBack * (1.0 - exp(-tau * 5.0)) * smoothstep(-0.45, 0.0, mu) * hit;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -453,7 +457,7 @@ void main(){
   // zone albedo: dark dusty C ring and Cassini division, brilliant B ring (brightening outward), greyer A ring
   float zAlb = mix(0.24, 0.38, smoothstep(0.0, 0.25, x));
   zAlb = mix(zAlb, mix(0.78, 1.08, smoothstep(0.3, 0.55, x)), smoothstep(0.25, 0.29, x));
-  zAlb = mix(zAlb, 0.3, smoothstep(0.585, 0.6, x) * (1.0 - smoothstep(0.635, 0.655, x)));
+  zAlb = mix(zAlb, 0.42, smoothstep(0.585, 0.6, x) * (1.0 - smoothstep(0.635, 0.655, x)));
   zAlb = mix(zAlb, 0.68 - 0.08 * smoothstep(0.8, 0.95, x), smoothstep(0.64, 0.66, x));
   tone *= zAlb;
   // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer

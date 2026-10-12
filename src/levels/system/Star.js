@@ -32,8 +32,8 @@ export class Star {
     this.color = col;
     const hot = THREE.MathUtils.clamp((star.temp - 3000) / 9000, 0, 1);
     // Surface radiance (HDR): bright enough to bloom; scaled down for huge giants so they read as cooler.
-    const intensity = kind === 'neutron' ? 60 : kind === 'whiteDwarf' ? 40 : kind === 'giant' ? 8 : 12;
-    const cell = kind === 'giant' ? 22.0 : kind === 'whiteDwarf' ? 150.0 : 210.0;
+    const intensity = kind === 'neutron' ? 60 : kind === 'whiteDwarf' ? 40 : kind === 'giant' ? 6 : 7;
+    const cell = kind === 'giant' ? 22.0 : kind === 'whiteDwarf' ? 150.0 : 120.0;
     const spots = kind === 'main' ? THREE.MathUtils.clamp(1.2 - hot * 1.1, 0.15, 1.0) : kind === 'giant' ? 0.5 : 0.0;
 
     // ---- photosphere ---------------------------------------------------------------
@@ -202,10 +202,10 @@ export class Star {
           float inner = exp(-x * 14.0) * 1.2;
           float outer = exp(-x * 1.6) * 0.16 * rays * eq * (0.7 + 0.6 * st);
           float halo = 0.03 / (1.0 + x * x * 10.0) + 0.1 * exp(-x * 2.2) + 0.035 / (1.0 + x * x * 1.5);   // warm scattered glow: the star reads as a light source, not a disc
-          float chromo = exp(-pow((r - 1.004) / 0.011, 2.0)) * (0.8 + 0.4 * st);
+          float chromo = exp(-pow((r - 1.006) / 0.02, 2.0)) * (0.8 + 0.4 * st) * 0.55;
           float spicules = smoothstep(0.2, 0.9, snoise(vec2(a * 160.0, uTime * 0.05))) * exp(-x * 60.0) * 0.6;
           float skirt = exp(-x * 22.0) * 0.14 * (0.6 + 0.8 * st);   // diffuse off-limb H-alpha emission the prominences sit in
-          vec3 c = uColor * (inner + outer + halo) * uI + uHalpha * (chromo * 1.3 + spicules * 0.7 + skirt);
+          vec3 c = uColor * (inner + outer) * uI + uColor * mix(vec3(1.0), uHalpha, 0.35) * halo * 0.4 * uI + uHalpha * (chromo * 1.3 + spicules * 0.7 + skirt);
           c *= smoothstep(1.0, 0.55, length(vUv));
           gl_FragColor = vec4(c, 1.0);
         }`,
@@ -258,6 +258,7 @@ export class Star {
       uniforms: { uSize: { value: 1 }, uColor: { value: col }, uVis: { value: 1 }, uI: { value: kind === 'giant' ? 0.6 : 1.0 } },
       vertexShader: BILLBOARD_VERT,
       fragmentShader: /* glsl */`
+        ${NOISE_GLSL}
         uniform vec3 uColor; uniform float uVis, uI; varying vec2 vUv;
         void main(){
           float r = length(vUv); if (r > 1.0) discard;
@@ -268,9 +269,15 @@ export class Star {
             float s = abs(sin(ang));
             spikes += exp(-s * r * 900.0) * pow(1.0 - r, 6.0);
           }
-          float fine = abs(sin(a * 37.0)) * abs(sin(a * 23.0 + 1.3));
+          // irregular eyelash rays: lengths and strengths vary around the disc (periodic noise on the circle)
+          vec2 cs = vec2(cos(a), sin(a));
+          float rn = 0.5 + 0.5 * snoise(cs * 14.0 + 3.1);
+          float rn2 = 0.5 + 0.5 * snoise(cs * 41.0 - 7.0);
+          float fine = pow(rn2, 9.0) * rn * rn * (0.5 + 1.5 * rn) * exp(-r * (8.0 + 16.0 * (1.0 - rn)));
           float core = 0.10 / (1.0 + pow(r * 26.0, 2.0)) + 0.012 / (1.0 + r * r * 220.0);
-          float rays = fine * exp(-r * 9.0) * 0.06;
+          float rays = fine * 0.07;
+          // wide veiling glare (scatter in the eye / lens): warm, very low amplitude
+          core += 0.006 / (1.0 + r * r * 40.0);
           float ring = 0.0;
           vec3 c = uColor * (core + spikes * 0.12 + rays) + vec3(0.6, 0.8, 1.0) * ring;
           gl_FragColor = vec4(c * uVis * uI * smoothstep(1.0, 0.8, r), 1.0);
@@ -341,6 +348,13 @@ export class Star {
           // tops dissolve: emission measure falls off with height above the photosphere
           float hgt = max(length(vWP) / uRad - 1.0, 0.0);
           float fade = exp(-hgt / uH);
+          // seen against the photosphere a prominence is a dark filament, not emission: the view ray
+          // continuing past this fragment hits the star -> suppress (no comb streaks on the disk)
+          vec3 rd = -V;
+          float bq = dot(vWP, rd), cq = dot(vWP, vWP) - uRad * uRad;
+          float disc = bq * bq - cq;
+          float onDisk = step(bq, 0.0) * smoothstep(0.0, 0.03 * uRad * uRad, disc);
+          fade *= 1.0 - 0.9 * onDisk;
           gl_FragColor = vec4(uColor * uI * uK * core * strand * foot * fade * (0.35 + 0.65 * ends), 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
@@ -420,7 +434,7 @@ export class Star {
     this.glareMat.uniforms.uSize.value = d * 0.55;
     this.glareMat.uniforms.uVis.value = visible * THREE.MathUtils.smoothstep(d / R, 2.5, 8.0);
     // photographic exposure: close to the star the photosphere is dimmed so its texture survives
-    const k = THREE.MathUtils.clamp(Math.pow((d / R) / 10, 1.2), 0.15, 1);
+    const k = THREE.MathUtils.clamp(Math.pow((d / R) / 10, 1.2), 0.26, 1);
     this.surfMat.uniforms.uI.value = this.baseI * k;
     this.surfMat.uniforms.uFilter.value = THREE.MathUtils.smoothstep(1 - k, 0.2, 0.75);
     this.coronaMat.uniforms.uI.value = this.baseCorona * (0.12 + 0.88 * k);

@@ -38,6 +38,9 @@ const mat3 RT = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);   
 vec3 SP;
 // signed height above the dust skyline (>0 = inside the dust) for cliffs / pillars
 float cliffH(vec3 xw){
+  // secondary 3D domain warp (rotated lattice): overhangs and erosion instead of extruded
+  // vertical curtains where the heightfield is steep
+  xw += (nz(RT * xw * 0.75 + SP * 0.6).gbr - 0.5) * vec3(0.32, 0.12, 0.32);
   vec2 h = xw.xz;
   float s = -0.26;   // (ridged channel B has mean ≈0.71, fbm R/G ≈0.48)
   s += (nz(vec3(h * 0.13, 0.13) + SP).r - 0.5) * 2.6;                 // broad terrain
@@ -91,7 +94,11 @@ vec3 field(vec3 x){
     // crisp ionization-front skin, broken into bright knots by the ridged detail
     float kn = nz(RT * xw * 9.0 + SP * 0.7).b;
     // JWST 'combed' texture: fine streamers stretched toward the cluster (photo-evaporation flow)
-    float comb = nz(vec3(xw.x * 34.0, xw.y * 4.0, xw.z * 34.0) + SP).g;
+    // stretched along the direction to the cluster (anisotropy 4:1) in the rotated lattice,
+    // so streamers point at the ionizing stars and never align with the texture axes
+    vec3 dS = normalize(STAR - x);
+    float al = dot(xw, dS);
+    float comb = nz(RT * ((xw - dS * al) * 22.0 + dS * al * 5.5) + SP).g;
     skin = e * smoothstep(-0.004, 0.004, above) * (exp(-max(above, 0.0) / 0.006) * 2.2 + exp(-max(above, 0.0) / 0.035) * 0.22) * (0.2 + 1.5 * kn * kn) * (0.45 + 1.1 * comb);
     dust *= 0.75 + 0.5 * comb;
   } else if (uKind < 2.5) {

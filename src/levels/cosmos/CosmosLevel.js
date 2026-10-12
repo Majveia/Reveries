@@ -69,7 +69,7 @@ export default class CosmosLevel {
     await this.sim.init((p) => progress(0.04 + p, 'seeding the primordial field'));
     progress(0.35, 'gravity at work');
     await this.sim.runTo(1, (p) => progress(0.35 + 0.6 * p, 'gravity at work'));
-    this._detectHalos(true);
+    this._applyHalos(await this.sim.readHaloGridAsync(), true);
     if (this.ref[0]) this.home.set(this.ref[0].x, this.ref[0].y, this.ref[0].z);
 
     this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(16384, 32768, 65536, 131072), subs: e.quality.pick(2, 3, 4, 6) });
@@ -93,8 +93,15 @@ export default class CosmosLevel {
 
   // ---- halos -------------------------------------------------------------------
   _detectHalos(reference = false) {
+    // asynchronous readback (no GPU stall mid-flight); one request in flight at a time
+    if (this._haloPending) return;
+    this._haloPending = true;
+    const a = this.sim.a;
+    this.sim.readHaloGridAsync().then((grid) => { this._applyHalos(grid, reference, a); }).catch(() => {}).finally(() => { this._haloPending = false; });
+  }
+
+  _applyHalos(grid, reference = false, a = this.sim.a) {
     const s = this.sim;
-    const grid = s.readHaloGrid();
     const unit = (s.particleMass * s.N) / (s.M ** 3);
     const list = findHalos(grid, s.H, s.L, unit, 160);
     if (reference || !this.ref.length) {
@@ -102,7 +109,7 @@ export default class CosmosLevel {
       this.ref = list.map((h) => ({ ...h }));
     } else assignIds(list, this.ref, s.L, 7);
     this.halos = list;
-    this._haloA = s.a;
+    this._haloA = a;
     this._grid = grid;
   }
 
@@ -264,7 +271,7 @@ export default class CosmosLevel {
     if (!e.shotMode) {
       const behind = this.aTarget - this.disp?.a > 0.02 ? 2 : 1;
       this.disp = sim.update(this.aTarget, behind);
-      if (sim.a >= 0.3 && (this._haloA == null || Math.abs(sim.a - this._haloA) > 0.04) && !sim.busy) this._detectHalos(false);
+      if (sim.a >= 0.3 && (this._haloA == null || Math.abs(sim.a - this._haloA) > 0.04) && !sim.busy && !this._haloPending) this._detectHalos(false);
     } else if (!this.disp || this.mode === 'live') {
       this.disp = sim.display(this.aTarget);
     }
@@ -295,8 +302,8 @@ export default class CosmosLevel {
     this.glow.center.copy(this.center);
     this.glow.enabled = this.mode !== 'early'; // the glow samples the live mesh, not the z≈5 snapshot
     this.glow.fog = p.fog; this.glow.fogNear = p.fogNear;
-    this.glow.thresh = p.glowThresh ?? 3.5;
-    this.glow.strength = (p.glow ?? 0.009) * (1 - p.warm) * (1 - 0.6 * p.early);
+    this.glow.thresh = p.glowThresh ?? 4.5;
+    this.glow.strength = (p.glow ?? 0.006) * (1 - p.warm) * (1 - 0.6 * p.early);
 
     // flash of the Big Bang
     const tr = e.postfx.transition;
@@ -430,7 +437,7 @@ export default class CosmosLevel {
   _shots() {
     return {
       hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(), 52, 0.3, 0.05); },
-      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.45, gain: 0.34, pxMax: 3.5 }; this._pose(this.home, this._heroOffset(58, HERO.yaw + 0.4, 0.26), 55, 0.2, 0); },
+      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.3, gain: 0.42, pxMax: 3.5, galaxies: 0.3, smooth: 1.5, sharpA: 40 }; this._pose(this.home, this._heroOffset(58, HERO.yaw + 0.4, 0.26), 55, 0.2, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;

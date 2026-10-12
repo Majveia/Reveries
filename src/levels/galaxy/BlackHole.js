@@ -66,6 +66,17 @@ vec3 background(vec3 dir){
   vec3 vd = mat3(uView) * dir;
   vec4 clip = uProj * vec4(vd, 0.0);
   vec3 sky = starLayer(dir, 140.0, 0.022, uPix) + starLayer(dir, 380.0, 0.012, uPix) * 0.45;
+  // the nuclear environment: a warm bulge glow concentrated toward the galactic plane, a dense
+  // nuclear star cluster and a dusty circumnuclear lane — structure for the Einstein ring to warp
+  float sb = dir.y;
+  float band = exp(-sb * sb / (2.0 * 0.2 * 0.2));
+  vec4 en = texture(uNoise, dir * 1.4 + 0.23);
+  vec4 en2 = texture(uNoise, dir * 4.5 + en.xyz * 0.3);
+  float lane = 1.0 - 0.9 * exp(-pow((sb - 0.012 + (en.r - 0.5) * 0.05) / (0.03 + 0.03 * en2.g), 2.0)) * smoothstep(0.25, 0.6, en2.b + 0.2);
+  lane *= 1.0 - 0.55 * smoothstep(0.55, 0.8, en2.r) * band;                                  // dark globules
+  vec3 env = vec3(1.0, 0.58, 0.3) * (0.0006 + 0.012 * band * band * band + 0.003 * band) * (0.4 + 1.0 * en.g * en.g) * lane;
+  env += vec3(1.0, 0.82, 0.62) * starLayer(dir, 520.0, 0.004 + 0.022 * band * band, uPix) * 0.5 * lane;
+  sky += env;
   // the frame behind the hole contains the (unlensed) nucleus itself: mask it out so it is not
   // self-lensed into a hard graphic Einstein ring; its light is the broad lensed glow instead
   float toHole = acos(clamp(dot(dir, uHoleDir), -1.0, 1.0));
@@ -80,13 +91,17 @@ vec3 background(vec3 dir){
   return sky * uStarGain + glow * uBg;
 }
 
-// plasma texture: big sheared clumps, filaments ~3:1 along the flow, a fine turbulent octave
-// and a Worley clump channel (angular frequency ≈ 2πr·k_r/3 at mid-disk)
+// plasma texture in log-polar coordinates (u = ln r, a): anisotropy capped at ~3:1 so the
+// disk reads as turbulent MRI plasma (trailing-spiral clumps, dark lanes), not combed hair
 vec4 plasma(float r, float a, float z){
-  float n1 = texture(uNoise, vec3(r * 0.3, a / TAU * 6.0, 0.37 + z)).r;
-  float n2 = texture(uNoise, vec3(r * 0.85 + n1 * 0.35, a / TAU * 14.0 + n1 * 0.3, 0.71 + z)).b;
-  float n3 = texture(uNoise, vec3(r * 1.9 + n2 * 0.3, a / TAU * 30.0 + r * 0.07, 0.13 + z)).g;
-  float n4 = texture(uNoise, vec3(r * 1.4 + n2 * 0.3, a / TAU * 22.0 + r * 0.05, 0.53 + z)).a;
+  float u = log(r);
+  vec2 s = vec2(cos(a), sin(a));
+  // large trailing-spiral clumps (angular frequency 3-8, pitch via u - a·0.25)
+  float sp = a * 5.0 / TAU + u * 2.2;
+  float n1 = texture(uNoise, vec3(u * 0.9 + 0.2 * s.x, sp * 0.33, 0.37 + z)).r;
+  float n2 = texture(uNoise, vec3(u * 2.1 + n1 * 0.25, a / TAU * 9.0 + u * 1.2 + n1 * 0.2, 0.71 + z)).b;
+  float n3 = texture(uNoise, vec3(u * 5.0 + n2 * 0.3, a / TAU * 16.0 + u * 2.0 + n2 * 0.25, 0.13 + z)).g;
+  float n4 = texture(uNoise, vec3(u * 3.2 + n2 * 0.3, a / TAU * 11.0 + u * 1.6, 0.53 + z)).a;
   return vec4(n1, n2, n3, n4);
 }
 vec4 diskSample(vec3 hit, vec3 v){
@@ -96,17 +111,21 @@ vec4 diskSample(vec3 hit, vec3 v){
   // Keplerian flow (Ω ∝ r^-3/2, toward −θ) advected with two crossfaded phases (flow-map style):
   // the texture rotates differentially forever without the shear winding it into combed hair
   float om = 0.7 * pow(r, -1.5);
-  float ph = fract(uTime * 0.4);
-  float wA = 1.0 - abs(2.0 * ph - 1.0);
-  vec4 pa = plasma(r, ang + om * ph * 6.0, 0.0);
-  vec4 pb = plasma(r, ang + om * fract(ph + 0.5) * 6.0, 0.5);
-  vec4 pn = mix(pb, pa, wA);
+  // three crossfaded flow-map phases with mild shear (never winds into hairlines)
+  float ph0 = fract(uTime * 0.3), ph1 = fract(ph0 + 1.0 / 3.0), ph2 = fract(ph0 + 2.0 / 3.0);
+  vec3 wv = vec3(1.0 - abs(2.0 * ph0 - 1.0), 1.0 - abs(2.0 * ph1 - 1.0), 1.0 - abs(2.0 * ph2 - 1.0));
+  wv /= wv.x + wv.y + wv.z;
+  vec4 pn = plasma(r, ang + om * ph0 * 2.0, 0.0) * wv.x + plasma(r, ang + om * ph1 * 2.0, 0.33) * wv.y
+          + plasma(r, ang + om * ph2 * 2.0, 0.66) * wv.z;
+  // re-expand the contrast lost by averaging
+  pn = clamp((pn - 0.5) * 1.35 + 0.5, 0.0, 1.0);
   float n1 = pn.x, n2 = pn.y, n3 = pn.z, n4 = pn.w;
   float x = (r - uIn) / (uOut - uIn);
-  float bands = 0.7 + 0.3 * sin(r * 5.3 + n1 * 6.0) * sin(r * 1.7 + 1.3 + n2 * 2.0);
+  float bands = 0.75 + 0.25 * sin(log(r) * 11.0 + n1 * 5.0) * sin(log(r) * 4.0 + 1.3 + n2 * 2.0);
   float inner = 1.0 - smoothstep(0.0, 0.45, x);
-  float dens = (0.3 + 1.1 * n1) * (0.35 + 1.2 * n2 * n2) * (0.75 + 0.5 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
-  dens *= 0.55 + 0.9 * smoothstep(0.25, 0.75, n4);                 // clumps and dark gaps
+  float dens = (0.3 + 1.1 * n1) * (0.35 + 1.2 * n2 * n2) * (0.85 + 0.3 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
+  dens *= 0.4 + 1.1 * smoothstep(0.3, 0.72, n4);                  // clumps and dark gaps
+  dens *= 0.35 + 0.65 * smoothstep(0.28, 0.55, n1);               // a few dark spiral lanes
   float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.5, 1.0, x));
   float alpha = clamp(pow(dens, 1.6) * edge * 2.0, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
@@ -124,7 +143,7 @@ vec4 diskSample(vec3 hit, vec3 v){
   float em = tp * tp * (0.35 + 0.65 * tp * tp) * (1.0 + 2.2 * exp(-x * 9.0));
   vec3 bb = blackbody(T);
   bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.45), 0.0);   // photographic saturation
-  vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.75 + 0.5 * n3);
+  vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.88 + 0.24 * n3);
   return vec4(c * alpha, alpha);
 }
 
@@ -163,11 +182,12 @@ vec3 trace(vec2 uv){
   float h2 = dot(cross(p, v), cross(p, v));
   bool captured = false;
   float minR = 1e9;
+  bool crit = abs(sqrt(h2) - 2.598) < 0.06;   // near-critical rays: wind around the photon sphere
   for (int i = 0; i < 500; i++) {
     if (float(i) >= uSteps) break;
     float r = length(p);
     minR = min(minR, r);
-    float dt = clamp((r - 0.95) * 0.08, 0.003, 1.6) * (abs(r - 1.5) < 0.3 ? 0.3 : 1.0);
+    float dt = clamp((r - 0.95) * 0.08, 0.003, 1.6) * (abs(r - 1.5) < 0.3 ? (crit ? 0.12 : 0.3) : 1.0);
     vec3 vh = v - 0.75 * h2 * p / pow(r, 5.0) * dt;
     vec3 pn = p + vh * dt;
     float rn = length(pn);
@@ -196,15 +216,22 @@ vec3 trace(vec2 uv){
     if (bb > 1e-3) v = bend(v, normalize(perp - v * dot(perp, v)), (1.0 / bb) * (1.0 - cosE));
     col += T * background(v);
   }
-  // photon ring: rays skimming the photon sphere (r = 1.5 Rs) stack countless disk images
-  // (impact parameter b = h → critical b = 3√3/2 Rs; a 2-3 px band, never an aliased hairline)
-  float bw = max(0.025, 0.55 * uPix * length(uCam));
-  col += uCoreCol * vec3(1.0, 0.9, 0.8) * exp(-pow((sqrt(h2) - 2.605) / bw, 2.0)) * 0.3 * uGain * T;
+  // (the photon ring is not drawn analytically: it emerges from the n=1,2 disk images of rays
+  //  skimming the photon sphere, resolved by the fine steps near r = 1.5 Rs / b ≈ 2.6 Rs)
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
   return max(col, 0.0);
 }
 void main(){
   if (uSS < 1.5) { gl_FragColor = vec4(trace(vUv), 1.0); return; }
+  // supersample only where the image is sharp-featured (disk, shadow edge, photon ring):
+  // the weakly lensed sky beyond ~16 Rs impact parameter takes a single ray
+  {
+    vec4 cp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+    vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
+    float tca = -dot(uCam, rd);
+    float b = length(uCam + rd * tca);
+    if (b > 16.0 || tca < 0.0) { gl_FragColor = vec4(trace(vUv), 1.0); return; }
+  }
   // 2x2 rotated-grid supersampling (shot mode): sharp photon ring, no speckle
   vec2 px = 1.0 / uRes;
   vec3 c = trace(vUv + px * vec2(0.125, 0.375)) + trace(vUv + px * vec2(-0.375, 0.125))
@@ -229,7 +256,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.5 }, uTmax: { value: 6600 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.5 }, uTmax: { value: 7600 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },
@@ -242,7 +269,7 @@ export class BlackHole {
     const d = camera.position.distanceTo(this.position) / this.rs;
     this.enabled = d < 6000;
     // eye adaptation to the disk: the bright nuclear sky is exposed down near the hole
-    this.mat.uniforms.uBg.value = 0.035 + 0.965 * THREE.MathUtils.smoothstep(d, 150, 4000);
+    this.mat.uniforms.uBg.value = 0.15 + 0.85 * THREE.MathUtils.smoothstep(d, 150, 4000);
     this.mat.uniforms.uTime.value = this.engine.shotMode ? 3.0 : t;
     // the analytic lensed star layer only near the hole (farther out the frame already holds the stars)
     this.mat.uniforms.uStarGain.value = 0.55 * (1 - THREE.MathUtils.smoothstep(d, 250, 2500));

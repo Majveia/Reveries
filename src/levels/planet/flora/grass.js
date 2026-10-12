@@ -304,8 +304,8 @@ export class Grass {
     this.dens0 = P.density * 62 * qd;              // blades per m² inside r0
     this.fdens0 = (this.F?.density || 0) * 9 * qd;  // flowers per m² inside r0 (in patches)
     this.r0 = q.pick(6, 8, 10, 13);                 // full density inside r0
-    this.fallK = q.pick(3, 2.8, 2.5, 2.2);         // density ∝ (r0/d)^fallK beyond (blades widen to keep cover)
-    this.far = q.pick(36, 50, 72, 105) * (P.far || 1);
+    this.fallK = q.pick(3.4, 3.1, 2.5, 2.2);         // density ∝ (r0/d)^fallK beyond (blades widen to keep cover)
+    this.far = q.pick(30, 42, 72, 105) * (P.far || 1);
     this.R = w.radius;
     this.sea = w.hasOcean ? w.seaLevel : -Infinity;
     this.seed = fl.seed;
@@ -322,10 +322,10 @@ export class Grass {
     };
     this.pools = !!fl.profile.glowPools;
     this.mat = makeBladeMaterial(this.U, false, false, this.pools);
-    this.geo = bladeGeometry(q.level >= 3 ? 4 : 3);
+    this.geo = bladeGeometry(q.level >= 3 ? 4 : q.level >= 1 ? 3 : 2); // low: 2-segment blades everywhere
     this.mesh = this._mesh(this.geo, this.mat);
     // mid/far field: the same blades with 2 segments (a few px tall out there)
-    this.farFrom = this.r0 * q.pick(1.8, 1.8, 1.8, 2.2);
+    this.farFrom = this.r0 * q.pick(1.4, 1.5, 1.5, 2.2);
     this.midFrom = q.level >= 3 ? 4 : Infinity; // ultra: 4-segment blades in the cells around the camera, else 3
     if (this.midFrom < Infinity) { this.geoMid = bladeGeometry(3); this.meshMid = this._mesh(this.geoMid, this.mat); }
     this.geoFar = bladeGeometry(2);

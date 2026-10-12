@@ -59,12 +59,12 @@ export default class Terrain {
     this.R = w.radius;
     this.faceSize = (Math.PI * 0.5) * this.R;
     // deepest level: vertex spacing ≈ 0.35–0.5 m
-    const targetSpacing = q.pick(0.6, 0.5, 0.4, 0.33);
+    const targetSpacing = q.pick(0.9, 0.6, 0.4, 0.33);
     this.maxLevel = Math.max(4, Math.ceil(Math.log2(this.faceSize / (N * targetSpacing))));
     // allowed projected vertex spacing, in pixels of a 720-line reference view, so
     // the triangle count does not grow with the output resolution (shots use the
     // same tier values as play)
-    this.pixelError = q.pick(30, 23, 18, 12);
+    this.pixelError = q.pick(56, 36, 20, 12); // low/medium: coarser mid/far terrain (frame budgets: 1.2M / 2.5M tris)
     this.refLines = 720;
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
@@ -356,11 +356,17 @@ export default class Terrain {
     for (const m of this.meshes) m.visible = false;
     // near shadow-map casters: fine chunks around the camera only (the far
     // terrain shadows come from the sun-visibility map, see _updateSunShadow)
-    const castR = (this.level.lighting?.shadowRadius || 140) * 0.6, castS = this.engine.quality.pick(1.5, 1.5, 1.6, 3);
+    const q = this.engine.quality;
+    const castR = (this.level.lighting?.shadowRadius || 140) * q.pick(0.5, 0.5, 0.45, 0.6), castS = q.pick(1.5, 1.5, 1.6, 3);
+    // only chunks whose shadow can land in the view cone (flora's culling cone, shadow-offset aware)
+    const fl = this.level.flora, cp = this.camPos;
+    const cone = fl?.castsInView && fl.view?.on ? fl : null;
     for (const n of draw) {
       const m = n.chunk.mesh;
       m.visible = true;
-      m.castShadow = n.spacing < castS && n.level >= this.maxLevel - this.engine.quality.pick(1, 1, 1, 3) && n.center.distanceTo(this.camPos) - n.radius < castR;
+      let cast = n.spacing < castS && n.level >= this.maxLevel - q.pick(1, 1, 0, 3) && n.center.distanceTo(cp) - n.radius < castR;
+      if (cast && cone) cast = cone.castsInView(n.center.x - cp.x, n.center.y - cp.y, n.center.z - cp.z, n.radius, Math.max(20, (n.maxH ?? 0) - (n.minH ?? 0) + 20));
+      m.castShadow = cast;
     }
     this.drawCount = draw.length;
     return want;

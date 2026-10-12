@@ -15,7 +15,9 @@ export class Backdrop {
     this.group = new THREE.Group();
     const rng = new Random(seedFrom(sys.star.seed, 'sky'));
     // Galactic frame: plane normal tilted ~60° from the ecliptic (like the Sun's).
-    const tilt = rng.range(0.85, 1.25), spin = rng.range(0, Math.PI * 2);
+    // (artistic licence: a shallower ~25° tilt than the Sun's 60° so the band arcs diagonally through most
+    // views along the ecliptic instead of hiding above / below them)
+    const tilt = rng.range(0.36, 0.55), spin = rng.range(0, Math.PI * 2);
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, spin, 0, 'YXZ'));
     this.normal = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     // Direction to the galactic centre: the star's position in the galaxy plane (xz).
@@ -29,16 +31,20 @@ export class Backdrop {
     const right = new THREE.Vector3().crossVectors(this.normal, gc).normalize();
 
     // ---- stars ---------------------------------------------------------------
-    const n = engine.quality.pick(2600, 4200, 6000, 8000);
+    const n = engine.quality.pick(6000, 11000, 18000, 24000);
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), size = new Float32Array(n);
     const lut = []; for (let i = 0; i < 48; i++) lut.push(blackbodyColor(2600 * Math.pow(12, i / 47)));
     const v = new THREE.Vector3();
+    // star counts grow ~10^(0.35 m) per magnitude: a few dozen beacons, a sea of faint dust
+    const MMAX = 8.5, cdf = Math.pow(10, 0.35 * MMAX) - 1;
     for (let i = 0; i < n; i++) {
-      const inBand = rng.chance(0.55);
+      const m = Math.log10(1 + rng.float() * cdf) / 0.35;
+      // faint stars crowd the galactic plane far more than bright (nearby) ones
+      const inBand = rng.chance(0.35 + 0.4 * Math.min(1, m / MMAX));
       if (inBand) {
         const l = rng.range(-Math.PI, Math.PI);
         const near = Math.exp(-l * l * 1.2);
-        const b = rng.gaussian(0, 0.07 + 0.12 * near * bulge);
+        const b = rng.gaussian(0, 0.06 + 0.12 * near * bulge);
         v.copy(gc).multiplyScalar(Math.cos(l) * Math.cos(b)).addScaledVector(right, Math.sin(l) * Math.cos(b)).addScaledVector(this.normal, Math.sin(b));
       } else {
         const [x, y, z] = rng.unitVector(); v.set(x, y, z);
@@ -47,12 +53,12 @@ export class Backdrop {
       pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
       const t = Math.pow(rng.float(), 1.6); // cooler stars dominate
       const c = lut[Math.min(47, Math.floor((inBand ? t : t * 0.9) * 47))];
-      // magnitudes: a handful of bright stars, a sea of faint ones (dN/dm ∝ 10^0.6m-ish)
-      const m = Math.pow(rng.float(), 14);
-      const lum = 0.018 + 0.05 * rng.float() + 3.2 * m;
-      const w = 0.45; // stellar colours are pale, not neon
+      // luminance over ~3.4 decades (10^-0.4m, gently compressed so the faint end stays visible on OLED)
+      const lum = 3.0 * Math.pow(10, -0.4 * m * 0.82);
+      const w = m < 2.5 ? 0.25 : 0.45; // bright stars keep a clear spectral tint
       col[i * 3] = (c[0] * (1 - w) + w) * lum; col[i * 3 + 1] = (c[1] * (1 - w) + w) * lum; col[i * 3 + 2] = (c[2] * (1 - w) + w) * lum;
-      size[i] = 1.0 + 1.8 * Math.sqrt(m);
+      // the brightest few get a real core + soft halo sprite (size encodes the halo, energy stays in the core)
+      size[i] = m < 1.6 ? 9.0 + (1.6 - m) * 4.0 : m < 3.2 ? 3.2 : 1.0 + 0.6 * Math.max(0, 4.5 - m) / 4.5;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -62,20 +68,23 @@ export class Backdrop {
       uniforms: { uDpr: { value: 1 }, uTime: { value: 0 } },
       vertexShader: /* glsl */`
         attribute float aSize; uniform float uDpr; uniform float uTime;
-        varying vec3 vCol;
+        varying vec3 vCol; varying float vHalo;
         void main(){
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
           float tw = 0.96 + 0.04 * sin(uTime * (1.3 + fract(position.x * 0.013) * 3.0) + position.y);
           vCol = color * tw;
+          vHalo = aSize > 6.0 ? 1.0 : 0.0;
           gl_PointSize = max(1.0, aSize * 0.85) * uDpr;
         }`,
       fragmentShader: /* glsl */`
-        varying vec3 vCol;
+        varying vec3 vCol; varying float vHalo;
         void main(){
           vec2 c = gl_PointCoord * 2.0 - 1.0; float r2 = dot(c, c);
-          float a = exp(-r2 * 2.2);
-          if (a < 0.01) discard;
+          // tight core; beacons add a faint airy halo + tiny cross so they read as stars, not discs
+          float a = vHalo > 0.5 ? exp(-r2 * 70.0) * 1.6 + exp(-r2 * 9.0) * 0.07 + (exp(-abs(c.x) * 60.0) + exp(-abs(c.y) * 60.0)) * (1.0 - sqrt(r2)) * 0.05
+                                : exp(-r2 * 2.2);
+          if (a < 0.004 || r2 > 1.0) discard;
           gl_FragColor = vec4(vCol * a, 1.0);
         }`,
       vertexColors: true, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
@@ -109,22 +118,26 @@ export class Backdrop {
           vec3 p = d * 3.0 + uSeed;
           float wob = fbm(vec3(l * 1.3, 0.0, uSeed), 3) * 0.05;
           float bb = b - wob;
-          float width = 0.075 + 0.11 * near * uBulge;
+          float width = 0.05 + 0.075 * near * uBulge;
           float band = exp(-bb * bb / (2.0 * width * width));
           float clouds = 0.55 + 0.9 * max(fbm(p * 2.2, uOct), -0.4);
           float fine = 0.7 + 0.6 * fbm(p * 9.0, 3);
           float bulge = exp(-(l * l) / 0.22 - (bb * bb) / (0.02 + 0.03 * uBulge)) * uBulge;
-          float I = band * clouds * fine * (0.35 + 0.65 * near) + bulge * 0.9;
+          // unresolved star clouds: grainy, clumpy starlight rather than a smooth gradient
+          float grainS = 0.75 + 0.5 * smoothstep(-0.2, 0.7, fbm(p * 14.0 + 5.0, 3));
+          float I = band * clouds * fine * grainS * (0.35 + 0.65 * near) + bulge * 0.9;
+          // diffuse galactic light: a much wider, faint skirt around the band
+          float skirt = exp(-bb * bb / (2.0 * 9.0 * width * width)) * (0.25 + 0.75 * near);
           // dust lanes: a dark rift along the mid-plane, broken into filaments
           float lane = exp(-pow((bb + 0.012 * fbm(p * 4.0, 3)) / (0.022 + 0.02 * near), 2.0));
           float fil = smoothstep(-0.15, 0.45, fbm(p * 5.5 + 7.0, uOct));
-          I *= 1.0 - uDust * 0.88 * lane * fil;
+          I *= 1.0 - uDust * 0.95 * lane * fil;
           I *= 1.0 - uDust * 0.45 * smoothstep(0.1, 0.6, fbm(p * 3.1 - 3.0, 4)) * band;
           vec3 core = mix(vec3(dot(uCore, vec3(0.3, 0.5, 0.2))), uCore, 0.35) * vec3(1.0, 0.95, 0.9);
           vec3 col = mix(uArm, core, clamp(near * 0.7 + bulge * 0.5, 0.0, 1.0));
           col += vec3(0.5, 0.08, 0.15) * smoothstep(0.62, 0.8, fbm(p * 7.0 + 2.0, 3)) * band * (1.0 - lane);
-          vec3 c = col * I * 0.14;
-          c = max(c - 0.0012, 0.0); // keep the sky floor pure black (OLED)
+          vec3 c = col * I * 0.34 + mix(uArm, col, 0.5) * skirt * 0.012;
+          c = max(c - 0.0015, 0.0); // keep the sky floor pure black (OLED)
           gl_FragColor = vec4(c, 1.0);
         }`,
       side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending, transparent: true,

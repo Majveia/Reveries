@@ -605,14 +605,38 @@ export class PMSolver {
 
   /** Coarse density grid read back for the halo finder: Float32Array (M/2)³, units of mean density × 8. */
   readHaloGrid() {
+    const W = this._haloPass();
+    const buf = new Float32Array(W.w * W.h * 4);
+    this.renderer.readRenderTargetPixels(this.haloRT, 0, 0, W.w, W.h, buf);
+    this.renderer.setRenderTarget(W.prev);
+    return this._unpackHalo(buf);
+  }
+
+  /** Same, without stalling the GPU: PBO + fence (resolves a frame or two later). */
+  async readHaloGridAsync() {
+    const r = this.renderer;
+    if (!r.readRenderTargetPixelsAsync) return this.readHaloGrid();
+    const W = this._haloPass();
+    r.setRenderTarget(W.prev);
+    const buf = new Float32Array(W.w * W.h * 4);
+    const ok = await Promise.race([
+      r.readRenderTargetPixelsAsync(this.haloRT, 0, 0, W.w, W.h, buf).then(() => true, () => false),
+      new Promise((res) => setTimeout(() => res(false), 2000)),
+    ]);
+    if (!ok) return this.readHaloGrid();                     // driver without fences: fall back
+    return this._unpackHalo(buf);
+  }
+
+  _haloPass() {
     const r = this.renderer, prev = r.getRenderTarget();
     const ac = r.autoClear; r.autoClear = false;
     this._pass(this.haloMat, this.haloRT);
     r.autoClear = ac;
+    return { prev, w: this.haloRT.width, h: this.haloRT.height };
+  }
+
+  _unpackHalo(buf) {
     const W = this.haloRT.width, Hh = this.haloRT.height;
-    const buf = new Float32Array(W * Hh * 4);
-    r.readRenderTargetPixels(this.haloRT, 0, 0, W, Hh, buf);
-    r.setRenderTarget(prev);
     const H = this.H, out = new Float32Array(H * H * H);
     const q = H / 4;
     for (let py = 0; py < Hh; py++) {

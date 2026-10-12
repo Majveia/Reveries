@@ -257,6 +257,13 @@ export default class Vehicles {
       else if (driving === v) input = engine.input;
       try { v.update(dt, input, t); } catch (e) { if (!v._err) { v._err = true; console.error('[vehicles]', e); } }
     }
+    // parked vehicles far from the camera are a few pixels tall: skip their ~20 draw calls
+    const cpos = level.camera.position, hideD = engine.quality.pick(250, 400, 600, 1200);
+    for (const v of this.list) {
+      if (!v.object3d || !v.position) continue;
+      const near = v === driving || this.shotDrive === v || v.position.distanceToSquared(cpos) < hideD * hideD;
+      if (!near) v.object3d.visible = false; // Bike/Ship.update set it back each frame
+    }
     const h = engine.renderer.domElement.height || innerHeight;
     this.dust.update(t, level.camera, h);
     this.spray.update(t, level.camera, h);

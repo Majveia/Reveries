@@ -26,6 +26,7 @@ const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const addSc = (c, o, s) => { c.r += o.r * s; c.g += o.g * s; c.b += o.b * s; return c; };
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
+const _frustum = new THREE.Frustum(), _sph = new THREE.Sphere();
 const _c = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
 
 function buildData(quality) {
@@ -435,12 +436,28 @@ export default class Player {
     if (L.lengthSq() < 1e-8) { this.charShadow.uniforms.uCSOn.value = 0; return; }
     L.normalize();
     const on = sun.intensity > 0.02 && L.dot(this.up) > -0.05;
+    // off-screen explorer (vistas, fly-bys): skip the hero-detail mesh draws (~0.25M tris,
+    // frustumCulled is off for skinning) and the CharShadow pass when neither the body
+    // nor its ground shadow can reach the view
+    const cam = this.level.camera;
+    cam.updateMatrixWorld();
+    _m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_m, THREE.WebGLCoordinateSystem, cam.reversedDepth);
+    const ctr = _v2.copy(this.group.position).addScaledVector(this.up, 0.95);
+    const bodyIn = _frustum.intersectsSphere(_sph.set(ctr, 1.8));
+    const shadowIn = bodyIn || _frustum.intersectsSphere(_sph.set(ctr, 10));
+    const onFoot = on && !this.vehicle && this.level.mode === 'onfoot' && this.ctl.state !== 'swim';
+    const meshVis = bodyIn || (!onFoot && shadowIn);
+    for (const m of Object.values(this.rig.meshes)) m.visible = meshVis;
     for (const f of this.flames) f.userData.v = f.visible, f.visible = false;
-    this.charShadow.render([this.group, this.scarf.object], _v2.copy(this.group.position).addScaledVector(this.up, 0.95), L, this.up, this.level.camera, on);
+    if (shadowIn) {
+      for (const m of Object.values(this.rig.meshes)) m.visible = true;
+      this.charShadow.render([this.group, this.scarf.object], ctr, L, this.up, this.level.camera, on);
+      for (const m of Object.values(this.rig.meshes)) m.visible = meshVis;
+    } else this.charShadow.uniforms.uCSOn.value = 0;
     for (const f of this.flames) f.visible = f.userData.v;
     // ground shadow catcher (on foot only): centred between the feet and the shadow tip
     const cat = this.catcher;
-    const onFoot = on && !this.vehicle && this.level.mode === 'onfoot' && this.ctl.state !== 'swim';
     const alt = this.ctl.pos.length() - this.ctl.groundRadius;
     cat.object.visible = onFoot && alt < 4;
     // the catcher + CharShadow carry the explorer's shadow on foot: skip the sun shadow map then

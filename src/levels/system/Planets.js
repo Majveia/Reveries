@@ -160,7 +160,7 @@ export class SystemPlanet {
     if (atmoDensity > 0.05) {
       const Ra = this.R * (planet.kind === 'gas' ? 1.035 : 1.055);
       this.atmoMat = new THREE.ShaderMaterial({
-        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: planet.kind === 'gas' && planet.gasBands ? linFromArr(planet.gasBands.colors[0]).lerp(new THREE.Color(0.95, 0.9, 0.8), 0.5) : atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.12 : 1) }, uBack: { value: planet.kind === 'gas' ? 0.12 : 1 } },
+        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: planet.kind === 'gas' && planet.gasBands ? linFromArr(planet.gasBands.colors[0]).lerp(new THREE.Color(0.95, 0.9, 0.8), 0.5) : atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.12 : 1) }, uBack: { value: 1.0 } },
         vertexShader: /* glsl */`varying vec3 vWP; void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
         fragmentShader: ATMO_FRAG,
         blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.FrontSide,
