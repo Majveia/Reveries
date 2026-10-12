@@ -235,7 +235,7 @@ export default class Weather {
 
   _pushMedium() {
     const c = this.cur, w = this.world;
-    const focus = this.level.player?.position || this.level.camera.position;
+    const focus = this.level.focus || this.level.player?.position || this.level.camera.position;
     const groundH = w.heightAt(_v.copy(focus).normalize());
     const m = this.model;
     // fog banks hug the terrain around the player (base relative to the bottom radius)

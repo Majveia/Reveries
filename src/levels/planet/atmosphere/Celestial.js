@@ -140,7 +140,7 @@ export class Celestial {
     this.worldToCel.copy(this.celToWorld).transpose();
     const days = (this.level.engine.time || 0) / Math.max(60, w.dayLength) * (w.timeScale ?? 1);
     const cam = this.level.camera.position;
-    const focus = this.level.player?.position || cam;
+    const focus = this.level.focus || this.level.player?.position || cam;
     const up = _v2.copy(focus).normalize();
     for (const m of this.moons) {
       let th = m.theta0 + (2 * Math.PI * days) / m.periodDays;

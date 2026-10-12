@@ -209,7 +209,7 @@ export class PlanetLighting {
   update() {
     const L = this.level, w = this.world, m = this.model, cel = this.celestial;
     cel.update(this.engine.time);
-    const focus = L.player?.position || L.camera.position;
+    const focus = L.focus || L.player?.position || L.camera.position;
     const up = _v.copy(focus).normalize();
     const alt = w.altitude(focus);
 

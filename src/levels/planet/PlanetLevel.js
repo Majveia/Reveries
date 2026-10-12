@@ -135,6 +135,18 @@ export default class PlanetLevel {
     catch (e) { if (!this._lightErr) { this._lightErr = true; console.error('[planet] lighting:', e); } }
   }
 
+  /**
+   * Where the world is being experienced from: lighting, shadows, sky probes,
+   * time of day and weather all centre here. It is the player, unless the camera
+   * has been detached (screenshot presets, vehicle chase cams, debug), in which
+   * case it is the camera — so a city framed at golden hour is lit for where the
+   * camera actually is, not for wherever the player happens to stand.
+   */
+  get focus() {
+    if (this.freeCam) return this.freeCam.position;
+    return this.player?.position || this.camera.position;
+  }
+
   setMode(mode) {
     if (this.mode === mode) return;
     this.mode = mode;
@@ -176,7 +188,7 @@ export default class PlanetLevel {
     if (input.pressed('escape') || input.pressed('map')) {
       if (!(this.player?.handlesEscape?.())) { this.engine.up(); return; }
     }
-    const focus = this.player?.position || this.camera.position;
+    const focus = this.focus;
     this.world.update(dt, t, focus);
     for (const s of this.subsystems) { try { s.update?.(dt, t); } catch (e) { this._err(s, e); } }
     if (!this.player || this.freeCam) this._fallbackCamera(dt);
