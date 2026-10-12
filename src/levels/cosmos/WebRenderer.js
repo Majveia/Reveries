@@ -9,21 +9,35 @@ import { FULLSCREEN_VERT } from '../../core/glsl/common.js';
 
 const PALETTE_GLSL = /* glsl */ `
 vec3 webPalette(float h){
-  // linear-light HDR stops
-  vec3 c0 = vec3(0.020, 0.008, 0.055);   // void
-  vec3 c1 = vec3(0.100, 0.030, 0.360);   // sheet indigo-violet
-  vec3 c2 = vec3(0.130, 0.170, 0.820);   // blue-violet
-  vec3 c3 = vec3(0.050, 0.850, 1.100);   // electric cyan filament
-  vec3 c4 = vec3(0.850, 0.900, 0.950);   // pale crossover
-  vec3 c5 = vec3(1.550, 0.850, 0.300);   // warm gold group
-  vec3 c6 = vec3(1.800, 1.500, 1.100);   // white-gold cluster core
+  // linear-light HDR stops: near-black indigo sheets → violet → soft cyan filaments
+  // → warm white crossover → amber groups → white-gold cluster cores
+  vec3 c0 = vec3(0.004, 0.002, 0.012);   // void
+  vec3 c1 = vec3(0.030, 0.010, 0.120);   // faint sheet: deep indigo
+  vec3 c2 = vec3(0.150, 0.070, 0.620);   // violet-blue sheet / thin filament
+  vec3 c3 = vec3(0.100, 0.420, 1.000);   // cyan-blue filament
+  vec3 c4 = vec3(0.260, 0.800, 1.100);   // electric cyan filament spine
+  vec3 c5 = vec3(1.650, 0.760, 0.250);   // amber group
+  vec3 c6 = vec3(1.900, 1.350, 0.750);   // white-gold cluster core
   h = clamp(h, 0.0, 1.2);
-  if (h < 0.18) return mix(c0, c1, h / 0.18);
-  if (h < 0.37) return mix(c1, c2, (h - 0.18) / 0.19);
-  if (h < 0.50) return mix(c2, c3, (h - 0.37) / 0.13);
-  if (h < 0.60) return mix(c3, c4, (h - 0.50) / 0.10);
-  if (h < 0.71) return mix(c4, c5, (h - 0.60) / 0.11);
-  return mix(c5, c6, clamp((h - 0.71) / 0.3, 0.0, 1.0));
+  if (h < 0.20) return mix(c0, c1, h / 0.20);
+  if (h < 0.36) return mix(c1, c2, (h - 0.20) / 0.16);
+  if (h < 0.46) return mix(c2, c3, (h - 0.36) / 0.10);
+  if (h < 0.54) return mix(c3, c4, (h - 0.46) / 0.08);
+  if (h < 0.63) return mix(c4, c5, (h - 0.54) / 0.09);
+  return mix(c5, c6, clamp((h - 0.63) / 0.27, 0.0, 1.0));
+}
+// the young universe (z ≳ 3): dim crimson plasma → amber → first blue-white protogalaxies
+vec3 earlyPalette(float h){
+  vec3 e0 = vec3(0.010, 0.002, 0.002);
+  vec3 e1 = vec3(0.200, 0.030, 0.020);
+  vec3 e2 = vec3(0.950, 0.330, 0.080);
+  vec3 e3 = vec3(1.400, 0.950, 0.550);
+  vec3 e4 = vec3(0.900, 1.050, 1.700);
+  h = clamp(h, 0.0, 1.2);
+  if (h < 0.28) return mix(e0, e1, h / 0.28);
+  if (h < 0.46) return mix(e1, e2, (h - 0.28) / 0.18);
+  if (h < 0.60) return mix(e2, e3, (h - 0.46) / 0.14);
+  return mix(e3, e4, clamp((h - 0.60) / 0.18, 0.0, 1.0));
 }`;
 
 const TRACER_VERT = /* glsl */ `
@@ -31,55 +45,98 @@ uniform sampler2D tPrev; uniform sampler2D tNext; uniform float uW;
 uniform float uL; uniform vec3 uCenter; uniform float uScale; uniform float uShape;
 uniform float uProj; uniform float uTime; uniform float uShimmer; uniform float uVol; uniform float uGamma;
 uniform float uWarm; uniform float uFog; uniform float uSizeK; uniform float uOverlap; uniform float uContrastK; uniform float uFogNear;
+uniform float uPxMax; uniform float uNear; uniform float uEarly; uniform float uDim; uniform float uClampK;
 varying vec4 vC;
 ${PALETTE_GLSL}
 float hash11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+uint ihashT(uint x){ x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+vec4 fetchT(ivec3 l){
+  l = (l + MT) % MT;
+  int i = l.x + l.y * MT + l.z * MT * MT;
+  ivec2 tc = ivec2(i % TW, i / TW);
+  return mix(texelFetch(tPrev, tc, 0), texelFetch(tNext, tc, 0), uW);
+}
 void main(){
-  int t = gl_VertexID;
-  ivec2 tc = ivec2(t % TW, t / TW);
-  vec4 s = mix(texelFetch(tPrev, tc, 0), texelFetch(tNext, tc, 0), uW);
+  int vid = gl_VertexID;
+  int t = vid / SUBS; int sub = vid - t * SUBS;
   ivec3 l = ivec3(t % MT, (t / MT) % MT, t / (MT * MT));
-  vec3 x = (vec3(l) + 0.5) * (uL / float(MT)) + s.xyz;
+  vec4 s = fetchT(l);
+  float sp0 = uL / float(MT);
+  vec3 x = (vec3(l) + 0.5) * sp0 + s.xyz;
   vec3 d = x - uCenter;
   d -= uL * floor(d / uL + 0.5);                     // periodic: nearest image around the centre
+  float heat = s.w;
+  // Is the phase-space sheet under-sampled on screen here? Then refine it: extra sub-tracers are
+  // spawned inside the Lagrangian tetrahedra spanned with the neighbouring tracers (barycentric
+  // interpolation of their displacements, after Abel, Hahn & Kaehler 2012), each carrying 1/SUBS
+  // of the mass. Well-sampled (distant or collapsed) regions keep a single tracer.
+  float distP = -(modelViewMatrix * vec4(uCenter + d * uScale, 1.0)).z;
+  float spP = sp0 * clamp(pow(pow(10.0, (heat - 0.2) / (0.31 * uContrastK)), -0.333), 0.05, 1.8) * uScale;
+  float under = spP * uOverlap * uProj / max(distP, 0.05) / uPxMax;
+  float nS = 1.0;
+  if (SUBS > 1 && under > 1.0 && distP > 0.0) {
+    nS = float(SUBS);
+    if (sub > 0) {
+      uint h = ihashT(uint(vid) * 747796405u + 2891336453u);
+      uint h2 = ihashT(h ^ 0x68bc21ebu);
+      vec4 r = vec4(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u), float(h >> 24)) / 255.0 * 0.992 + 0.004;
+      vec4 w = -log(r); w /= dot(w, vec4(1.0));           // uniform in the tetrahedron
+      ivec3 sg = ivec3(int(h2 & 1u) * 2 - 1, int((h2 >> 1) & 1u) * 2 - 1, int((h2 >> 2) & 1u) * 2 - 1);
+      vec4 sx = fetchT(l + ivec3(sg.x, 0, 0)), sy = fetchT(l + ivec3(0, sg.y, 0)), sz = fetchT(l + ivec3(0, 0, sg.z));
+      d += w.y * (vec3(float(sg.x) * sp0, 0.0, 0.0) + sx.xyz - s.xyz)
+         + w.z * (vec3(0.0, float(sg.y) * sp0, 0.0) + sy.xyz - s.xyz)
+         + w.w * (vec3(0.0, 0.0, float(sg.z) * sp0) + sz.xyz - s.xyz);
+      heat += w.y * (sx.w - s.w) + w.z * (sy.w - s.w) + w.w * (sz.w - s.w);
+      // the tetrahedron's own (stream) density: stretched cells spread their mass thin, and cells
+      // torn across a void after shell crossing are not interpolated at all
+      vec3 e1 = vec3(float(sg.x) * sp0, 0.0, 0.0) + sx.xyz - s.xyz;
+      vec3 e2 = vec3(0.0, float(sg.y) * sp0, 0.0) + sy.xyz - s.xyz;
+      vec3 e3 = vec3(0.0, 0.0, float(sg.z) * sp0) + sz.xyz - s.xyz;
+      float stretch = max(max(length(e1), length(e2)), length(e3)) / sp0;
+      float rhoTet = sp0 * sp0 * sp0 / max(abs(dot(e1, cross(e2, e3))), 1e-4 * sp0 * sp0 * sp0);
+      heat = min(heat, 0.2 + 0.31 * uContrastK * log(max(rhoTet, 0.05)) / log(10.0) + 0.12);
+      if (stretch > 4.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
+    }
+  } else if (sub > 0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
   vec3 ad = abs(d) / (0.5 * uL);
   float nrm = pow(pow(ad.x, uShape) + pow(ad.y, uShape) + pow(ad.z, uShape), 1.0 / uShape);
-  float fade = 1.0 - smoothstep(0.78, 0.99, nrm);
-  float heat = s.w;
-  float hh = clamp((heat - 0.5) / 0.5, 0.0, 1.0);
-  // virialised shimmer: members of collapsed halos swarm on their orbits
-  float fid = float(t);
+  float fade = 1.0 - smoothstep(0.80, 0.99, nrm);
+  float hh = clamp((heat - 0.55) / 0.45, 0.0, 1.0);
+  // virialised swarm: members of collapsed halos circulate on slow, coherent orbits
+  float fid = float(vid);
   vec3 ph = vec3(hash11(fid), hash11(fid + 17.3), hash11(fid + 41.9)) * 6.2831853;
-  float om = 0.35 + hash11(fid + 7.1) * 0.9;
-  d += uShimmer * hh * hh * 0.45 * sin(uTime * om + ph);
+  float om = 0.25 + hash11(fid + 7.1) * 0.5;
+  d += uShimmer * hh * hh * 0.28 * vec3(sin(uTime * om + ph.x), sin(uTime * om + ph.y), cos(uTime * om + ph.x));
   vec3 wp = uCenter + d * uScale;
   vec4 mv = modelViewMatrix * vec4(wp, 1.0);
   float dist = -mv.z;
   gl_Position = projectionMatrix * mv;
   if (dist < 0.05 || fade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
-  // Gaussian-splat the sheet: sprites cover the local inter-tracer spacing, so stretched
-  // regions (voids, sheets) render as a smooth continuum and collapsed ones stay sharp.
+  // Splat the sheet: the TRUE footprint covers the local inter-sample spacing (smooth continuum),
+  // but sprites never grow past uPxMax pixels — near-field matter keeps its surface brightness
+  // and thins into a dim, fine-grained haze instead of giant discs.
   float rhoEff = pow(10.0, (heat - 0.2) / (0.31 * uContrastK));
-  float spacing = (uL / float(MT)) * clamp(pow(rhoEff, -0.333), 0.05, 1.8) * uScale;
-  float sharp = (uL / float(MT)) * uSizeK * 0.09 * uScale;
+  float spacing = sp0 * clamp(pow(rhoEff, -0.333), 0.05, 1.8) * uScale * pow(nS, -0.3333);
+  float sharp = sp0 * uSizeK * 0.09 * uScale;
   float px = max(sharp, spacing * uOverlap) * uProj / dist;
-  float pxc = clamp(px, 1.0, 40.0);
+  float pxc = clamp(px, 1.0, uPxMax);
   gl_PointSize = pxc;
   // emission ∝ mass · ρ^γ ; per-pixel value is column density (Mpc of mean matter)
-  float emis = uVol * pow(10.0, uGamma * (heat - 0.2) / 0.31);
+  float emis = uVol * pow(10.0, uGamma * (heat - 0.2) / 0.31) / nS;
   float pxWorld = dist / uProj;
-  float norm = max(1.0, 0.262 * pxc * pxc);
-  float near = smoothstep(3.0, 14.0, dist);
+  float norm = 0.19 * max(px, 1.0) * max(px, 1.0);        // Gaussian kernel integral of the true footprint
+  float near = smoothstep(uNear * 0.25, uNear, dist);
   float val = fade * near * emis / (pxWorld * pxWorld * norm) / (uScale * uScale) * 1e-3; // ×1e-3 keeps half-float sums finite
+  val *= pow(min(1.0, uPxMax / px), uClampK);              // under-sampled near field thins to a dim haze
   val = min(val, 30.0);
-  // depth cue: distant structure cools and dims slightly (atmospheric perspective of the web)
+  // aerial perspective of the web: distant structure cools to violet and fades exponentially
   float fd = max(dist - uFogNear, 0.0);
-  float fogk = 1.0 - exp(-fd / uFog);
-  vec3 col = webPalette(heat);
+  float tr = exp(-fd / uFog);
+  vec3 col = mix(webPalette(heat), earlyPalette(heat), uEarly);
   float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  col = mix(col, vec3(0.13, 0.09, 0.62) * (lum * 0.9 + 0.02), fogk * 0.5);
-  val *= mix(1.0, exp(-fd / uFog), 0.7);
-  // primordial glow (early universe): warm amber plasma
+  col = mix(col, mix(vec3(0.16, 0.08, 0.70), vec3(0.45, 0.10, 0.06), uEarly) * (lum * 0.8 + 0.02), (1.0 - tr) * 0.65);
+  val *= tr * uDim;
+  // primordial glow (the first instants after the Bang): warm amber plasma
   col = mix(col, vec3(1.25, 0.62, 0.28), uWarm);
   val *= 1.0 + 5.0 * uWarm * uWarm;
   vC = vec4(col * val, val);
@@ -91,19 +148,21 @@ void main(){
   vec2 pc = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(pc, pc);
   if (r2 > 1.0) discard;
-  float k = (1.0 - r2) * (1.0 - r2);
+  float k = max(exp(-r2 * 4.0) - 0.0183, 0.0) * 1.0187;   // Gaussian, zero at the rim: never reads as a disc
   gl_FragColor = vC * k;
 }`;
 
 
 // Galaxies: a sparse, hash-selected subset of tracers lights up as sharp HDR
 // points where matter has collapsed (groups, clusters, dense filaments). They
-// render straight into the HDR scene (not log-mapped) so they sparkle and bloom.
+// render straight into the HDR scene (not log-mapped) so they sparkle and bloom;
+// the brightest carry faint 4-point diffraction spikes (a JWST-like signature).
 const GALAXY_VERT = /* glsl */ `
 uniform sampler2D tPrev; uniform sampler2D tNext; uniform float uW;
 uniform float uL; uniform vec3 uCenter; uniform float uScale; uniform float uShape;
 uniform float uTime; uniform float uShimmer; uniform float uWarm; uniform float uGal; uniform float uPxK;
-varying vec3 vCol;
+uniform float uFog; uniform float uFogNear; uniform float uEarly;
+varying vec3 vCol; varying float vSpike; varying float vPx;
 uint ihash(uint x){ x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 float hash11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 void main(){
@@ -117,50 +176,67 @@ void main(){
   d -= uL * floor(d / uL + 0.5);
   vec3 ad = abs(d) / (0.5 * uL);
   float nrm = pow(pow(ad.x, uShape) + pow(ad.y, uShape) + pow(ad.z, uShape), 1.0 / uShape);
-  float fade = 1.0 - smoothstep(0.76, 0.97, nrm);
+  float fade = 1.0 - smoothstep(0.78, 0.97, nrm);
   float heat = s.w;
-  float hh = clamp((heat - 0.5) / 0.5, 0.0, 1.0);
+  float hh = clamp((heat - 0.55) / 0.45, 0.0, 1.0);
   float fid = float(t);
   vec3 ph = vec3(hash11(fid), hash11(fid + 17.3), hash11(fid + 41.9)) * 6.2831853;
-  float om = 0.35 + hash11(fid + 7.1) * 0.9;
-  d += uShimmer * hh * hh * 0.45 * sin(uTime * om + ph);
+  float om = 0.25 + hash11(fid + 7.1) * 0.5;
+  d += uShimmer * hh * hh * 0.28 * vec3(sin(uTime * om + ph.x), sin(uTime * om + ph.y), cos(uTime * om + ph.x));
   vec4 mv = modelViewMatrix * vec4(uCenter + d * uScale, 1.0);
   float dist = -mv.z;
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float lum = smoothstep(0.40, 0.95, heat) * (0.25 + 2.6 * u * u * u * u);
-  if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); return; }
-  float b = lum * fade * smoothstep(0.3, 2.5, dist) * uGal * 110.0 / max(dist, 6.0);
-  float px = clamp(uPxK * (1.1 + 1.8 * u * u) * sqrt(30.0 / max(dist, 4.0)), 1.0, 7.0);
+  float thr = mix(0.46, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
+  float lum = smoothstep(thr, thr + 0.5, heat) * (0.2 + 3.2 * u * u * u * u);
+  if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
+  float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
+  float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 360.0 / max(dist, 5.0);
+  float core = clamp(uPxK * (0.9 + 1.2 * u * u) * sqrt(30.0 / max(dist, 4.0)), 1.0, 3.2);
+  // the brightest ~0.3% get diffraction spikes (a much larger, mostly empty sprite)
+  float spike = step(0.9985, u) * smoothstep(0.55, 0.75, heat) * (1.0 - uWarm);
+  float px = spike > 0.0 ? clamp(uPxK * 26.0 * sqrt(30.0 / max(dist, 8.0)), 8.0, 40.0) : core;
   gl_PointSize = px;
+  vPx = px / core;
+  vSpike = spike;
   // red-and-dead ellipticals in cluster cores, blue star-forming spirals in filaments
   float tint = float((hi >> 20) & 255u) / 255.0;
-  vec3 cl = mix(vec3(1.0, 0.74, 0.46), vec3(1.0, 0.9, 0.78), tint);
-  vec3 fl = mix(vec3(0.62, 0.78, 1.0), vec3(0.95, 0.92, 1.0), tint);
+  vec3 cl = mix(vec3(1.0, 0.70, 0.40), vec3(1.0, 0.88, 0.74), tint);
+  vec3 fl = mix(vec3(0.58, 0.74, 1.0), vec3(0.92, 0.92, 1.0), tint);
   vec3 col = mix(fl, cl, smoothstep(0.55, 0.85, heat));
+  col = mix(col, vec3(0.75, 0.88, 1.35), uEarly);            // first protogalaxies: hot young blue-white starbursts
   col = mix(col, vec3(1.25, 0.62, 0.28), uWarm);
-  vCol = col * b / max(1.0, px * px * 0.3);
+  vCol = col * b / max(1.0, core * core * 0.35);
 }`;
 const GALAXY_FRAG = /* glsl */ `
-varying vec3 vCol;
+varying vec3 vCol; varying float vSpike; varying float vPx;
 void main(){
-  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  vec2 p = (gl_PointCoord * 2.0 - 1.0) * vPx;                // in units of the core radius
   float r2 = dot(p, p);
-  if (r2 > 1.0) discard;
-  gl_FragColor = vec4(vCol * (exp(-r2 * 7.0) + 0.35 * exp(-r2 * 2.0)), 1.0);
+  float v = exp(-r2 * 6.0) + 0.3 * exp(-r2 * 1.6);
+  if (vSpike > 0.0) {
+    vec2 a = abs(p);
+    float sp = exp(-a.y * 3.0) * exp(-a.x / vPx * 5.0) + exp(-a.x * 3.0) * exp(-a.y / vPx * 5.0);
+    float edge = 1.0 - smoothstep(0.6, 1.0, max(a.x, a.y) / vPx);
+    v += 0.22 * sp * edge + 0.04 * exp(-r2 * 0.12);
+  } else if (r2 > 1.0) discard;
+  gl_FragColor = vec4(vCol * v, 1.0);
 }`;
 
 const COMPOSITE_FRAG = /* glsl */ `
-uniform sampler2D tInput; uniform sampler2D tAccum; uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe;
+uniform sampler2D tInput; uniform sampler2D tAccum; uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
 varying vec2 vUv;
 void main(){
   vec3 base = texture2D(tInput, vUv).rgb;
   vec4 acc = texture2D(tAccum, vUv);
   float A = min(acc.a, 60000.0) * 1000.0;
   vec3 C = min(acc.rgb, vec3(60000.0)) * 1000.0 / max(A, 1e-6);
-  // log column-density response (shows faint sheets and blazing nodes at once) + HDR highlights for bloom
-  float I = uGain * log(1.0 + pow(A / uA0, uToe)) + uHi * pow(A / uA0 * 0.01, 1.2);
+  // log column-density response with a black floor (faint sheets fall to true black, OLED)
+  // and an HDR shoulder so only the densest nodes exceed 1 and bloom
+  float x = log(1.0 + pow(A / uA0, uToe));
+  float xf = max(x - uFloor, 0.0);
+  float I = uGain * xf * xf / (xf + 0.6) + uHi * pow(A / uA0 * 0.01, 1.35);
   gl_FragColor = vec4(base + C * I * uExposure, 1.0);
 }`;
 
@@ -170,18 +246,20 @@ export class WebRenderer {
     this.sim = sim;
     const { TW, m, L, T } = sim;
     this.params = {
-      gain: 0.16, a0: 60, hi: 0.02, toe: 1.4, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 260, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0,
+      gain: 0.30, a0: 60, hi: 0.015, toe: 1.4, floor: 1.2, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 60, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0, pxMax: 5, near: 10, early: 0, dim: 1, clampK: 1.0,
     };
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Uint8Array(T), 1));
+    const SUBS = Math.max(1, opts.subs ?? 1);
+    geo.setAttribute('position', new THREE.BufferAttribute(new Uint8Array(T * SUBS), 1));
     this.material = new THREE.ShaderMaterial({
       vertexShader: TRACER_VERT, fragmentShader: TRACER_FRAG,
-      defines: { TW, MT: m },
+      defines: { TW, MT: m, SUBS },
       uniforms: {
         tPrev: { value: null }, tNext: { value: null }, uW: { value: 0 },
         uL: { value: L }, uCenter: { value: new THREE.Vector3() }, uScale: { value: 1 }, uShape: { value: 6 },
         uProj: { value: 600 }, uTime: { value: 0 }, uShimmer: { value: 1 }, uVol: { value: (L / m) ** 3 }, uGamma: { value: 0.6 },
         uWarm: { value: 0 }, uFog: { value: 260 }, uSizeK: { value: 1 }, uOverlap: { value: 1.6 }, uContrastK: { value: 1 }, uFogNear: { value: 0 },
+        uPxMax: { value: 5 }, uNear: { value: 10 }, uEarly: { value: 0 }, uDim: { value: 1 }, uClampK: { value: 0 },
       },
       depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
@@ -203,7 +281,7 @@ export class WebRenderer {
     const U = this.material.uniforms;
     this.galMaterial = new THREE.ShaderMaterial({
       vertexShader: GALAXY_VERT, fragmentShader: GALAXY_FRAG, defines: { TW, MT: m, STRIDE: stride },
-      uniforms: { tPrev: U.tPrev, tNext: U.tNext, uW: U.uW, uL: U.uL, uCenter: U.uCenter, uScale: U.uScale, uShape: U.uShape, uTime: U.uTime, uShimmer: U.uShimmer, uWarm: U.uWarm, uGal: { value: 1 }, uPxK: { value: 1 } },
+      uniforms: { tPrev: U.tPrev, tNext: U.tNext, uW: U.uW, uL: U.uL, uCenter: U.uCenter, uScale: U.uScale, uShape: U.uShape, uTime: U.uTime, uShimmer: U.uShimmer, uWarm: U.uWarm, uGal: { value: 1 }, uPxK: { value: 1 }, uFog: U.uFog, uFogNear: U.uFogNear, uEarly: U.uEarly },
       depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
     });
@@ -215,7 +293,7 @@ export class WebRenderer {
     const self = this;
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 } },
+      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 } },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
     this.effect = {
@@ -223,7 +301,7 @@ export class WebRenderer {
       render(renderer, input, output, ctx) {
         const u = self.compMat.uniforms;
         u.tInput.value = input; u.tAccum.value = self.accRT?.texture || null;
-        u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe;
+        u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe; u.uFloor.value = self.params.floor;
         ctx.fullscreen(self.compMat, output);
       },
     };
@@ -253,6 +331,8 @@ export class WebRenderer {
     u.uCenter.value.copy(center); u.uScale.value = p.scale; u.uShape.value = p.shape;
     u.uProj.value = this.accRT.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     u.uTime.value = time; u.uShimmer.value = p.shimmer; u.uGamma.value = p.gamma; u.uWarm.value = p.warm; u.uFog.value = p.fog; u.uSizeK.value = p.sizeK; u.uOverlap.value = p.overlap; u.uContrastK.value = p.contrastK; u.uFogNear.value = p.fogNear;
+    const pxK = this.accRT.height / 720;
+    u.uPxMax.value = Math.max(1.5, p.pxMax * pxK); u.uNear.value = p.near; u.uEarly.value = p.early; u.uDim.value = p.dim; u.uClampK.value = p.clampK;
     this.galMaterial.uniforms.uGal.value = p.galaxies ?? 1; this.galMaterial.uniforms.uPxK.value = this.accRT.height / 720;
     if (cacheable) {
       camera.updateMatrixWorld();

@@ -18,12 +18,13 @@ import { PMSolver } from './PMSolver.js';
 import { WebRenderer } from './WebRenderer.js';
 import { DeepField } from './DeepField.js';
 import { GasGlow } from './GasGlow.js';
+import { ClusterLights } from './ClusterLights.js';
 import { findHalos, assignIds, sci } from './Halos.js';
 import { A_START, ageGyr, BOX } from './Cosmology.js';
 
 const RATES = [0, 0.25, 1, 4, 16];
 const BANG_SECONDS = 25;
-const HERO = { distance: 330, yaw: 0.72, pitch: 0.36 };
+const HERO = { distance: 66, yaw: 0.72, pitch: 0.3 };
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _p = new THREE.Vector3();
 const smooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
 
@@ -35,8 +36,8 @@ export default class CosmosLevel {
     this.effects = [];
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
-      blackPoint: 0.006, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.018, chroma: 0.0018,
-      bloomStrength: 0.08, bloomRadius: 0.75, bloomThreshold: 0.0,
+      blackPoint: 0.004, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
+      bloomStrength: 0.3, bloomRadius: 0.7, bloomThreshold: 1.0, streak: 0.05,
     };
     this.L = BOX;
     this.halos = [];
@@ -71,8 +72,10 @@ export default class CosmosLevel {
     this._detectHalos(true);
     if (this.ref[0]) this.home.set(this.ref[0].x, this.ref[0].y, this.ref[0].z);
 
-    this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(16384, 32768, 65536, 131072) });
+    this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(16384, 32768, 65536, 131072), subs: e.quality.pick(2, 3, 4, 6) });
     this.scene.add(this.web.galaxies);
+    this.lights = new ClusterLights(e.quality.pick(48, 64, 96, 128));
+    this.scene.add(this.lights.points);
     this.glow = new GasGlow(this.sim, e.quality.pick(24, 32, 40, 56));
     this.effects = [this.web.effect, this.glow];
     // debug: ?cw=gain:0.2,gamma:1.6 overrides render params
@@ -272,19 +275,28 @@ export default class CosmosLevel {
     if (this.phase === 'dive' || this.introPending) this.rig.update(dt, null);
     else this.rig.update(dt, input);
     const camD = this.camera.position.distanceTo(this.rig.target);
-    const inside = 1 - smooth((camD - 0.32 * this.L) / (0.42 * this.L));
+    // Inside the web the periodic box is infinite: tracers wrap to their nearest image around the
+    // camera itself and fade with exponential aerial perspective — no sphere, no cube, edge-to-edge.
+    // Only when the camera is pulled far out does the volume become an object again.
+    const inside = 1 - smooth((camD - 0.5 * this.L) / (0.35 * this.L));
     this.center.lerpVectors(this.rig.target, this.camera.position, inside);
     const p = this.web.params;
     p.shape = 2;
-    p.fog = 260 - 150 * inside;
-    p.fogNear = Math.max(0, camD - 0.45 * this.L);
-    // early universe: a hot primordial glow that cools into the dark ages
+    p.fog = 260 - 205 * inside;
+    p.fogNear = inside > 0.5 ? Math.max(0, camD - 24) : Math.max(0, camD - 0.45 * this.L);
+    // early universe: a hot primordial glow that cools into the dark ages,
+    // then the crimson-amber young web whose first protogalaxies ignite blue-white
     p.warm = 0.85 * (1 - smooth((a - 0.022) / 0.05));
+    p.early = 1 - smooth((a - 0.17) / 0.2);
     p.shimmer = 1;
-    this.glow.center.copy(this.center);
-    this.glow.enabled = this.mode !== 'early';
-    this.glow.strength = 0.003 * (1 - p.warm);
+    p.dim = 1; p.lights = 1;
+    if (this._shotP) Object.assign(p, this._shotP);
     if (this._dbg) Object.assign(p, this._dbg);
+    this.glow.center.copy(this.center);
+    this.glow.enabled = this.mode !== 'early'; // the glow samples the live mesh, not the z≈5 snapshot
+    this.glow.fog = p.fog; this.glow.fogNear = p.fogNear;
+    this.glow.thresh = p.glowThresh ?? 3.5;
+    this.glow.strength = (p.glow ?? 0.009) * (1 - p.warm) * (1 - 0.6 * p.early);
 
     // flash of the Big Bang
     const tr = e.postfx.transition;
@@ -348,13 +360,21 @@ export default class CosmosLevel {
     this.deep.update(this.camera, e.postfx.height, smooth((camD - 0.35 * this.L) / (0.5 * this.L)) * (1 - this.web.params.warm));
     const time = e.shotMode ? 12.0 : e.time;
     this.web.accumulate(this.camera, this.disp, this.center, time, e.shotMode);
+    this.lights.update(this.mode === 'early' ? [] : this.halos, (h, out) => this._haloWorld(h, out), this.camera, e.postfx.height, this.web.params, time, this.disp.a);
     e.postfx.render(this.scene, this.camera, this.effects, { time: e.time, dt: e.dt });
   }
 
   // ---- shots ----------------------------------------------------------------------
-  _pose(target, offset, fov = 50) {
+  _pose(target, offset, fov = 50, shift = 0, lift = 0) {
     const r = this.rig;
     r._fly = null;
+    if (shift || lift) {
+      // compose off-centre (rule of thirds): aim beside the subject
+      const d = offset.length(), t = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+      const right = new THREE.Vector3(0, 1, 0).cross(offset).normalize().multiplyScalar(-1);
+      const up = new THREE.Vector3().crossVectors(right, offset).normalize().multiplyScalar(-1);
+      target = target.clone().addScaledVector(right, shift * d * t * this.camera.aspect).addScaledVector(up, lift * d * t);
+    }
     r.setTarget(target, true);
     r.distance = offset.length(); r._logDistTarget = Math.log(r.distance);
     r.pitch = Math.asin(offset.y / r.distance);
@@ -409,8 +429,8 @@ export default class CosmosLevel {
 
   _shots() {
     return {
-      hero: async () => { this.mode = 'live'; this._pose(this.home, this._heroOffset(), 50); },
-      early: async () => { this.mode = 'early'; this._pose(this.home, this._heroOffset(250, HERO.yaw + 0.4, 0.3), 50); },
+      hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(), 52, 0.3, 0.05); },
+      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.45, gain: 0.34, pxMax: 3.5 }; this._pose(this.home, this._heroOffset(58, HERO.yaw + 0.4, 0.26), 55, 0.2, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;
@@ -420,12 +440,15 @@ export default class CosmosLevel {
         this.aTarget = this.sim.a;
         this._pose(this.home, this._heroOffset(d, HERO.yaw + 0.5, 0.3), 50);
       },
-      node: async () => { this.mode = 'live'; this._pose(this.home, this._heroOffset(24, HERO.yaw + 2.2, 0.22), 55); },
+      // the home supercluster node: filaments converge on a luminous core; dark matter dimmed so
+      // member galaxies and intracluster light carry the image
+      node: async () => { this.mode = 'live'; this._shotP = { dim: 0.42, hi: 0.004 }; this._pose(this.home, this._heroOffset(44, HERO.yaw + 2.2, 0.22), 38, -0.12, 0); },
       web: async () => {
         this.mode = 'live';
+        this._shotP = null;
         // inside the web: from the emptiest nearby void, looking across the filaments toward home
-        const off = this._voidOffset(52);
-        this._pose(this.home, off, 62);
+        const off = this._voidOffset(40);
+        this._pose(this.home, off, 62, 0.15, 0);
       },
     };
   }
@@ -445,6 +468,7 @@ export default class CosmosLevel {
     this.web?.dispose();
     this.deep?.dispose();
     this.glow?.dispose();
+    this.lights?.dispose();
     this.sim?.dispose();
     for (const m of [this.hoverRing, this.selectRing]) { if (m) { m.geometry.dispose(); m.material.dispose(); } }
   }

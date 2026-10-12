@@ -101,6 +101,8 @@ export default class GalaxyLevel {
     this.grade = {
       exposure: 1.0, agxPunch: 0.6, contrast: 1.16, saturation: 1.12, blackPoint: 0.0,
       vignette: 0.3, grain: 0.01, bloomStrength: 0.16, bloomRadius: 0.85, chroma: 0.0012, temperature: 0.0,
+      // no aperture ghosts / streaks: they landed inside the black-hole shadow (true black)
+      flare: 0, streak: 0,
     };
     this.crumbs = U.crumbs(this.addr);
     this._makeLabels();
@@ -317,8 +319,8 @@ export default class GalaxyLevel {
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.12, 0, -P.R * 0.06), P.R * 1.72, 0.55, 0.66); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.0035); },
+      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.04, 0, -P.R * 0.02), P.R * 2.05, 0.55, 0.66); },
+      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.62, 1.1, 0.024); },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];
@@ -337,6 +339,11 @@ export default class GalaxyLevel {
         this.hoverEl.style.display = ''; this.homeEl.style.display = '';
         this.select(0);
         this.hover = 0;
+        // the info card is engine UI (hidden in shots): an in-world tag carries the selection
+        const st = s.star;
+        this.homeEl.style.fontSize = '13px';
+        this.homeEl.innerHTML = `<span style="opacity:.6;font-weight:400">home ·</span> <b style="font-weight:600">${st.name}</b>`
+          + `<div style="margin-top:4px;font-size:10px;letter-spacing:.14em;opacity:.7">${st.cls} · ${Math.round(st.temp).toLocaleString()} K · ${st.planetCount} planets</div>`;
       },
     };
   }

@@ -11,7 +11,7 @@ import { FULLSCREEN_VERT, COLOR_GLSL } from '../../core/glsl/common.js';
 const MARCH_FRAG = /* glsl */ `
 uniform sampler2D tForce; uniform float uL; uniform vec3 uCenter; uniform float uRadius;
 uniform mat4 uProjInv; uniform mat4 uViewInv; uniform vec3 uCam; uniform float uStrength; uniform float uThresh;
-uniform vec2 uRes; uniform float uFrame;
+uniform vec2 uRes; uniform float uFrame; uniform float uFog; uniform float uFogNear;
 varying vec2 vUv;
 ${COLOR_GLSL}
 ivec2 c2t(ivec3 c){ return ivec2((c.z % TX) * M + c.x, (c.z / TX) * M + c.y); }
@@ -46,9 +46,11 @@ void main(){
     if (e > 0.0) {
       float r = length(p - uCenter) / uRadius;
       float edge = 1.0 - smoothstep(0.75, 1.0, r);
-      vec3 col = mix(vec3(0.34, 0.10, 0.95), vec3(0.10, 0.55, 1.0), smoothstep(3.0, 10.0, rho));
-      col = mix(col, vec3(1.45, 0.78, 0.36), smoothstep(14.0, 70.0, rho));
-      acc += col * e * edge;
+      // depth-weighted tint: violet warm-hot medium far away, cyan near; gold intracluster plasma
+      float tr = exp(-max(t - uFogNear, 0.0) / uFog);
+      vec3 col = mix(vec3(0.30, 0.08, 0.95), vec3(0.12, 0.50, 1.0), smoothstep(3.0, 10.0, rho) * (0.4 + 0.6 * tr));
+      col = mix(col, vec3(1.45, 0.72, 0.30), smoothstep(16.0, 90.0, rho));
+      acc += col * e * edge * tr;
     }
     t += dt;
   }
@@ -71,6 +73,8 @@ export class GasGlow {
     this.enabled = true;
     this.strength = 0.003;
     this.thresh = 1.6;
+    this.fog = 1e6;
+    this.fogNear = 0;
     this.center = new THREE.Vector3();
     this.radius = sim.L * 0.49;
     this.rt = null;
@@ -81,7 +85,7 @@ export class GasGlow {
       uniforms: {
         tForce: { value: sim.force.texture }, uL: { value: sim.L }, uCenter: { value: this.center }, uRadius: { value: this.radius },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
-        uStrength: { value: 1 }, uThresh: { value: 1.6 }, uRes: { value: new THREE.Vector2() }, uFrame: { value: 0 },
+        uStrength: { value: 1 }, uThresh: { value: 1.6 }, uRes: { value: new THREE.Vector2() }, uFrame: { value: 0 }, uFog: { value: 1e6 }, uFogNear: { value: 0 },
       },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
@@ -101,7 +105,7 @@ export class GasGlow {
     const u = this.marchMat.uniforms;
     u.tForce.value = this.sim.force.texture;
     u.uProjInv.value.copy(ctx.projInv); u.uViewInv.value.copy(ctx.viewInv); u.uCam.value.copy(ctx.cameraPosition);
-    u.uStrength.value = this.strength; u.uThresh.value = this.thresh; u.uRadius.value = this.radius;
+    u.uStrength.value = this.strength; u.uThresh.value = this.thresh; u.uRadius.value = this.radius; u.uFog.value = this.fog; u.uFogNear.value = this.fogNear;
     u.uRes.value.set(w, h); u.uFrame.value = (this.frame++) % 64;
     ctx.fullscreen(this.marchMat, this.rt);
     this.addMat.uniforms.tInput.value = input; this.addMat.uniforms.tGlow.value = this.rt.texture;

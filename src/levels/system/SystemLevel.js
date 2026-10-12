@@ -106,7 +106,7 @@ export default class SystemLevel {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.1, saturation: 1.12, blackPoint: 0.006, temperature: 0.0,
       vignette: 0.3, vignetteSoftness: 0.6, grain: 0.006, chroma: 0.0, sharpen: 0.12,
       bloomStrength: 0.07, bloomRadius: 0.7, bloomThreshold: 0.0,
-      autoExposure: 0.0, flare: 0.16, flareThreshold: 10.0, streak: 0.03, halation: 0.04, look: 'cosmic', lookStrength: 0.5,
+      autoExposure: 0.0, flare: 0.05, flareThreshold: 14.0, streak: 0.03, halation: 0.04, look: 'cosmic', lookStrength: 0.5,
     };
     this.crumbs = U.crumbs(this.addr);
     this._update(0, 0);
@@ -340,29 +340,39 @@ export default class SystemLevel {
         const P = sp.position, R = sp.R;
         const s = P.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        // search phase angle × elevation for a lit crescent with the rings opened toward the camera
-        let dirC = null, best = -Infinity;
-        for (let ph = 118; ph <= 142; ph += 4) for (let el = -0.6; el <= 0.8; el += 0.1) {
+        // fixed, moderate lens (a wide lens stretches the off-axis star into an ellipse): search phase,
+        // elevation and distance so the star sits on the left third and the ringed giant fills the right
+        this.camera.fov = 46; this.camera.updateProjectionMatrix();
+        const tanH = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect;
+        const aS = Math.atan(0.62 * tanH), aP = Math.atan(0.4 * tanH);
+        let best = null, bestScore = -Infinity;
+        for (let ph = 112; ph <= 166; ph += 3) for (let el = -0.5; el <= 0.7; el += 0.1) for (let k = 5.5; k <= 10; k += 0.75) {
           const a = THREE.MathUtils.degToRad(ph);
           const d = s.clone().multiplyScalar(Math.cos(a)).addScaledVector(t, Math.sin(a)).addScaledVector(up, el).normalize();
+          const cam = P.clone().addScaledVector(d, R * k);
+          const toP = P.clone().sub(cam).normalize(), toS = cam.clone().multiplyScalar(-1).normalize();
+          const sep = toP.angleTo(toS);
+          const ringAng = Math.asin(Math.min(1, (sp.ringOut || R * 1.2) / cam.distanceTo(P)));
+          if (sep > aS + aP + 0.04 || sep < aS + 0.12) continue;
+          if (sep - aS + ringAng * 0.8 > Math.atan(0.98 * tanH)) continue;   // the rings must stay in frame
           const open = Math.abs(d.dot(sp.ringN));
-          const lit = d.dot(s);
-          const score = Math.min(open, 0.42) * 3 - Math.abs(el - 0.3) * 0.4 + Math.min(lit + 0.35, 0.2);
-          if (score > best) { best = score; dirC = d; }
+          const lit = 0.5 * (1 + d.dot(s));                                     // illuminated fraction of the disk
+          const size = ringAng;                                                 // bigger giant = more awe
+          const score = Math.min(open, 0.38) * 3 + lit * 3.5 + size * 2.5 - Math.abs(el - 0.25) * 0.3;
+          if (score > bestScore) { bestScore = score; best = { cam, toP, toS, sep }; }
         }
-        const cam = P.clone().addScaledVector(dirC, R * 7.5);
-        // frame the star and the ringed crescent together: centre between them, widen the lens to fit both
-        const toP = P.clone().sub(cam).normalize(), toS = cam.clone().multiplyScalar(-1).normalize();
-        const sep = toP.angleTo(toS);
-        const ringAng = Math.asin(Math.min(1, (sp.ringOut || R * 1.2) / cam.distanceTo(P)));
-        const axis = new THREE.Vector3().crossVectors(toP, toS).normalize();
-        const lookDir = toP.clone().applyAxisAngle(axis, sep * 0.5 - ringAng * 0.15);
-        const hHalf = THREE.MathUtils.clamp(sep * 0.5 + ringAng * 0.85 + 0.06, 0.45, 0.75);
-        this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / this.camera.aspect));
-        this.camera.fov = THREE.MathUtils.clamp(this.camera.fov, 36, 70); this.camera.updateProjectionMatrix();
-        const look = cam.clone().addScaledVector(lookDir, R * 9.0);
+        if (!best) {
+          const d = s.clone().multiplyScalar(Math.cos(2.4)).addScaledVector(t, Math.sin(2.4)).addScaledVector(up, 0.25).normalize();
+          const cam = P.clone().addScaledVector(d, R * 9);
+          const toP = P.clone().sub(cam).normalize(), toS = cam.clone().multiplyScalar(-1).normalize();
+          best = { cam, toP, toS, sep: toP.angleTo(toS) };
+        }
+        const axis = new THREE.Vector3().crossVectors(best.toS, best.toP).normalize();
+        const lookDir = best.toS.clone().applyAxisAngle(axis, Math.min(aS, best.sep * 0.5));
+        const look = best.cam.clone().addScaledVector(lookDir, R * 9.0);
         this._keepFov = true;
-        this._poseCam(cam, look); this._keepFov = false;
+        this._poseCam(best.cam, look); this._keepFov = false;
+        // roll so the star–planet line reads horizontally: OrbitRig keeps the horizon level, which is enough
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
       star: async () => {
@@ -401,15 +411,15 @@ export default class SystemLevel {
         const S = best.s;
         const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(90);
+        const ph = THREE.MathUtils.degToRad(138);   // backlit: a rim-lit crescent, the belt haze glowing toward the star
         const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.16).normalize();
         const cam = pos.clone().addScaledVector(dirC, S * 4.4);
         // wide lens: the star sits near the left edge of the frame, the half-lit boulder right of centre
-        this.camera.fov = 64; this.camera.updateProjectionMatrix();
+        this.camera.fov = 48; this.camera.updateProjectionMatrix();
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
         const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
-        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(hfov * 0.4, toStar.angleTo(toRock) * 0.55));
+        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(Math.atan(0.45 * Math.tan(hfov / 2)), toStar.angleTo(toRock) * 0.5));
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },

@@ -80,39 +80,51 @@ vec3 background(vec3 dir){
   return sky * uStarGain + glow * uBg;
 }
 
+// plasma texture: big sheared clumps, filaments ~3:1 along the flow, a fine turbulent octave
+// and a Worley clump channel (angular frequency ≈ 2πr·k_r/3 at mid-disk)
+vec4 plasma(float r, float a, float z){
+  float n1 = texture(uNoise, vec3(r * 0.3, a / TAU * 6.0, 0.37 + z)).r;
+  float n2 = texture(uNoise, vec3(r * 0.85 + n1 * 0.35, a / TAU * 14.0 + n1 * 0.3, 0.71 + z)).b;
+  float n3 = texture(uNoise, vec3(r * 1.9 + n2 * 0.3, a / TAU * 30.0 + r * 0.07, 0.13 + z)).g;
+  float n4 = texture(uNoise, vec3(r * 1.4 + n2 * 0.3, a / TAU * 22.0 + r * 0.05, 0.53 + z)).a;
+  return vec4(n1, n2, n3, n4);
+}
 vec4 diskSample(vec3 hit, vec3 v){
   float r = length(hit.xz);
   if (r < uIn || r > uOut) return vec4(0.0);
   float ang = atan(hit.z, hit.x);
-  // Keplerian shear: inner gas laps the outer gas (Ω ∝ r^-3/2), rotating toward −θ
+  // Keplerian flow (Ω ∝ r^-3/2, toward −θ) advected with two crossfaded phases (flow-map style):
+  // the texture rotates differentially forever without the shear winding it into combed hair
   float om = 0.7 * pow(r, -1.5);
-  float a = ang + om * uTime * 6.0;
+  float ph = fract(uTime * 0.4);
+  float wA = 1.0 - abs(2.0 * ph - 1.0);
+  vec4 pa = plasma(r, ang + om * ph * 6.0, 0.0);
+  vec4 pb = plasma(r, ang + om * fract(ph + 0.5) * 6.0, 0.5);
+  vec4 pn = mix(pb, pa, wA);
+  float n1 = pn.x, n2 = pn.y, n3 = pn.z, n4 = pn.w;
   float x = (r - uIn) / (uOut - uIn);
-  // plasma texture: big sheared clumps, ~4:1 anisotropic filaments stretched along the flow,
-  // a fine turbulent octave and concentric density bands (MRI turbulence / spiral waves)
-  float n1 = texture(uNoise, vec3(r * 0.32, a / TAU * 4.0, 0.37)).r;
-  float n2 = texture(uNoise, vec3(r * 1.15 + n1 * 0.25, a / TAU * 9.0, 0.71)).b;
-  float n3 = texture(uNoise, vec3(r * 2.2 + n2 * 0.2, a / TAU * 12.0 + r * 0.07, 0.13)).g;
-  float n4 = texture(uNoise, vec3(r * 4.3 + n2 * 0.3, a / TAU * 5.0 + r * 0.05, 0.53)).b;
-  float bands = 0.75 + 0.25 * sin(r * 5.3 + n1 * 5.0) * sin(r * 1.7 + 1.3);
+  float bands = 0.7 + 0.3 * sin(r * 5.3 + n1 * 6.0) * sin(r * 1.7 + 1.3 + n2 * 2.0);
   float inner = 1.0 - smoothstep(0.0, 0.45, x);
-  float dens = (0.4 + 0.95 * n1) * (0.45 + 1.0 * n2 * n2) * (0.8 + 0.4 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
-  float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.55, 1.0, x));
-  float alpha = clamp(dens * edge * 1.35, 0.0, 1.0);
+  float dens = (0.3 + 1.1 * n1) * (0.35 + 1.2 * n2 * n2) * (0.75 + 0.5 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
+  dens *= 0.55 + 0.9 * smoothstep(0.25, 0.75, n4);                 // clumps and dark gaps
+  float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.5, 1.0, x));
+  float alpha = clamp(pow(dens, 1.6) * edge * 2.0, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
   float tp = pow(uIn / r, 0.75) * pow(max(1.0 - sqrt(uIn / r), 0.0), 0.25) / 0.488;
-  // Doppler + gravitational shift
+  // Doppler + gravitational shift: g = D·√(1−Rs/r); observed T ∝ g, observed intensity ∝ g⁴
   vec3 vdir = normalize(vec3(hit.z, 0.0, -hit.x));
-  float beta = min(sqrt(0.5 / max(r - 1.0, 0.05)), 0.92);
+  float beta = min(sqrt(0.5 / max(r - 1.0, 0.05)), 0.6);
   float gam = inversesqrt(1.0 - beta * beta);
   float cosT = dot(vdir, -normalize(v));
   float D = 1.0 / (gam * (1.0 - beta * cosT));
   float g = D * sqrt(max(1.0 - 1.0 / r, 0.0));
   g = mix(1.0, g, uDoppler);
   float T = uTmax * tp * g;
-  // emissivity: Novikov–Thorne flux ∝ T⁴ shape with a sharp ISCO peak; HDR so the inner edge blooms
+  // emissivity: Novikov–Thorne flux shape with a sharp ISCO peak; HDR so the inner edge blooms
   float em = tp * tp * (0.35 + 0.65 * tp * tp) * (1.0 + 2.2 * exp(-x * 9.0));
-  vec3 c = blackbody(T) * pow(g, 4.0) * em * uGain * (0.55 + 0.8 * n2) * (0.8 + 0.4 * n3);
+  vec3 bb = blackbody(T);
+  bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.45), 0.0);   // photographic saturation
+  vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.75 + 0.5 * n3);
   return vec4(c * alpha, alpha);
 }
 
@@ -155,7 +167,7 @@ vec3 trace(vec2 uv){
     if (float(i) >= uSteps) break;
     float r = length(p);
     minR = min(minR, r);
-    float dt = clamp((r - 0.95) * 0.08, 0.003, 1.6) * (abs(r - 1.5) < 0.25 ? 0.6 : 1.0);
+    float dt = clamp((r - 0.95) * 0.08, 0.003, 1.6) * (abs(r - 1.5) < 0.3 ? 0.3 : 1.0);
     vec3 vh = v - 0.75 * h2 * p / pow(r, 5.0) * dt;
     vec3 pn = p + vh * dt;
     float rn = length(pn);
@@ -184,6 +196,10 @@ vec3 trace(vec2 uv){
     if (bb > 1e-3) v = bend(v, normalize(perp - v * dot(perp, v)), (1.0 / bb) * (1.0 - cosE));
     col += T * background(v);
   }
+  // photon ring: rays skimming the photon sphere (r = 1.5 Rs) stack countless disk images
+  // (impact parameter b = h → critical b = 3√3/2 Rs; a 2-3 px band, never an aliased hairline)
+  float bw = max(0.025, 0.55 * uPix * length(uCam));
+  col += uCoreCol * vec3(1.0, 0.9, 0.8) * exp(-pow((sqrt(h2) - 2.605) / bw, 2.0)) * 0.3 * uGain * T;
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
   return max(col, 0.0);
 }
@@ -212,8 +228,8 @@ export class BlackHole {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() },
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
-        uSteps: { value: engine.shotMode ? 300 : q.pick(160, 220, 300, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.7 }, uTmax: { value: 7600 }, uRint: { value: 60.0 },
+        uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.5 }, uTmax: { value: 6600 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

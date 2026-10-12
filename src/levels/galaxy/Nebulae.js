@@ -90,7 +90,10 @@ vec3 field(vec3 x){
     // photo-evaporating skin of ionized gas hugging the cliff surface
     // crisp ionization-front skin, broken into bright knots by the ridged detail
     float kn = nz(RT * xw * 9.0 + SP * 0.7).b;
-    skin = e * smoothstep(-0.006, 0.006, above) * (exp(-max(above, 0.0) / 0.014) * 1.6 + exp(-max(above, 0.0) / 0.06) * 0.25) * (0.25 + 1.4 * kn * kn);
+    // JWST 'combed' texture: fine streamers stretched toward the cluster (photo-evaporation flow)
+    float comb = nz(vec3(xw.x * 34.0, xw.y * 4.0, xw.z * 34.0) + SP).g;
+    skin = e * smoothstep(-0.004, 0.004, above) * (exp(-max(above, 0.0) / 0.006) * 2.2 + exp(-max(above, 0.0) / 0.035) * 0.22) * (0.2 + 1.5 * kn * kn) * (0.45 + 1.1 * comb);
+    dust *= 0.75 + 0.5 * comb;
   } else if (uKind < 2.5) {
     vec3 sd = x - STAR; float rs = length(sd);
     float shd = (rs - 0.58 - (gasN - 0.5) * 0.4) / 0.07; float sh = exp(-shd * shd);
@@ -137,20 +140,22 @@ void main(){
     vec3 toS = sd / max(rs, 1e-4);
     // short light march toward the cluster (dust only): shadows, rays, lit faces
     float occ = dustF(x + toS * 0.025) * 0.025 + dustF(x + toS * 0.07) * 0.045 + dustF(x + toS * 0.16) * 0.09 + dustF(x + toS * 0.32) * 0.16;
-    float tr = exp(-occ * 68.0);
+    float tr = exp(-occ * 105.0);
     float I = tr / (0.25 + rs * rs * 2.5);
     float ion = smoothstep(0.9, 0.15, rs);
     // Henyey-Greenstein forward scattering (g = 0.6)
     float cth = dot(rdl, -toS) * -1.0;
     float hg = 0.0509 * (1.0 - 0.36) / pow(1.0 + 0.36 - 1.2 * cth, 1.5) * 12.566;
     // gas: hot OIII cavity around the cluster, Hα/SII envelope further out
-    vec3 gcol = mix(mix(cHa, vec3(1.0, 0.25, 0.4), 0.25), cOIII, ion);
-    vec3 e = gas * I * gcol * 1.05;
-    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.35) * 3.4;               // ionization front
-    float sigD = dust * 55.0;
+    // colours stay separated (not averaged into lavender): OIII only deep in the hot cavity
+    float ionC = smoothstep(0.5, 0.85, ion);
+    vec3 gcol = mix(mix(cHa, cSII, 0.3), cOIII, ionC) * mix(1.0, 0.55, ionC * (1.0 - ionC) * 4.0);
+    vec3 e = gas * I * gcol * 0.55;
+    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.45) * 7.0;               // ionization front
+    float sigD = dust * 88.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
-    e += sigD * I * vec3(1.0, 0.6, 0.3) * 0.15 * (0.35 + hg);
-    e += sigD * vec3(0.9, 0.3, 0.2) * 0.012 * (0.3 + ion);                       // Hα-reddened light on shadowed dust                      // diffuse nebular light on shadowed dust
+    e += sigD * I * vec3(1.0, 0.55, 0.26) * 0.12 * (0.25 + hg);
+    e += sigD * vec3(0.9, 0.3, 0.16) * 0.0035 * (0.3 + ion);                      // Hα-reddened light on shadowed dust
     float sigma = sigD + gas * 0.35 + skin * 0.2;
     float a = exp(-sigma * stepU);
     col += T * e * (sigma > 1e-3 ? (1.0 - a) / sigma : stepU);
@@ -161,11 +166,16 @@ void main(){
   vec3 sw = STAR; sw.xz = rot(-uRot) * sw.xz;
   vec3 sc = uCenter + sw * uRadius;
   float bd = length(cross(sc - ro, rd)) / uRadius;
-  col += cStar * (exp(-bd * bd / 0.0003) * 1.4 + exp(-bd / 0.1) * 0.06) * T * step(0.0, dot(sc - ro, rd));
+  col += cStar * (exp(-bd * bd / 0.00003) * 2.5 + exp(-bd / 0.05) * 0.07) * T * step(0.0, dot(sc - ro, rd));
   col *= uGain * uFade;
   float alpha = (1.0 - T) * uFade;
   gl_FragColor = vec4(col, alpha);
 }`;
+
+const ACC = /* glsl */ `
+uniform sampler2D tNew, tOld; uniform float uW;
+varying vec2 vUv;
+void main(){ gl_FragColor = mix(texture2D(tOld, vUv), texture2D(tNew, vUv), uW); }`;
 
 const COMP = /* glsl */ `
 uniform sampler2D tInput, tNeb; uniform vec2 uTexel;
@@ -184,7 +194,7 @@ export class Nebulae {
     this.list = list;
     this.enabled = false;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.75 : q.pick(0.35, 0.45, 0.5, 0.6);
+    this.scale = engine.shotMode ? 0.85 : q.pick(0.35, 0.45, 0.5, 0.6);
     this.scene = new THREE.Scene();
     this.stars = new THREE.Group();
     const sphere = new THREE.IcosahedronGeometry(1, 3);
@@ -210,6 +220,13 @@ export class Nebulae {
     this.sphere = sphere;
     this._buildClusters();
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.acc = [0, 1].map(() => new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false }));
+    this.accMat = new THREE.ShaderMaterial({
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: ACC, depthTest: false, depthWrite: false,
+      uniforms: { tNew: { value: null }, tOld: { value: null }, uW: { value: 1 } },
+    });
+    this._accN = 0; this._accI = 0; this._camKey = new THREE.Matrix4();
     this.comp = new THREE.ShaderMaterial({
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: COMP, depthTest: false, depthWrite: false,
@@ -263,7 +280,7 @@ export class Nebulae {
 
   render(renderer, input, output, ctx) {
     const w = Math.max(2, Math.round(ctx.width * this.scale)), h = Math.max(2, Math.round(ctx.height * this.scale));
-    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    if (this.rt.width !== w || this.rt.height !== h) { this.rt.setSize(w, h); for (const a of this.acc) a.setSize(w, h); this._accN = 0; }
     const prevColor = renderer.getClearColor(new THREE.Color()), prevA = renderer.getClearAlpha();
     renderer.setRenderTarget(this.rt);
     renderer.setClearColor(0x000000, 0);
@@ -272,15 +289,28 @@ export class Nebulae {
     renderer.render(this.scene, ctx.camera);
     renderer.autoClear = ac;
     renderer.setClearColor(prevColor, prevA);
-    for (const it of this.items) it.mat.uniforms.uFrameJ.value = this.engine.shotMode ? 0 : ((this._f = ((this._f || 0) + 1) % 16) * 0.618) % 1;
+    // progressive refinement: while the camera holds still, jittered frames accumulate
+    // (golden-ratio jitter sequence) so the half-step dither converges to a clean volume
+    const cm = ctx.camera.matrixWorld;
+    let still = true;
+    for (let k = 0; k < 16; k++) if (Math.abs(cm.elements[k] - this._camKey.elements[k]) > 1e-7 * (1 + Math.abs(cm.elements[k]))) { still = false; break; }
+    this._camKey.copy(cm);
+    this._accN = still ? Math.min(this._accN + 1, this.engine.shotMode ? 64 : 16) : 1;
+    const f = (this._f = ((this._f || 0) + 1) % 64);
+    for (const it of this.items) it.mat.uniforms.uFrameJ.value = (f * 0.6180339) % 1;
+    const src = this.acc[this._accI], dst = this.acc[1 - this._accI];
+    this.accMat.uniforms.tNew.value = this.rt.texture; this.accMat.uniforms.tOld.value = src.texture;
+    this.accMat.uniforms.uW.value = 1 / this._accN;
+    ctx.fullscreen(this.accMat, dst);
+    this._accI = 1 - this._accI;
     this.comp.uniforms.tInput.value = input;
-    this.comp.uniforms.tNeb.value = this.rt.texture;
+    this.comp.uniforms.tNeb.value = dst.texture;
     this.comp.uniforms.uTexel.value.set(1 / w, 1 / h);
     ctx.fullscreen(this.comp, output);
   }
 
   dispose() {
-    this.rt.dispose(); this.comp.dispose(); this.sphere.dispose(); this.clusterGeo.dispose();
+    this.rt.dispose(); for (const a of this.acc) a.dispose(); this.accMat.dispose(); this.comp.dispose(); this.sphere.dispose(); this.clusterGeo.dispose();
     for (const it of this.items) it.mat.dispose();
   }
 }

@@ -242,7 +242,7 @@ export class Trees {
     const fl = this.flora, w = this.world, q = fl.engine.quality, T = this.T;
     this.R = w.radius;
     this.sea = w.hasOcean ? w.seaLevel : -Infinity;
-    this.meshRange = q.pick(70, 110, 150, 200);
+    this.meshRange = q.pick(50, 70, 95, 150); // mesh ↔ impostor switch (impostors are relit multi-view bakes)
     this.farRange = Math.min(w.radius * 0.12, q.pick(1100, 1700, 2400, 3200));
     this.colRange = 45;
     this.atlas = foliageAtlas();
@@ -280,7 +280,7 @@ export class Trees {
     if (UD && q.level >= 1) {
       for (const sp of UD.species) {
         const entry = { ...sp, variants: [] };
-        for (let k = 0; k < (sp.variants || 3); k++) {
+        for (let k = 0; k < Math.min(sp.variants || 3, q.pick(1, 2, 2, 3)); k++) {
           const pal = typeof sp.pal === 'function' ? sp.pal(k, rng) : sp.pal || {};
           let g;
           try { g = buildPlant(sp.kind, rng, pal, { scale: sp.scale || 1 }); } catch (e) { console.warn('[flora] undergrowth', sp.kind, e); continue; }
@@ -288,7 +288,7 @@ export class Trees {
           const v = { index: this.variants.length, kind: sp.kind, ...g, list: [], glow: pal.glowAmt || 0, under: true };
           v.barkMesh = this._inst(g.bark, this.barkMat, this.barkDepth, 256);
           v.leafMesh = g.leaves ? this._inst(g.leaves, this.leafMat, this.leafDepth, 256) : null;
-          v.barkMesh.castShadow = false; if (v.leafMesh) v.leafMesh.castShadow = q.level >= 3;
+          v.barkMesh.castShadow = false; if (v.leafMesh) v.leafMesh.castShadow = false; // small plants: root AO / contact darkening only
           entry.variants.push(v); this.variants.push(v);
         }
         if (entry.variants.length) this.under.push(entry);
@@ -537,7 +537,7 @@ export class Trees {
   }
 
   _pack(focus, cam, player) {
-    const anchor = this.flora.anchor;
+    const anchor = this.flora.anchor, fl = this.flora;
     for (const v of this.variants) v.list.length = 0;
     const imp = [];
     const mLo = this.U.uFade.value.x, mHi = this.U.uFade.value.y, mLo2 = mLo * mLo, mHi2 = mHi * mHi;
@@ -554,8 +554,8 @@ export class Trees {
         if (t.rank >= fd) continue;
         t.fs = 1 + 0.42 * (1 - fd) / 0.78; // thinned forests: survivors grow
         if (pools && t.v.glow > 0.3 && d2 < 160 * 160) pools.push(d2, t);
-        if (d2 < mHi2) t.v.list.push(t);
-        if (d2 > mLo2) imp.push(t);
+        if (d2 < mHi2 && fl.castsInView(dx, dy, dz, (t.v.crown || 3) * t.scale + 1, (t.v.height || 10) * t.scale)) t.v.list.push(t);
+        if (d2 > mLo2 && fl.inView(dx, dy, dz, (t.v.impR || 8) * t.scale * (t.fs || 1))) imp.push(t);
         if (player) {
           const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
           if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
@@ -568,8 +568,8 @@ export class Trees {
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 > this.farRange * this.farRange) continue;
       t.fs = 1;
-      if (d2 < mHi2) t.v.list.push(t);
-      if (d2 > mLo2) imp.push(t);
+      if (d2 < mHi2 && fl.castsInView(dx, dy, dz, (t.v.crown || 3) * t.scale + 1, (t.v.height || 10) * t.scale)) t.v.list.push(t);
+      if (d2 > mLo2 && fl.inView(dx, dy, dz, (t.v.impR || 8) * t.scale * (t.fs || 1))) imp.push(t);
       if (player) {
         const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
         if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
@@ -581,7 +581,7 @@ export class Trees {
         if (!c.data) continue;
         for (const t of c.data.trees) {
           const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z;
-          if (dx * dx + dy * dy + dz * dz < ur2) t.v.list.push(t);
+          if (dx * dx + dy * dy + dz * dz < ur2 && fl.inView(dx, dy, dz, 2 * t.scale + 1)) t.v.list.push(t);
         }
       }
     }
@@ -697,7 +697,7 @@ export class Trees {
     if (!this.layer) return;
     this.layer.update(focus, budget, force);
     if (this.ulayer) this.ulayer.update(focus, budget * 0.5, force);
-    if (this.layer.dirty || this.ulayer?.dirty || this.flora.reanchored || cam.distanceToSquared(this._lastPack) > (this.ulayer ? 16 : 196)) {
+    if (this.layer.dirty || this.ulayer?.dirty || this.flora.reanchored || this.flora.view.changed || cam.distanceToSquared(this._lastPack) > (this.ulayer ? 16 : 196)) {
       this.layer.dirty = false; if (this.ulayer) this.ulayer.dirty = false;
       this._lastPack.copy(cam);
       this._pack(focus, cam, player);

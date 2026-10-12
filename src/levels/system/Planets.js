@@ -160,7 +160,7 @@ export class SystemPlanet {
     if (atmoDensity > 0.05) {
       const Ra = this.R * (planet.kind === 'gas' ? 1.035 : 1.055);
       this.atmoMat = new THREE.ShaderMaterial({
-        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.3 : 1) } },
+        uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: planet.kind === 'gas' && planet.gasBands ? linFromArr(planet.gasBands.colors[0]).lerp(new THREE.Color(0.95, 0.9, 0.8), 0.5) : atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.12 : 1) }, uBack: { value: planet.kind === 'gas' ? 0.12 : 1 } },
         vertexShader: /* glsl */`varying vec3 vWP; void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
         fragmentShader: ATMO_FRAG,
         blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.FrontSide,
@@ -176,7 +176,7 @@ export class SystemPlanet {
       this.ringMat = new THREE.ShaderMaterial({
         uniforms: {
           uSun: { value: sun }, uCenter: { value: this.position }, uPR: { value: this.R },
-          uIn: { value: this.ringIn }, uOut: { value: this.ringOut }, uOp: { value: Math.min(1, planet.rings.opacity * 1.25) }, uSeed: { value: seed },
+          uIn: { value: this.ringIn }, uOut: { value: this.ringOut }, uOp: { value: Math.min(1, planet.rings.opacity * 1.05) }, uSeed: { value: seed },
           uCol: { value: linFromArr(rc) }, uN: { value: ringN },
         },
         vertexShader: RING_VERT,
@@ -239,7 +239,7 @@ export class SystemPlanet {
         void main(){
           float behind = fract(uPhase - vP);           // 0 at the planet, growing behind it
           float trail = exp(-behind * 5.0) * smoothstep(0.0, 0.004, behind);
-          float a = (uA * (1.0 + uHi * 1.5) + trail * 0.22) * uDim * smoothstep(0.3, 6.0, vD) * (0.25 + 0.75 * smoothstep(0.03, 0.3, vE));
+          float a = (uA * (1.0 + uHi * 1.5) + trail * 0.22) * uDim * smoothstep(0.3, 6.0, vD) * smoothstep(0.0, 0.18, vE);   // edge-on lines vanish instead of slicing the frame
           gl_FragColor = vec4(uCol * a, 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,

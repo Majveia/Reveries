@@ -443,6 +443,9 @@ export default class Player {
     const onFoot = on && !this.vehicle && this.level.mode === 'onfoot' && this.ctl.state !== 'swim';
     const alt = this.ctl.pos.length() - this.ctl.groundRadius;
     cat.object.visible = onFoot && alt < 4;
+    // the catcher + CharShadow carry the explorer's shadow on foot: skip the sun shadow map then
+    const sunCast = !cat.object.visible;
+    if (this._sunCast !== sunCast) { this._sunCast = sunCast; for (const m of Object.values(this.rig.meshes)) m.castShadow = sunCast; }
     if (cat.object.visible) {
       const up = this.ctl.up;
       const elev = clamp(L.dot(up), 0.05, 1);

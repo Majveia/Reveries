@@ -246,10 +246,14 @@ void main(){
     rho += w3.x * w3.y * w3.z * texelFetch(tForce, c2t(wrapc(d0 + ivec3(dx, dy, dz))), 0).w;
   }
   rho = max(1.0 + rho, 0.02);
-  float rhoH = max(rho, min(rhoSheet, 8.0) * min(1.0, rho * 1.5));
+  // stream (caustic) density only counts where the mesh confirms real matter, so thin sheets
+  // brushing past a void do not light up like filaments
+  float rhoH = max(rho, min(rhoSheet, 8.0) * smoothstep(0.9, 3.0, rho));
   // heat: 0 voids … 0.2 sheets … 0.45 filaments … 0.7 groups … 1 cluster cores.
   // uContrast = D(a)^-0.6 keeps the young, low-contrast web legible.
-  float heat = 0.2 + 0.31 * uContrast * log(rhoH) / log(10.0) + 0.022 * sigma;
+  // velocity dispersion heats only collapsed (virialised) matter; at a void's edge the 8 parent
+  // particles can belong to different streams, which is not dispersion
+  float heat = 0.2 + 0.31 * uContrast * log(rhoH) / log(10.0) + 0.022 * sigma * smoothstep(2.5, 12.0, rho);
   // per-tracer Lagrangian jitter inside its cell breaks the lattice pattern in voids
   uvec3 hq = uvec3(lt) * uvec3(1597334677u, 3812015801u, 2798796415u);
   uint hh = (hq.x ^ hq.y ^ hq.z) * 1597334677u;

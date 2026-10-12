@@ -123,7 +123,7 @@ export class Backdrop {
           vec3 core = mix(vec3(dot(uCore, vec3(0.3, 0.5, 0.2))), uCore, 0.35) * vec3(1.0, 0.95, 0.9);
           vec3 col = mix(uArm, core, clamp(near * 0.7 + bulge * 0.5, 0.0, 1.0));
           col += vec3(0.5, 0.08, 0.15) * smoothstep(0.62, 0.8, fbm(p * 7.0 + 2.0, 3)) * band * (1.0 - lane);
-          vec3 c = col * I * 0.085;
+          vec3 c = col * I * 0.14;
           c = max(c - 0.0012, 0.0); // keep the sky floor pure black (OLED)
           gl_FragColor = vec4(c, 1.0);
         }`,

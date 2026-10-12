@@ -20,6 +20,17 @@ float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
 `;
 
 // ------------------------------------------------------------------------------------------
+// Additive glows with zero intensity still cost a draw call each (they are not
+// frustum culled): report them invisible while their intensity uniform is ~0.
+function hideWhenDark(mesh, uI, radius = 4) {
+  // camera-facing quads expand in the vertex shader: give them a generous
+  // bounding sphere so off-screen sprites are frustum culled too
+  mesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), radius);
+  mesh.frustumCulled = true;
+  let vis = true;
+  Object.defineProperty(mesh, 'visible', { get: () => vis && uI.value > 1e-4, set: (v) => { vis = v; }, configurable: true });
+}
+
 export class Flame {
   constructor({ radius = 0.4, length = 3, core = [1.0, 0.85, 0.7], edge = [1.0, 0.35, 0.08], boost = [0.45, 0.6, 1.0], gain = 1 } = {}) {
     const g = new THREE.CylinderGeometry(radius * 0.08, radius, 1, 24, 12, true);
@@ -365,7 +376,7 @@ export class GroundGlow {
     });
     this.mesh = new THREE.Mesh(g, this.material);
     this.mesh.renderOrder = 2;
-    this.mesh.frustumCulled = false;
+    hideWhenDark(this.mesh, this.uniforms.uI, 1); // unit plane, scaled by the mesh
   }
   dispose() { this.mesh.geometry.dispose(); this.material.dispose(); }
 }
@@ -402,7 +413,7 @@ export class GlowSprite {
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);
-    this.mesh.frustumCulled = false;
+    hideWhenDark(this.mesh, this.uniforms.uI, Math.max(4, size * 3));
     this.mesh.renderOrder = 6;
   }
   dispose() { this.mesh.geometry.dispose(); this.material.dispose(); }

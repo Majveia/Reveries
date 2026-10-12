@@ -23,7 +23,7 @@ ${GAL_GLSL}
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
-uniform float uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail, uYoungGain, uThick, uNucleus, uInside;
+uniform float uStretch, uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail, uYoungGain, uThick, uNucleus, uInside;
 uniform vec3 uColYoung, uColOld, uColHII, uColBulge, uColDustGlow;
 uniform vec2 uRes;
 varying vec2 vUv;
@@ -47,8 +47,8 @@ float gaussLine(vec3 o, vec3 d, float s, float t0, float t1){
 float bulgeLine(vec3 o, vec3 d, float t0, float t1){
   float s = uBulgeScale;
   return gaussLine(o, d, s * 0.012, t0, t1) * uNucleus
-       + gaussLine(o, d, s * 0.05, t0, t1) * 6.0
-       + gaussLine(o, d, s * 0.16, t0, t1) * 1.6
+       + gaussLine(o, d, s * 0.05, t0, t1) * 2.6
+       + gaussLine(o, d, s * 0.16, t0, t1) * 1.1
        + gaussLine(o, d, s * 0.45, t0, t1) * 0.42
        + gaussLine(o, d, s * 1.1, t0, t1) * 0.07;
 }
@@ -73,7 +73,7 @@ void main(){
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
   vec3 T = vec3(1.0);
-  const vec3 KRGB = vec3(0.62, 1.0, 1.45);   // wavelength-dependent extinction: lane edges redden
+  const vec3 KRGB = vec3(0.74, 1.0, 1.32);   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
@@ -93,7 +93,7 @@ void main(){
     // crossing is resolved finely and no curtain striations appear
     float hS = uHOld * 0.9;
     float ca = galCum(ro.y + rd.y * t0, hS), cb = galCum(ro.y + rd.y * t1, hS);
-    float wImp = (!inside && abs(cb - ca) > 0.15 && abs(rd.y) > 1e-4) ? 0.72 : 0.0;
+    float wImp = (!inside && abs(cb - ca) > 0.15 && abs(rd.y) > 1e-4) ? 0.86 : 0.0;
     float ta = t0;
     for (int i = 0; i < 160; i++) {
       if (float(i) >= N) break;
@@ -110,33 +110,52 @@ void main(){
       float seg = tb - ta;
       float tm = 0.5 * (ta + tb);
       float lod = log2(max(tm * uPixAngle * 0.8, seg * 0.25) / uMapTexel);
-      vec4 m = galMap(pm, max(lod, 0.0));
+      // Off-plane light must not be a vertical extrusion of the face-on map (that projects into
+      // curtain streaks): the map is smoothed with height and sheared by 3D noise, the old disk
+      // samples a smooth map, and the whole disk follows a gentle outer warp.
+      float rr = length(pm.xz);
+      float wy = 0.035 * uR * smoothstep(0.55 * uR, 1.15 * uR, rr) * sin(atan(pm.z, pm.x) - 0.7);
+      vec4 nsh = texture(uNoise, pm * 0.31 + 0.11);
+      float ay = abs(pm.y - wy);
+      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * 1.6;
+      vec4 m = galMap(pmS, max(lod + 1.7 * log2(1.0 + ay / uHYoung), 0.0));
+      vec4 mS = galMap(pmS, max(lod + 3.0, 0.0));
+      float ya = pa.y - wy, yb = pb.y - wy;
+      float hDv = uHDust * (0.55 + 0.9 * nsh.y);             // the lane swells and pinches
       float det = 1.0;
       if (uDetail > 0.0 && tm < 3.0) {
         vec4 n1 = texture(uNoise, pm * 1.7);
         vec4 n2 = texture(uNoise, pm * 9.0 + n1.xyz * 0.15);
         det = mix(1.0, (0.35 + 1.3 * n1.r) * (0.4 + 1.2 * n2.b), uDetail * (1.0 - smoothstep(0.8, 3.0, tm)));
       }
-      float pY = galSeg(pa.y, pb.y, uHYoung), pO = galSeg(pa.y, pb.y, uHOld), pD = galSeg(pa.y, pb.y, uHDust);
-      float pT = galSeg(pa.y, pb.y, uHOld * 2.6);
+      float pY = galSeg(ya, yb, uHYoung), pO = galSeg(ya, yb, uHOld), pD = galSeg(ya, yb, hDv);
+      float pT = galSeg(ya, yb, uHOld * 2.6);
       // inside the disk the near dust condenses into discrete opaque clouds with clear gaps
       // between them: the band breaks into Great-Rift silhouettes instead of a smooth haze
       float dIn = det;
+      float starCl = 1.0;
       if (uInside > 0.0 && tm < 3.0) {
-        vec4 c1 = texture(uNoise, pm * vec3(1.6, 3.0, 1.6) + 0.37);
-        vec4 c2 = texture(uNoise, pm * vec3(6.0, 9.0, 6.0) + c1.xyz * 0.3);
-        float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
-        dIn = mix(det * det * 1.3, (0.04 + cl * cl * 9.0) * (0.5 + c2.b), 1.0 - smoothstep(0.8, 2.0, tm));
+        // three octaves (≈7, 2.5, 0.8 kpc periods): giant molecular cloud complexes with
+        // filamentary edges and clear lanes between them → Great-Rift silhouettes on the band
+        vec4 c0 = texture(uNoise, pm * vec3(0.14, 0.5, 0.14) + 0.71);
+        vec4 c1 = texture(uNoise, pm * vec3(0.4, 1.2, 0.4) + 0.37 + c0.xyz * 0.2);
+        vec4 c2 = texture(uNoise, pm * vec3(1.25, 2.6, 1.25) + c1.xyz * 0.3);
+        float cv = c0.g * 0.45 + c1.r * 0.35 + c2.b * 0.2;
+        float cl = smoothstep(0.47, 0.6, cv);
+        dIn = mix(det * det * 1.3, (0.02 + cl * cl * 20.0) * (0.55 + c2.r), 1.0 - smoothstep(1.2, 3.0, tm));
+        // bright star clouds (Sagittarius / Scutum) where the clouds open up
+        starCl = mix(1.0, 0.55 + 1.6 * smoothstep(0.5, 0.3, cv), uInside);
       }
-      float tau = m.b * pD * seg * uKappa * mix(det, dIn, uInside);
+      // (inside the disk a molecular-cloud floor: the local map may be dust-poor, e.g. within the bar)
+      float tau = (m.b + 0.14 * uInside * (1.0 - smoothstep(1.2, 3.0, tm))) * pD * seg * uKappa * mix(det, dIn, uInside);
       // extraplanar dust: sparse filaments and plumes rising off the plane (NGC 891 / Sombrero)
       if (uInside < 0.5) {
         float xn = texture(uNoise, pm * vec3(0.22, 0.6, 0.22) + 0.31).b;
         float xn2 = texture(uNoise, pm * vec3(0.9, 1.8, 0.9) + 0.57).r;
-        tau += m.b * galSeg(pa.y, pb.y, uHDust * 4.0) * seg * uKappa * pow(xn, 5.0) * (0.4 + xn2) * 0.9;
+        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 4.0) * (0.4 + xn2) * 1.1;
       }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
-      vec3 j = (m.r * uColYoung * pY * uYoungGain + m.g * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 1.6 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
+      vec3 j = starCl * (m.r * uColYoung * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit;
       float near = smoothstep(0.0, uNearFade, tm);
       vec3 tr = exp(-tau * KRGB);
@@ -155,6 +174,10 @@ void main(){
     col += bulgeLine(ro, rd, 0.0, 1e5) * cB * bn;
   }
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
+  // HST-style asinh stretch: the arms stay linear, the bar/bulge keep their internal
+  // structure (boxy bar, lanes, nucleus) instead of clipping to a flat cream plateau
+  float Lc = dot(col, vec3(0.2126, 0.7152, 0.0722)) * uStretch;
+  if (Lc > 1e-4) col *= log(Lc + sqrt(Lc * Lc + 1.0)) / Lc;
   gl_FragColor = vec4(max(col, 0.0), clamp(dot(T, vec3(0.3, 0.45, 0.25)), 0.0, 1.0));
 }`;
 
@@ -209,8 +232,8 @@ export class GalaxyVolume {
         uKappa: { value: 2.4 }, uMapTexel: { value: (2 * P.extent) / mapSize },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
-        uBulgeDim: { value: 1 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.66 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
+        uBulgeDim: { value: 1 }, uStretch: { value: 2.5 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.66 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 9.0 },
         uColYoung: { value: new THREE.Color(0.33, 0.53, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
         uColDustGlow: { value: new THREE.Color(0.007, 0.0045, 0.0038) },

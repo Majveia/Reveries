@@ -108,6 +108,7 @@ uniform float uHeadSize;
 uniform vec3 uCam;
 uniform vec3 uPlayer;
 uniform float uR0;
+uniform float uFallK;
 uniform float uFar;
 uniform float uWidthMax;
 uniform float uStiff;
@@ -132,7 +133,7 @@ const BLADE_BODY = /* glsl */ `
   vec3 gUp = normalize(uAnchor + base);
   vec3 toC = base - uCam;
   float dC = length(toC);
-  float fDen = clamp(uR0 * uR0 / max(dC * dC, 1e-3), 0.0, 1.0);
+  float fDen = pow(clamp(uR0 / max(dC, 1e-3), 0.0, 1.0), uFallK);
   float vis = (1.0 - smoothstep(fDen * 0.7, fDen, aOff.w)) * (1.0 - smoothstep(uFar * 0.72, uFar, dC));
   // never let a blade or flower grow into the lens (low cameras on slopes)
   vis *= smoothstep(0.45, 1.5, dC);
@@ -261,7 +262,7 @@ const LITTER_BODY = /* glsl */ `
   vec3 gUp = normalize(uAnchor + base);
   vec3 toC = base - uCam;
   float dC = length(toC);
-  float fDen = clamp(uR0 * uR0 / max(dC * dC, 1e-3), 0.0, 1.0);
+  float fDen = pow(clamp(uR0 / max(dC, 1e-3), 0.0, 1.0), uFallK);
   float vis = (1.0 - smoothstep(fDen * 0.7, fDen, aOff.w)) * (1.0 - smoothstep(uFar * 0.6, uFar, dC));
   vec3 ref = abs(gUp.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
   vec3 t1 = normalize(cross(ref, gUp)); vec3 t2 = cross(gUp, t1);
@@ -302,8 +303,9 @@ export class Grass {
     const qd = q.pick(0.28, 0.55, 1, 1.35);
     this.dens0 = P.density * 62 * qd;              // blades per m² inside r0
     this.fdens0 = (this.F?.density || 0) * 9 * qd;  // flowers per m² inside r0 (in patches)
-    this.r0 = q.pick(9, 11, 13, 15);
-    this.far = q.pick(42, 62, 88, 115) * (P.far || 1);
+    this.r0 = q.pick(6, 8, 10, 13);                 // full density inside r0
+    this.fallK = q.pick(3, 2.8, 2.5, 2.2);         // density ∝ (r0/d)^fallK beyond (blades widen to keep cover)
+    this.far = q.pick(36, 50, 72, 105) * (P.far || 1);
     this.R = w.radius;
     this.sea = w.hasOcean ? w.seaLevel : -Infinity;
     this.seed = fl.seed;
@@ -314,14 +316,20 @@ export class Grass {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind,
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
-      uR0: { value: this.r0 }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
+      uR0: { value: this.r0 }, uFallK: { value: this.fallK }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
       uGlow: { value: P.glow || 0 }, uTransK: { value: 0.22 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
       uGlowPts: fl.uniforms.uGlowPts,
     };
     this.pools = !!fl.profile.glowPools;
     this.mat = makeBladeMaterial(this.U, false, false, this.pools);
-    this.geo = bladeGeometry(q.level >= 2 ? 4 : 3);
+    this.geo = bladeGeometry(q.level >= 3 ? 4 : 3);
     this.mesh = this._mesh(this.geo, this.mat);
+    // mid/far field: the same blades with 2 segments (a few px tall out there)
+    this.farFrom = this.r0 * q.pick(1.8, 1.8, 1.8, 2.2);
+    this.midFrom = q.level >= 3 ? 4 : Infinity; // ultra: 4-segment blades in the cells around the camera, else 3
+    if (this.midFrom < Infinity) { this.geoMid = bladeGeometry(3); this.meshMid = this._mesh(this.geoMid, this.mat); }
+    this.geoFar = bladeGeometry(2);
+    this.meshFar = this._mesh(this.geoFar, this.mat);
     if (this.fdens0 > 0) {
       this.FU = { ...this.U, uStemCol: { value: new THREE.Color(P.colors[1]).multiplyScalar(0.85) }, uHeadSize: { value: this.F.size || 0.05 }, uGlow: { value: this.F.glow || 0 }, uGlowCol: { value: new THREE.Color(this.F.glowCol || P.glowCol || '#6fe8ff') }, uWidthMax: { value: 2.0 }, uTransK: { value: 0.55 } };
       const spike = this.F.style === 'spike';
@@ -352,7 +360,7 @@ export class Grass {
     }
     this.layer = new CellLayer({
       R: this.R, cellSize: CELL, radius: this.far, moveThresh: 2, cacheMax: 600,
-      tierOf: (dm) => { const dmin = Math.max(0, dm - 5); return dmin > this.far ? -1 : dmin <= this.r0 ? 0 : Math.min(14, Math.ceil(Math.log2((dmin * dmin) / (this.r0 * this.r0)) * 2)); },
+      tierOf: (dm) => { const dmin = Math.max(0, dm - 5); return dmin > this.far ? -1 : dmin <= this.r0 ? 0 : Math.min(14, Math.ceil(Math.log2((dmin * dmin) / (this.r0 * this.r0)) * this.fallK)); },
       covers: (c, tier) => c.data && c.data.gen >= this._need(tier) && (tier > 2 || c.data.fine),
       build: (c, tier) => this._build(c, tier),
     });
@@ -561,10 +569,26 @@ export class Grass {
     return lo;
   }
 
-  _pack(mesh, which) {
+  // cells drawn this pack: inside the view cone; split near / far by distance
+  _select() {
+    // grass casts no shadows: nothing behind the camera matters (near = 0)
+    const fl = this.flora, cam = fl.level.camera.position, near = [], mid = [], far = [], r = CELL * 0.75 + 2;
+    const f2 = this.meshFar ? this.farFrom * this.farFrom : Infinity, m2 = this.meshMid ? this.midFrom * this.midFrom : Infinity;
+    for (const c of this.layer.active.values()) {
+      if (!c.data) continue;
+      const dx = c.data.cx - cam.x, dy = c.data.cy - cam.y, dz = c.data.cz - cam.z;
+      if (!fl.inView(dx, dy, dz, r, 0)) continue;
+      const dm = Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - r), dm2 = dm * dm;
+      (dm2 > f2 ? far : dm2 > m2 ? mid : near).push(c);
+    }
+    this._near = near; this._mid = mid; this._far = far;
+  }
+
+  _pack(mesh, which, cells) {
     const anchor = this.flora.anchor;
+    cells ||= [...this._near, ...this._mid, ...this._far];
     let total = 0;
-    for (const c of this.layer.active.values()) if (c.data) total += this._count(c, c.data[which]);
+    for (const c of cells) total += this._count(c, c.data[which]);
     const attr = mesh.geometry.getAttribute('aOff');
     let buf = attr.data;
     if (buf.array.length < total * STRIDE) {
@@ -577,8 +601,7 @@ export class Grass {
     }
     const A = buf.array;
     let o = 0;
-    for (const c of this.layer.active.values()) {
-      if (!c.data) continue;
+    for (const c of cells) {
       const src = c.data[which], n = this._count(c, src);
       const ox = c.data.cx - anchor.x, oy = c.data.cy - anchor.y, oz = c.data.cz - anchor.z;
       for (let k = 0; k < n; k++) {
@@ -597,18 +620,21 @@ export class Grass {
   update(focus, budget, force) {
     if (!this.layer) return;
     this.layer.update(focus, budget, force);
-    if (this.layer.dirty || this.flora.reanchored) {
+    if (this.layer.dirty || this.flora.reanchored || this.flora.view.changed) {
       this.layer.dirty = false;
-      this._pack(this.mesh, 'blades');
+      this._select();
+      this._pack(this.mesh, 'blades', this.meshMid ? this._near : [...this._near, ...this._mid]);
+      if (this.meshMid) this._pack(this.meshMid, 'blades', this._mid);
+      this._pack(this.meshFar, 'blades', this._far);
       if (this.fmesh) this._pack(this.fmesh, 'flowers');
       if (this.fmesh2) this._pack(this.fmesh2, 'flowers2');
       if (this.lmesh) this._pack(this.lmesh, 'litter');
     }
   }
 
-  get count() { return (this.mesh?.geometry.instanceCount || 0) + (this.fmesh?.geometry.instanceCount || 0) + (this.fmesh2?.geometry.instanceCount || 0); }
+  get count() { return (this.mesh?.geometry.instanceCount || 0) + (this.meshFar?.geometry.instanceCount || 0) + (this.meshMid?.geometry.instanceCount || 0) + (this.fmesh?.geometry.instanceCount || 0) + (this.fmesh2?.geometry.instanceCount || 0); }
 
   dispose() {
-    this.geo?.dispose(); this.mat?.dispose(); this.fgeo?.dispose(); this.fmat?.dispose(); this.fgeo2?.dispose(); this.fmat2?.dispose(); this.lgeo?.dispose(); this.lmat?.dispose();
+    this.geo?.dispose(); this.geoFar?.dispose(); this.geoMid?.dispose(); this.mat?.dispose(); this.fgeo?.dispose(); this.fmat?.dispose(); this.fgeo2?.dispose(); this.fmat2?.dispose(); this.lgeo?.dispose(); this.lmat?.dispose();
   }
 }

@@ -78,7 +78,7 @@ export class PlanetLighting {
     // long raking shadows across a few hundred metres of valley at golden hour
     const sm = q.pick(1024, 2048, 3072, 4096);
     sun.shadow.mapSize.set(sm, sm);
-    this.shadowRadius = q.pick(70, 140, 220, 300);
+    this.shadowRadius = q.pick(55, 90, 140, 220); // tree meshes end ~115 m (high); beyond, the terrain sun-visibility map + impostor AO carry shadows
     const s = this.shadowRadius;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 6000 });
     sun.shadow.bias = -0.00025;

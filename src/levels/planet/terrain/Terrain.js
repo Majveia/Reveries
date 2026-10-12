@@ -61,7 +61,11 @@ export default class Terrain {
     // deepest level: vertex spacing ≈ 0.35–0.5 m
     const targetSpacing = q.pick(0.6, 0.5, 0.4, 0.33);
     this.maxLevel = Math.max(4, Math.ceil(Math.log2(this.faceSize / (N * targetSpacing))));
-    this.pixelError = this.engine.shotMode ? 5 : q.pick(10, 8, 6, 4.5); // allowed projected vertex spacing (px)
+    // allowed projected vertex spacing, in pixels of a 720-line reference view, so
+    // the triangle count does not grow with the output resolution (shots use the
+    // same tier values as play)
+    this.pixelError = q.pick(30, 23, 18, 12);
+    this.refLines = 720;
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
     this.relief = w.terrainParams.relief;
@@ -299,6 +303,7 @@ export default class Terrain {
     const fov = THREE.MathUtils.degToRad(cam.fov);
     this.pxPerRad = (H * 0.5) / Math.tan(fov * 0.5);
     this.uniforms.uPixelAngle.value = 1 / this.pxPerRad;
+    this.pxPerRadLod = (this.refLines * 0.5) / Math.tan(fov * 0.5); // LOD metric (resolution independent)
     // horizon: sphere of minimum terrain radius
     const d = this.camPos.length();
     this.Ro = this.R + Math.min(0, this.hMinSeen ?? this.hMin);
@@ -323,7 +328,7 @@ export default class Terrain {
     _sphere.center.copy(n.center); _sphere.radius = n.radius * 1.15;
     if (!_frustum.intersectsSphere(_sphere)) d = d * 12 + n.radius * 2; // off-screen: much coarser
     // projected vertex spacing in pixels
-    const px = (n.spacing * this.pxPerRad) / Math.max(d, 1e-3);
+    const px = (n.spacing * this.pxPerRadLod) / Math.max(d, 1e-3);
     if (px <= this.pixelError) return false;
     return this._splitBudget-- > 0;
   }
@@ -349,7 +354,14 @@ export default class Terrain {
     for (const r of this.roots) visit(r);
     // visibility
     for (const m of this.meshes) m.visible = false;
-    for (const n of draw) n.chunk.mesh.visible = true;
+    // near shadow-map casters: fine chunks around the camera only (the far
+    // terrain shadows come from the sun-visibility map, see _updateSunShadow)
+    const castR = (this.level.lighting?.shadowRadius || 140) * 0.6, castS = this.engine.quality.pick(1.5, 1.5, 1.6, 3);
+    for (const n of draw) {
+      const m = n.chunk.mesh;
+      m.visible = true;
+      m.castShadow = n.spacing < castS && n.level >= this.maxLevel - this.engine.quality.pick(1, 1, 1, 3) && n.center.distanceTo(this.camPos) - n.radius < castR;
+    }
     this.drawCount = draw.length;
     return want;
   }
@@ -426,7 +438,7 @@ export default class Terrain {
     const S = 4096;
     const o = this.detailOrigin.set(Math.round(this.camPos.x / S) * S, Math.round(this.camPos.y / S) * S, Math.round(this.camPos.z / S) * S);
     this.uniforms.uDetailOrigin.value.copy(o);
-    this.uniforms.uLodK.value = this.pxPerRad / this.pixelError / N;
+    this.uniforms.uLodK.value = (this.pxPerRadLod || this.pxPerRad) / this.pixelError / N;
     if (this.engine.shotMode) {
       this._converge();
     } else {

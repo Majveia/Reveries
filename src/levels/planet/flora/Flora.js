@@ -52,6 +52,10 @@ export default class Flora {
       uGlowPts: { value: Array.from({ length: 16 }, () => new THREE.Vector4(1e9, 0, 0, 1)) },
     };
     this.noiseScale = { patch: 1 / 9, color: 1 / 46, flower: 1 / 16, forest: 1 / 240 };
+    // view cone for instance culling (grass cells, tree / rock instances): the
+    // camera frustum's bounding cone + a margin larger than the re-pack trigger,
+    // so turning the camera never reveals an empty edge before the next pack
+    this.view = { on: false, fwd: new THREE.Vector3(0, 0, -1), packFwd: new THREE.Vector3(), half: Math.PI, near: 14, changed: true, shadow: new THREE.Vector3(), sinAlt: 1 };
     this.sites = this.world.sites || [];
     this.parts = [];
   }
@@ -103,6 +107,38 @@ export default class Flora {
       U.uKeyDir.value.copy(this.world.sunDir);
       U.uNight.value = 1 - this.world.daylight;
     }
+  }
+
+  _updateView(cam) {
+    const V = this.view;
+    cam.getWorldDirection(V.fwd);
+    const tv = Math.tan(THREE.MathUtils.degToRad(cam.fov || 60) * 0.5), th = tv * (cam.aspect || 1);
+    V.half = Math.atan(Math.hypot(tv, th)) + 0.32; // diagonal half-angle + ~18° margin
+    V.on = V.half < 2.6;
+    V.changed = V.packFwd.dot(V.fwd) < Math.cos(0.2); // re-pack after ~11° of rotation
+    if (V.changed) V.packFwd.copy(V.fwd);
+    // shadows fall along -keyDir: casters outside the cone can shade what is inside it
+    const kd = this.uniforms.uKeyDir.value, up = _v.copy(cam.position).normalize();
+    V.sinAlt = Math.max(0.12, kd.dot(up));
+    V.shadow.copy(kd).multiplyScalar(-1 / V.sinAlt);
+  }
+
+  /** Is a sphere (offset from the camera, radius r) inside the culling cone? */
+  inView(dx, dy, dz, r, near = this.view.near) {
+    const V = this.view;
+    if (!V.on) return true;
+    const d2 = dx * dx + dy * dy + dz * dz, nr = near + r;
+    if (d2 < nr * nr) return true;
+    const d = Math.sqrt(d2);
+    const c = (dx * V.fwd.x + dy * V.fwd.y + dz * V.fwd.z) / d;
+    return Math.acos(c > 1 ? 1 : c < -1 ? -1 : c) <= V.half + Math.asin(Math.min(1, r / d));
+  }
+
+  /** Like inView, but also keeps casters whose shadow (height h) reaches into the cone. */
+  castsInView(dx, dy, dz, r, h) {
+    if (this.inView(dx, dy, dz, r)) return true;
+    const S = this.view.shadow, L = Math.min(h, 160 * this.view.sinAlt);
+    return this.inView(dx + S.x * L * 0.5, dy + S.y * L * 0.5, dz + S.z * L * 0.5, r + L * 0.3) || this.inView(dx + S.x * L, dy + S.y * L, dz + S.z * L, r);
   }
 
   update() {}
@@ -163,6 +199,7 @@ export default class Flora {
     if (player && this.level.mode === 'onfoot') U.uPlayer.value.copy(player).sub(this.anchor);
     else U.uPlayer.value.set(1e9, 0, 0);
     this._syncLight();
+    this._updateView(cam);
 
     const force = this._first || shot;
     const budget = shot ? 1e6 : this._first ? 40 : 2.5;
@@ -172,6 +209,8 @@ export default class Flora {
     if (this.grass?.fmesh) this.grass.fmesh.visible = this.grass.mesh.visible;
     if (this.grass?.fmesh2) this.grass.fmesh2.visible = this.grass.mesh.visible;
     if (this.grass?.lmesh) this.grass.lmesh.visible = this.grass.mesh.visible;
+    if (this.grass?.meshFar) this.grass.meshFar.visible = this.grass.mesh.visible;
+    if (this.grass?.meshMid) this.grass.meshMid.visible = this.grass.mesh.visible;
     try { this.trees?.update(_cam, _cam, col, budget * 0.6, force); } catch (e) { this._err('trees', e); }
     try { if (this.rocks && alt < 1500) this.rocks.update(_cam, col, budget * 0.4, force); } catch (e) { this._err('rocks', e); }
     for (const m of this.motes || []) { try { m.update(_cam); } catch (e) { this._err('motes', e); } }

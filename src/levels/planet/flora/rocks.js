@@ -127,7 +127,7 @@ export class Rocks {
     const fl = this.flora, q = fl.engine.quality, P = this.P, w = this.world;
     this.R = w.radius;
     this.sea = w.hasOcean ? w.seaLevel : -Infinity;
-    this.range = q.pick(160, 240, 340, 420);
+    this.range = q.pick(110, 160, 230, 320);
     const rc = new THREE.Color(P.color || '#7a766e');
     this.U = {
       uAnchor: fl.uniforms.uAnchor, uNight: fl.uniforms.uNight,
@@ -186,13 +186,13 @@ export class Rocks {
   }
 
   _pack(player) {
-    const anchor = this.flora.anchor;
+    const anchor = this.flora.anchor, fl = this.flora, cam = fl.level.camera.position;
     for (const v of this.variants) v.list.length = 0;
     const want = new Set();
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
       for (const t of c.data) {
-        this.variants[t.v].list.push(t);
+        if (fl.castsInView(t.x - cam.x, t.y - cam.y, t.z - cam.z, t.sc * 1.3 + 0.5, t.sc * 1.2)) this.variants[t.v].list.push(t);
         if (player && t.sc > 0.9) {
           const dx = t.x - player.x, dy = t.y - player.y, dz = t.z - player.z;
           if (dx * dx + dy * dy + dz * dz < 40 * 40) want.add(t);
@@ -234,7 +234,7 @@ export class Rocks {
   update(focus, player, budget, force) {
     if (!this.layer) return;
     this.layer.update(focus, budget, force);
-    if (this.layer.dirty || this.flora.reanchored || (player && player.distanceToSquared(this._lastPack) > 100)) {
+    if (this.layer.dirty || this.flora.reanchored || this.flora.view.changed || (player && player.distanceToSquared(this._lastPack) > 100)) {
       this.layer.dirty = false;
       if (player) this._lastPack.copy(player);
       this._pack(player);

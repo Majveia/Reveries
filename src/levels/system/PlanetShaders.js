@@ -256,8 +256,10 @@ void main(){
   if (uCiv > 0.5 && !ocean) {
     // metropolitan regions follow the habitable lowlands and coasts
     float region = smoothstep(0.3, 0.65, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.5 - 0.15) * smoothstep(0.05, 0.35, cityPot);
-    float coast = smoothstep(0.25, 0.0, h);
+    float coast = smoothstep(0.2, 0.0, h);
     vec2 wc = worley(sd * 70.0);
+    // heavy-tailed metropolitan hierarchy: a few megalopolises outshine everything else
+    float mega = pow(0.5 + 0.5 * snoise(sd * 9.0 + 3.0), 4.0) * 7.0 + 0.35;
     float cores = smoothstep(0.13, 0.0, wc.x) * (0.6 + 0.4 * snoise(sd * 500.0));                                    // city cores
     float sprawl = smoothstep(0.42, 0.04, wc.x) * smoothstep(0.45, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
     float roads = smoothstep(0.02, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x) * smoothstep(0.3, 0.7, snoise(sd * 260.0) * 0.5 + 0.5); // highways between cities
@@ -265,9 +267,12 @@ void main(){
     float town = smoothstep(0.14, 0.0, wt.x) * smoothstep(0.2, 0.6, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
     // sparkle: suburbs and towns resolve into grains of light, not a smooth glow
     float grain = smoothstep(0.35, 0.95, snoise(sd * 900.0) * 0.5 + 0.5) * 1.6 + 0.15;
-    float lights = region * (cores * 2.2 + (sprawl * 0.7 + town * 0.9) * grain + roads * 0.5) * (0.45 + 0.55 * coast);
+    float lights = region * (cores * 2.2 * mega + (sprawl * 0.7 * min(mega, 2.5) + town * 0.9) * grain + roads * 0.35 * min(mega, 3.0)) * (0.35 + 0.65 * coast) * 1.3;
+    lights *= 1.0 - smoothstep(0.3, 0.6, snow);
+    // sodium amber suburbs vs LED-white downtowns
+    vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);
     lights *= (uCiv - 1.0) * 0.6;
-    emis += uLights * lights * night * 3.4 * (1.0 - cloud * 0.8);
+    emis += lc * lights * night * 3.4 * (1.0 - cloud * 0.8);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);
@@ -299,7 +304,10 @@ varying vec3 vObj; varying vec3 vWN; varying vec3 vWP;
 float flow(vec3 s, float shear){
   vec3 a = vec3(s.x * 2.6, s.y * 13.0, s.z * 2.6) + uSeed;
   vec3 w = vec3(fbm(a * 0.8, 3), fbm(a * 0.8 + 4.1, 3), fbm(a * 0.8 + 7.7, 3));
-  return fbm(a * 1.3 + w * (0.9 + 1.6 * shear) * uTurb * 2.0, uOct);
+  vec3 b = a * 1.3 + w * (1.2 + 3.0 * shear) * uTurb * 2.0;
+  // second, finer warp octave: small eddies curling off the band edges
+  b += vec3(snoise(b * 3.0 + 1.7), snoise(b * 3.0 + 5.3), 0.0) * (0.18 + 0.35 * shear) * uTurb * 2.0;
+  return fbm(b, uOct);
 }
 // band profile: one value per latitude (random-looking but smooth)
 float prof(float y, float k, float s){ return snoise(vec2(y * k, s)); }
@@ -325,21 +333,29 @@ void main(){
   float j = jetv * 0.015;
   float n = mix(flow(rotY(sd, j * p1 * T), shear), flow(rotY(sd, j * p2 * T), shear), wgt);
   // latitude perturbed by the flow: band edges curl into festoons and eddies
-  float y = lat0 + n * (0.008 + 0.02 * shear) * (0.5 + uTurb);
+  float y = lat0 + n * (0.015 + 0.05 * shear) * (0.5 + uTurb);
   float b1 = prof(y, 5.5, uSeed);
   float b2 = prof(y, 17.0, uSeed + 3.0);
   float b3 = prof(y, 48.0, uSeed + 7.0);
   float b4 = prof(y, 140.0, uSeed + 11.0);
-  vec3 c0 = mix(vec3(dot(uC0, vec3(0.3, 0.5, 0.2))), uC0, 0.8) * 1.12;
-  vec3 c1 = mix(vec3(dot(uC1, vec3(0.3, 0.5, 0.2))), uC1, 0.75) * 1.08;
-  vec3 c2 = mix(vec3(dot(uC2, vec3(0.3, 0.5, 0.2))), uC2, 0.35);
+  // Cassini-like restraint: pale butterscotch zones, muted belts, grey-blue accents in a narrow value range
+  float l0 = dot(uC0, vec3(0.3, 0.5, 0.2)), l1 = dot(uC1, vec3(0.3, 0.5, 0.2)), l2 = dot(uC2, vec3(0.3, 0.5, 0.2));
+  vec3 c0 = mix(vec3(l0), uC0, 0.5) * mix(vec3(1.06, 1.0, 0.86), vec3(1.0), 0.3) * 1.15;
+  vec3 c1 = mix(vec3(l1), uC1, 0.48) * 1.08;
+  c1 = mix(c1, c0, 0.3);
+  vec3 c2 = mix(vec3(l2), uC2, 0.3);
   vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
   col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
-  col *= 0.92 + 0.07 * b3 + 0.04 * b4;
+  col *= 0.95 + 0.035 * b3 + 0.012 * b4;
   col *= 0.95 + 0.07 * n;
   // small bright convective spots and dark barges in the shear zones
   vec2 wv = worley(vec3(sd.x * 14.0, sd.y * 40.0, sd.z * 14.0) + uSeed + n * 0.6);
   col *= 1.0 + 0.12 * smoothstep(0.25, 0.0, wv.x) * shear * uTurb * 2.0;
+  // white ovals strung along the jet boundaries (anticyclones)
+  vec2 wo = worley(vec3(sd.x * 7.0, sd.y * 22.0, sd.z * 7.0) + uSeed * 1.7);
+  float ovGate = smoothstep(0.35, 0.7, snoise(sd * 5.0 + uSeed)) * smoothstep(0.8, 0.97, shear) * (1.0 - smoothstep(0.75, 0.85, abs(d.y)));
+  float oval = smoothstep(0.16, 0.06, wo.x + 0.05 * n) * ovGate;
+  col = mix(col, vec3(dot(c0, vec3(0.33)) * 1.2) * vec3(1.0, 0.98, 0.95), oval * 0.75);
   // storms: tinted ovals with bright collars
   for (int i = 0; i < 3; i++) {
     if (i >= uStorms) break;
@@ -353,7 +369,8 @@ void main(){
   }
   // polar hoods: cooler, hazier, with a hint of a hexagonal jet
   float pole = smoothstep(0.7, 0.95, abs(d.y));
-  col = mix(col, mix(col, uAtmo * 0.5 + col * 0.4, 0.5), pole);
+  vec3 hood = vec3(dot(col, vec3(0.3, 0.5, 0.2))) * vec3(0.82, 0.88, 0.98);
+  col = mix(col, hood, pole * 0.45);
 
   vec3 Ng = normalize(vWN);
   vec3 L = normalize(-vWP);
@@ -368,12 +385,12 @@ void main(){
   // limb darkening and a thin high haze on the lit limb
   c *= 0.5 + 0.5 * pow(ndv, 0.4);
   float rim = pow(1.0 - ndv, 5.0);
-  c += mix(col, uAtmo, 0.35) * uSun * rim * smoothstep(-0.1, 0.5, ndlG) * 0.07;
+  c += col * vec3(1.02, 0.98, 0.9) * uSun * rim * smoothstep(-0.1, 0.5, ndlG) * 0.05;
 #ifdef HAS_RINGS
   c *= ringShadow(vWP, L, uCenter, uRingN, uRingIn, uRingOut, uRingOp, uRingSeed);
   // ringshine: sunlight scattered off the rings faintly lights the night side
   float rs = sat(abs(dot(Ng, uRingN))) * smoothstep(0.1, -0.3, ndlG);
-  c += col * uSun * 0.012 * rs;
+  c += col * uSun * 0.045 * rs;
 #endif
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -381,7 +398,7 @@ void main(){
 // Thin atmosphere shell outside the planet: the limb glow. Column density along
 // the camera ray from the Chapman approximation of an exponential atmosphere.
 export const ATMO_FRAG = /* glsl */`
-uniform vec3 uSun; uniform vec3 uCenter; uniform float uR; uniform float uRa; uniform vec3 uAtmo; uniform float uDensity;
+uniform vec3 uSun; uniform vec3 uCenter; uniform float uR; uniform float uRa; uniform vec3 uAtmo; uniform float uDensity; uniform float uBack;
 varying vec3 vWP;
 void main(){
   vec3 ro = cameraPosition;
@@ -406,7 +423,7 @@ void main(){
   vec3 ray = mix(vec3(1.0, 0.4, 0.15), uAtmo, smoothstep(-0.12, 0.3, mu));
   vec3 c = uSun * (ray * phaseR + vec3(1.0, 0.85, 0.7) * phaseM) * (1.0 - exp(-tau)) * lit * hit;
   // backlit ring of light at the terminator (sunlight through the limb)
-  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
+  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * uBack * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -432,10 +449,16 @@ void main(){
   float muL = max(abs(sl), 0.05), muV = max(abs(sv), 0.05);
   float tau = dens * uOp * 2.2;
   // albedo varies ring to ring: dusty brown C ring and Cassini division, bright icy B and A rings
-  float tone = 0.8 + 0.22 * rNoise(x * 55.0 + uSeed) + 0.1 * rNoise(x * 310.0 + uSeed * 2.0) + 0.06 * rNoise(x * 1400.0) - 0.3 * (1.0 - smoothstep(0.22, 0.3, x));
+  float tone = 0.86 + 0.16 * rNoise(x * 55.0 + uSeed) + 0.08 * rNoise(x * 310.0 + uSeed * 2.0) + 0.05 * rNoise(x * 1400.0);
+  // zone albedo: dark dusty C ring and Cassini division, brilliant B ring (brightening outward), greyer A ring
+  float zAlb = mix(0.24, 0.38, smoothstep(0.0, 0.25, x));
+  zAlb = mix(zAlb, mix(0.78, 1.08, smoothstep(0.3, 0.55, x)), smoothstep(0.25, 0.29, x));
+  zAlb = mix(zAlb, 0.3, smoothstep(0.585, 0.6, x) * (1.0 - smoothstep(0.635, 0.655, x)));
+  zAlb = mix(zAlb, 0.68 - 0.08 * smoothstep(0.8, 0.95, x), smoothstep(0.64, 0.66, x));
+  tone *= zAlb;
   // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer
-  vec3 tint = mix(vec3(0.7, 0.62, 0.55), vec3(1.04, 0.98, 0.9), smoothstep(0.22, 0.34, x));
-  tint = mix(tint, vec3(0.86, 0.85, 0.84), smoothstep(0.6, 0.68, x));
+  vec3 tint = mix(vec3(0.62, 0.5, 0.42), vec3(1.06, 0.98, 0.86), smoothstep(0.22, 0.34, x));
+  tint = mix(tint, vec3(0.84, 0.86, 0.9), smoothstep(0.6, 0.68, x));
   vec3 alb = uCol * tone * tint * vec3(1.1, 1.0, 0.84);   // icy particles under a sunlike star read warm cream
   // self-gravity wakes: faint azimuthal clumping that gives the A ring its grain up close
   float ang = atan(vLP.y, vLP.x);

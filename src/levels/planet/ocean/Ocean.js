@@ -95,8 +95,8 @@ export default class Ocean {
     progress?.(0.7);
 
     // ---- mesh ----
-    this.rings = shot ? 256 : q.pick(96, 144, 200, 256);
-    this.segs = shot ? 384 : q.pick(128, 192, 300, 384);
+    this.rings = q.pick(96, 144, 200, 256);
+    this.segs = q.pick(128, 192, 300, 384);
     this.mesh = new THREE.Mesh(this._capGeometry(this.rings, this.segs), this._material(pal));
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 2;

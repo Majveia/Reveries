@@ -100,7 +100,13 @@ void main(){
   float opp = 1.0 + 0.5 * pow(max(dot(V, L), 0.0), 10.0);
   vec3 H = normalize(L + V);
   float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce) * ndl;
-  vec3 c = alb * uSun * (ndl * opp) + uSun * spec + alb * vec3(0.012, 0.014, 0.02) * (0.6 + 0.4 * max(dot(N, -L), 0.0));
+  vec3 c = alb * uSun * (ndl * opp) + uSun * spec + alb * vec3(0.022, 0.025, 0.034) * (0.6 + 0.4 * max(dot(N, -L), 0.0));
+  // backlit rim: dust and regolith fringe catch the star when it sits behind the rock
+  float ndv = max(dot(Ng, V), 0.0);
+  // pixel-sized rocks: no rim and a dimmer disc, so the far belt reads as texture, not salt
+  float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
+  c += uSun * alb * pow(1.0 - ndv, 4.0) * pow(max(dot(-V, L), 0.0), 4.0) * 0.3 * (1.0 - tiny);
+  c *= 1.0 - 0.55 * tiny;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -197,11 +203,12 @@ export class Belt {
           vec4 mv = viewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           vec3 V = normalize(cameraPosition - p), L = normalize(-p);
-          float fwd = pow(max(dot(-V, L), 0.0), 6.0);
+          float fwd = pow(max(dot(-V, L), 0.0), 4.0);
           float dist = -mv.z;
           // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
-          float sz = clamp(70.0 / dist, 2.0, 5.0);
-          vC = uSun * (0.0022 + 0.07 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (2.6 / sz);
+          // backlit, the motes swell into a soft forward-scattering haze (energy spread over a larger sprite)
+          float sz = clamp(70.0 / dist, 2.0, 5.0) * (1.0 + 2.5 * fwd);
+          vC = uSun * (0.0022 + 0.12 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
           gl_PointSize = sz * uDpr;
         }`,
       fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,

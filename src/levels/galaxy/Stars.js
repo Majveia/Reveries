@@ -56,7 +56,7 @@ const STAR_VERT = /* glsl */ `
 ${GAL_GLSL}
 ${CLOUD_GLSL}
 attribute vec4 aCol;          // linear color (rgb) + log2 luminosity code (a)
-uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade;
+uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade, uOldFade;
 varying vec3 vColor; varying float vSharp, vRc;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -64,6 +64,10 @@ void main(){
   float d2 = dot(mv.xyz, mv.xyz);
   float L = exp2((aCol.a * 255.0 - 128.0) / 16.0);
   float flux = L * uBright / (d2 + 1e-6);
+  // seen from afar the old disk/bulge is unresolved light (the volume carries it): only the
+  // luminous young OB stars and the rare red supergiants stay resolved as points
+  float hot = step(aCol.r, aCol.b * 1.05);
+  flux *= mix(1.0, mix(smoothstep(24.0, 60.0, L) * 0.6, smoothstep(3.0, 14.0, L), hot), uOldFade);
   flux = uSat * (1.0 - exp(-flux / uSat));
   float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
   flux *= exp(-starTau(cameraPosition, position, int(uTauSteps), lod));
@@ -197,7 +201,7 @@ void main(){
 const MARK_VERT = /* glsl */ `
 attribute vec3 aColor; attribute float aIdx;
 uniform float uHover, uSel, uHome, uNear, uPx;
-varying vec3 vColor; varying float vRing; varying float vAlpha; varying float vSel;
+varying vec3 vColor; varying float vRing; varying float vAlpha; varying float vSel; varying float vHome;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -208,12 +212,13 @@ void main(){
   vAlpha = max(vAlpha, isHome * 0.85 * (1.0 - smoothstep(uNear * 2.5, uNear * 5.0, d)));
   vSel = max(isH, isS);
   vRing = 1.0;
-  gl_PointSize = uPx * (1.0 + 0.6 * vSel);
+  vHome = isHome;
+  gl_PointSize = uPx * (1.0 + 0.6 * vSel) * (1.0 + 0.7 * isHome);
   vColor = aColor;
   if (vAlpha < 0.01) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
 const MARK_FRAG = /* glsl */ `
-varying vec3 vColor; varying float vRing; varying float vAlpha; varying float vSel;
+varying vec3 vColor; varying float vRing; varying float vAlpha; varying float vSel; varying float vHome;
 void main(){
   vec2 c = gl_PointCoord * 2.0 - 1.0;
   float r = length(c);
@@ -221,7 +226,10 @@ void main(){
   // four tick gaps → reads as a reticle, not a bubble
   float gap = smoothstep(0.12, 0.2, min(abs(c.x), abs(c.y)) / max(r, 1e-3));
   float a = ring * mix(1.0, gap, 0.8) * vAlpha;
-  gl_FragColor = vec4(mix(vec3(0.75, 0.85, 1.0), vColor, 0.35) * a * 0.9, 1.0);
+  // home: warm gold reticle with a soft halo so it is easy to find among thousands of stars
+  float halo = vHome * vAlpha * exp(-r * r * 5.0) * 0.18 * (1.0 - smoothstep(0.7, 1.0, r));
+  vec3 rc = mix(mix(vec3(0.75, 0.85, 1.0), vColor, 0.35), vec3(1.0, 0.8, 0.45), vHome);
+  gl_FragColor = vec4(rc * (a * (0.9 + 0.6 * vHome) + halo), 1.0);
 }`;
 
 export class Stars {
@@ -313,7 +321,7 @@ export class Stars {
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 2);
     this.starMat = this._mat(STAR_VERT, STAR_FRAG, {
       uBright: { value: 5.0 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 7.0 }, uPxScale: { value: 1.6 }, uSat: { value: 60 },
-      uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 },
+      uTauSteps: { value: q.pick(2, 3, 4, 6) }, uFade: { value: 1 }, uOldFade: { value: 0 },
     });
     this.field = new THREE.Points(geo, this.starMat);
     this.field.frustumCulled = false;
@@ -427,7 +435,7 @@ export class Stars {
     sg.setAttribute('aCol', new THREE.BufferAttribute(sc, 4, true));
     this.sysMat = this._mat(STAR_VERT, STAR_FRAG, {
       uBright: { value: 0.004 }, uMinPx: { value: 1.0 }, uMaxPx: { value: 9.0 }, uPxScale: { value: 1.6 }, uSat: { value: 80 },
-      uTauSteps: { value: 2 }, uFade: { value: 1 },
+      uTauSteps: { value: 2 }, uFade: { value: 1 }, uOldFade: { value: 0 },
     });
     this.sysPoints = new THREE.Points(sg, this.sysMat);
     this.sysPoints.frustumCulled = false;
@@ -438,7 +446,7 @@ export class Stars {
   addPoints(geo, bright = 0.35) {
     const m = this._mat(STAR_VERT, STAR_FRAG, {
       uBright: { value: bright }, uMinPx: { value: 1.0 }, uMaxPx: { value: 9.0 }, uPxScale: { value: 1.6 }, uSat: { value: 80 },
-      uTauSteps: { value: 2 }, uFade: { value: 1 },
+      uTauSteps: { value: 2 }, uFade: { value: 1 }, uOldFade: { value: 0 },
     });
     const pts = new THREE.Points(geo, m);
     pts.frustumCulled = false;
@@ -456,6 +464,9 @@ export class Stars {
     }
     const s = Math.max(1, height / 720);
     this.starMat.uniforms.uMaxPx.value = 18 * s;
+    if (this.starMat.uniforms.uOldFade) this.starMat.uniforms.uOldFade.value = Math.min(1, Math.max(0, (zoom - 3) / 12)) ** 0.7;
+    // HII sprites recede at galaxy scale: the volume's HII channel carries the knots there
+    if (this.blobMat) this.blobMat.uniforms.uGain.value = 0.5 * (1 - 0.55 * this.starMat.uniforms.uOldFade.value);
     if (this.markMat) this.markMat.uniforms.uPx.value = 18 * s;
   }
 

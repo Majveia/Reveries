@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { Random, seedFrom } from '../../core/Random.js';
 import { NOISE_GLSL } from '../../core/glsl/noise.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const BILLBOARD_VERT = /* glsl */`
   uniform float uSize;
@@ -32,7 +33,7 @@ export class Star {
     const hot = THREE.MathUtils.clamp((star.temp - 3000) / 9000, 0, 1);
     // Surface radiance (HDR): bright enough to bloom; scaled down for huge giants so they read as cooler.
     const intensity = kind === 'neutron' ? 60 : kind === 'whiteDwarf' ? 40 : kind === 'giant' ? 8 : 12;
-    const cell = kind === 'giant' ? 18.0 : kind === 'whiteDwarf' ? 120.0 : 150.0;
+    const cell = kind === 'giant' ? 22.0 : kind === 'whiteDwarf' ? 150.0 : 210.0;
     const spots = kind === 'main' ? THREE.MathUtils.clamp(1.2 - hot * 1.1, 0.15, 1.0) : kind === 'giant' ? 0.5 : 0.0;
 
     // ---- photosphere ---------------------------------------------------------------
@@ -81,29 +82,31 @@ export class Star {
           vec3 qs = q + uSeed;
           vec3 V = normalize(cameraPosition - vWP);
           float mu = clamp(dot(normalize(vN), V), 0.0, 1.0);
-          // --- granulation: two scales of soft convection cells (warped Voronoi), slowly boiling
+          // --- granulation: soft convective domes with diffuse lanes; the eye mostly reads the
+          // mesogranular / supergranular brightness modulation riding on top (SDO / DKIST look)
           vec3 wq = qs * uCell;
-          wq += 0.5 * vec3(snoise(qs * uCell * 0.21 + uTime * 0.015), snoise(qs * uCell * 0.21 + 17.0 - uTime * 0.015), snoise(qs * uCell * 0.21 + 31.0));
+          wq += 0.55 * vec3(snoise(qs * uCell * 0.21 + uTime * 0.015), snoise(qs * uCell * 0.21 + 17.0 - uTime * 0.015), snoise(qs * uCell * 0.21 + 31.0));
           vec3 g1 = gcell(wq + vec3(0.0, 0.0, uTime * 0.03));
           float edge = g1.y - g1.x;
-          float lane = smoothstep(0.0, 0.17 + 0.08 * g1.z, edge);              // soft dark intergranular lanes
-          float dome = 1.0 - smoothstep(0.0, 0.8, g1.x);                      // hot upflow at the cell centre
-          float cellT = 0.8 + 0.3 * g1.z;                                     // per-granule temperature
-          float sub = snoise(wq * 2.3 + uTime * 0.05);                        // exploding-granule texture
-          float gran = lane * cellT * (0.7 + 0.3 * dome) * (0.93 + 0.07 * sub);
-          gran += (1.0 - lane) * 0.16 * (0.5 + 0.5 * snoise(wq * 6.0));      // magnetic bright points in the lanes
-          // fine granulation (half scale) layered under the main pattern breaks the mosaic look
+          float lane = smoothstep(-0.02, 0.35 + 0.15 * g1.z, edge);           // wide, diffuse intergranular lanes
+          float dome = pow(clamp(1.0 - g1.x / 0.8, 0.0, 1.0), 1.5);         // bright hot upflow, falling off radially
+          float cellT = 0.88 + 0.2 * g1.z;                                   // per-granule temperature
+          float sub = snoise(wq * 2.3 + uTime * 0.05);                       // exploding-granule texture
+          float gran = cellT * (0.45 + 0.55 * dome) * mix(0.7, 1.0, lane) * (0.95 + 0.05 * sub);
+          gran += (1.0 - lane) * 0.08 * (0.5 + 0.5 * snoise(wq * 6.0));     // magnetic bright points in the lanes
           vec3 g2 = gcell(wq * 2.1 + 7.0 + vec3(uTime * 0.04));
-          gran *= 0.86 + 0.14 * smoothstep(0.0, 0.3, g2.y - g2.x);
+          gran *= 0.92 + 0.08 * smoothstep(0.0, 0.3, g2.y - g2.x);
           // filter the pattern toward its mean where it gets sub-pixel or foreshortened at the limb
           float fsh = fwidth(wq.x) + fwidth(wq.y) + fwidth(wq.z);
-          gran = mix(gran, 0.72, clamp(smoothstep(0.25, 1.1, fsh) + (1.0 - smoothstep(0.04, 0.35, mu)) * 0.6, 0.0, 1.0));
-          // supergranulation network (bright chromospheric network edges) and gentle large-scale mottling
-          vec2 sg = worley(qs * uCell * 0.12);
-          float net = 1.0 - smoothstep(0.0, 0.18, sg.y - sg.x);
+          gran = mix(gran, 0.66, clamp(smoothstep(0.35, 1.3, fsh) * 0.85 + (1.0 - smoothstep(0.05, 0.4, mu)) * 0.7, 0.0, 1.0));
+          // supergranulation network (bright chromospheric network edges) and large-scale mottling
+          vec3 sq = qs * uCell * 0.1;
+          sq += 0.35 * vec3(snoise(sq * 0.7 + 3.0), snoise(sq * 0.7 + 9.0), snoise(sq * 0.7 + 21.0));
+          vec2 sg = worley(sq);
+          float net = 1.0 - smoothstep(0.0, 0.6, sg.y - sg.x);
           float turb = fbm(qs * 4.0 + vec3(uTime * 0.008), uOct);
-          float meso = fbm(qs * uCell * 0.04 + vec3(uTime * 0.01), 3);
-          float I = (0.62 + 0.5 * gran) * (1.0 + 0.07 * turb + 0.08 * meso) * (1.0 + 0.04 * net * (1.0 - uFilter));
+          float meso = fbm(qs * uCell * 0.035 + vec3(uTime * 0.01), 4);
+          float I = (0.7 + 0.38 * gran) * (1.0 + 0.08 * turb + 0.2 * meso) * (1.0 + 0.035 * net);
           // --- sunspots: umbra, penumbra of radial filaments, plage/faculae around the group
           float umbra = 0.0, pen = 0.0, penI = 1.0, plage = 0.0;
           float spotVis = uSpots * (0.15 + 0.85 * uFilter);
@@ -118,15 +121,21 @@ export class Star {
             vec3 t2 = cross(s4.xyz, t1);
             float az = atan(dot(o, t2), dot(o, t1));
             float fi = float(i) * 13.1;
-            float r = dd * (1.0 + 0.09 * snoise(vec2(cos(az), sin(az)) * 1.3 + fi) + 0.05 * snoise(q * uCell * 0.3));
-            float u = 1.0 - smoothstep(0.36, 0.44, r);
-            float pp = 1.0 - smoothstep(0.86, 1.0, r);
+            vec2 cs = vec2(cos(az), sin(az));
+            float r = dd * (1.0 + 0.25 * fbm(vec3(cs * 1.1, fi), 3) + 0.06 * snoise(q * uCell * 0.3));
+            float ru = dd * (1.0 + 0.3 * fbm(vec3(cs * 1.7, fi + 5.0), 3));
+            float u = 1.0 - smoothstep(0.30, 0.48, ru);
+            // light bridge: a bright granular lane cutting through the umbra
+            vec2 lp = vec2(dot(o, t1), dot(o, t2)) / s4.w;
+            float bridge = exp(-pow((lp.x * 0.8 + lp.y * 0.6 + 0.08 * snoise(lp * 6.0 + fi)) / 0.045, 2.0)) * step(0.5, fract(fi * 0.37 + 0.2));
+            u *= 1.0 - 0.75 * bridge;
+            float pp = 1.0 - smoothstep(0.8, 1.05, r);
             // filaments: fast in azimuth, slow along the radius, with dark cores and bright grains at their heads
-            float fil = 0.5 + 0.5 * snoise(vec2(az * 26.0 / 6.2832 * 6.0, r * 2.2 + fi));
-            fil = mix(fil, 0.5 + 0.5 * snoise(vec2(az * 61.0, r * 4.0 - fi)), 0.4);
+            float fil = 0.5 + 0.5 * snoise(vec2(az * 62.0, r * 2.2 + fi));
+            fil = mix(fil, 0.5 + 0.5 * snoise(vec2(az * 140.0, r * 4.0 - fi)), 0.45);
             float grains = smoothstep(0.42, 0.52, r) * (1.0 - smoothstep(0.52, 0.7, r)) * 0.25;
             umbra = max(umbra, u);
-            if (pp > pen) { pen = pp; penI = mix(0.34, 0.78, fil) + grains; }
+            if (pp > pen) { pen = pp; penI = mix(0.5, 0.78, fil) + grains; }
           }
           umbra *= spotVis; pen *= spotVis; plage *= spotVis;
           float lt = clamp(1.0 - mu, 0.0, 1.0);
@@ -135,7 +144,7 @@ export class Star {
           // close-up chromospheric texture: dark meandering filaments
           float fr = 1.0 - abs(snoise(qs * 5.0 + vec3(0.0, 0.0, uTime * 0.002) + 0.35 * vec3(fbm(qs * 14.0, 3))));
           float filament = pow(clamp(fr, 0.0, 1.0), 9.0) * smoothstep(0.3, 0.7, fbm(qs * 18.0, 3) + 0.5) * smoothstep(-0.2, 0.3, snoise(qs * 2.2 + 9.0)) * (1.0 - smoothstep(0.75, 0.9, abs(lat)));
-          I *= 1.0 - uFilter * 0.18 * filament;
+          I *= 1.0 - uFilter * 0.07 * filament;
           I *= 1.0 + faculae * 0.55 + plage * 0.06;
           I = mix(I, 0.95 * penI, pen);   // penumbra: filaments replace granulation
           I *= mix(1.0, 0.07, umbra);
@@ -144,7 +153,7 @@ export class Star {
           limb *= 0.35 + 0.65 * smoothstep(0.0, 0.25, mu);
           // far view: true stellar colour; close-up: a warm white-light filter — yellow-white granule tops, amber lanes
           vec3 farTone = uColor * mix(vec3(1.0, 0.78, 0.6), vec3(1.0), clamp(I, 0.0, 1.0)) * I;
-          vec3 nearTone = ramp(I * mix(0.8, 1.0, uHot) + 0.03) * pow(max(I, 0.0), 1.7) * 0.55;
+          vec3 nearTone = ramp(I * mix(0.74, 0.95, uHot) * (0.72 + 0.28 * smoothstep(0.0, 0.7, mu)) + 0.03) * pow(max(I, 0.0), 1.7) * 0.55;
           vec3 c = mix(farTone, nearTone, uFilter) * limb * uI;
           c *= mix(vec3(1.0), vec3(1.0, 0.55, 0.3), max(umbra, pen * 0.5) * 0.6);
           gl_FragColor = vec4(c, 1.0);
@@ -195,7 +204,8 @@ export class Star {
           float halo = 0.03 / (1.0 + x * x * 10.0) + 0.1 * exp(-x * 2.2) + 0.035 / (1.0 + x * x * 1.5);   // warm scattered glow: the star reads as a light source, not a disc
           float chromo = exp(-pow((r - 1.004) / 0.011, 2.0)) * (0.8 + 0.4 * st);
           float spicules = smoothstep(0.2, 0.9, snoise(vec2(a * 160.0, uTime * 0.05))) * exp(-x * 60.0) * 0.6;
-          vec3 c = uColor * (inner + outer + halo) * uI + uHalpha * (chromo * 1.3 + spicules * 0.7);
+          float skirt = exp(-x * 22.0) * 0.14 * (0.6 + 0.8 * st);   // diffuse off-limb H-alpha emission the prominences sit in
+          vec3 c = uColor * (inner + outer + halo) * uI + uHalpha * (chromo * 1.3 + spicules * 0.7 + skirt);
           c *= smoothstep(1.0, 0.55, length(vUv));
           gl_FragColor = vec4(c, 1.0);
         }`,
@@ -261,7 +271,7 @@ export class Star {
           float fine = abs(sin(a * 37.0)) * abs(sin(a * 23.0 + 1.3));
           float core = 0.10 / (1.0 + pow(r * 26.0, 2.0)) + 0.012 / (1.0 + r * r * 220.0);
           float rays = fine * exp(-r * 9.0) * 0.06;
-          float ring = exp(-pow((r - 0.55) / 0.018, 2.0)) * 0.006;
+          float ring = 0.0;
           vec3 c = uColor * (core + spikes * 0.12 + rays) + vec3(0.6, 0.8, 1.0) * ring;
           gl_FragColor = vec4(c * uVis * uI * smoothstep(1.0, 0.8, r), 1.0);
         }`,
@@ -298,15 +308,15 @@ export class Star {
 
   _buildLoops(rng, col, hot) {
     const R = this.radius;
-    const hAlpha = new THREE.Color().setRGB(1.0, 0.3 + 0.25 * hot, 0.06 + 0.3 * hot).multiplyScalar(1.4);
-    const mkMat = (color, I, flow) => new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: color }, uI: { value: I }, uK: { value: 1 }, uTime: { value: 0 }, uFlow: { value: flow }, uSeed: { value: rng.range(0, 40) }, uR: { value: 9.0 / this.radius } },
+    const hAlpha = new THREE.Color().setRGB(1.0, 0.26 + 0.12 * hot, 0.26 + 0.18 * hot);   // H-alpha pink-red
+    const mkMat = (color, I, flow, H = 0.12) => new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: color }, uI: { value: I }, uK: { value: 1 }, uTime: { value: 0 }, uFlow: { value: flow }, uSeed: { value: rng.range(0, 40) }, uR: { value: 9.0 / this.radius }, uRad: { value: R }, uH: { value: H } },
       vertexShader: /* glsl */`
         varying vec2 vUv; varying vec3 vN; varying vec3 vWP;
         void main(){ vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
       fragmentShader: /* glsl */`
         ${NOISE_GLSL}
-        uniform vec3 uColor; uniform float uI, uK, uTime, uFlow, uSeed, uR;
+        uniform vec3 uColor; uniform float uI, uK, uTime, uFlow, uSeed, uR, uRad, uH;
         varying vec2 vUv; varying vec3 vN; varying vec3 vWP;
         void main(){
           vec3 V = normalize(cameraPosition - vWP);
@@ -328,10 +338,19 @@ export class Star {
           float ends = smoothstep(0.0, 0.07, vUv.x) * smoothstep(1.0, 0.93, vUv.x);
           // footpoints glow hotter where the plasma drains back into the chromosphere
           float foot = 1.0 + 1.4 * (exp(-vUv.x * 14.0) + exp(-(1.0 - vUv.x) * 14.0));
-          gl_FragColor = vec4(uColor * uI * uK * core * strand * foot * (0.35 + 0.65 * ends), 1.0);
+          // tops dissolve: emission measure falls off with height above the photosphere
+          float hgt = max(length(vWP) / uRad - 1.0, 0.0);
+          float fade = exp(-hgt / uH);
+          gl_FragColor = vec4(uColor * uI * uK * core * strand * foot * fade * (0.35 + 0.65 * ends), 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
     });
+    const geoms = [];
+    const flush = (mat) => {
+      if (!geoms.length) return;
+      const m = new THREE.Mesh(mergeGeometries(geoms.splice(0)), mat); m.frustumCulled = false;
+      this.loops.add(m);
+    };
     const arch = (center, tangent, span, height, thick, mat, twist = 0) => {
       const up = center.clone().normalize();
       const pts = [];
@@ -343,39 +362,47 @@ export class Star {
         pts.push(up.clone().multiplyScalar(R * 0.995 + h).addScaledVector(tangent, along).add(side));
       }
       const curve = new THREE.CatmullRomCurve3(pts);
-      const g = new THREE.TubeGeometry(curve, 48, thick, 8, false);
-      const m = new THREE.Mesh(g, mat); m.frustumCulled = false;
-      this.loops.add(m);
+      geoms.push(new THREE.TubeGeometry(curve, 40, thick, 5, false));
     };
     const randDir = (latMax) => {
       const lat = rng.range(-latMax, latMax), lon = rng.range(0, Math.PI * 2);
       return new THREE.Vector3(Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon));
     };
     const tangentOf = (dir) => new THREE.Vector3(rng.range(-1, 1), rng.range(-0.3, 0.3), rng.range(-1, 1)).cross(dir).normalize();
-    // Quiescent prominences: tall, wispy, H-alpha red. One is placed on the shot limb (+x side).
+    // Quiescent prominences: translucent hedgerows of very fine magnetic threads, H-alpha pink,
+    // much dimmer than the disk. One is placed on the shot limb (+x side).
     const nProm = 5;
     for (let k = 0; k < nProm; k++) {
       const dir = k === 0 ? new THREE.Vector3(0.05, 0.22, -1).normalize() : randDir(0.9);
       const tan = k === 0 ? new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize() : tangentOf(dir);
-      const mat = mkMat(hAlpha, 2.4, 0.25);
+      const mat = mkMat(hAlpha, 0.55, 0.25, 0.1);
       const span = R * rng.range(0.16, 0.3) * (k === 0 ? 1.2 : 1), height = R * rng.range(0.12, 0.26) * (k === 0 ? 1.25 : 1);
       const side = new THREE.Vector3().crossVectors(dir, tan).normalize();
-      for (let s = 0; s < 18; s++) {
-        const off = side.clone().multiplyScalar(R * rng.range(-0.035, 0.035)).addScaledVector(tan, R * rng.range(-0.02, 0.02));
-        arch(dir.clone().multiplyScalar(R).add(off), tan, span * rng.range(0.6, 1.2), height * rng.range(0.45, 1.1), R * (s < 3 ? rng.range(0.012, 0.02) : rng.range(0.003, 0.009)), mat, R * rng.range(-0.06, 0.06));
+      const nThreads = k === 0 ? 90 : 50;
+      for (let s = 0; s < nThreads; s++) {
+        const off = side.clone().multiplyScalar(R * rng.range(-0.03, 0.03)).addScaledVector(tan, R * rng.range(-0.05, 0.05));
+        if (s % 3 === 2) {
+          // hedgerow pillars: short, near-vertical threads hanging between the arches' legs
+          const sp2 = span * rng.range(0.04, 0.12);
+          arch(dir.clone().multiplyScalar(R).add(off).addScaledVector(tan, span * rng.range(-0.35, 0.35)), tan, sp2, height * rng.range(0.3, 0.8), R * rng.range(0.002, 0.005), mat, R * rng.range(-0.01, 0.01));
+        } else {
+          arch(dir.clone().multiplyScalar(R).add(off), tan, span * rng.range(0.6, 1.2), height * rng.range(0.45, 1.1), R * (s < 8 ? rng.range(0.008, 0.014) : rng.range(0.002, 0.006)), mat, R * rng.range(-0.05, 0.05));
+        }
       }
+      flush(mat);
     }
     // Active-region arcades: nested hot loops.
     const hotCol = col.clone().multiply(new THREE.Color(1.0, 0.72, 0.42));
     for (let k = 0; k < 3; k++) {
       const dir = k === 0 ? new THREE.Vector3(-0.15, 0.3, -1).normalize() : randDir(0.5);
       const tan = tangentOf(dir);
-      const mat = mkMat(hotCol, 0.45, 0.6);
+      const mat = mkMat(hotCol, 0.4, 0.6, 0.06);
       const base = R * rng.range(0.05, 0.1);
       for (let s = 0; s < 7; s++) {
         const off = new THREE.Vector3().crossVectors(dir, tan).normalize().multiplyScalar((s - 3) * R * 0.012);
         arch(dir.clone().multiplyScalar(R).add(off), tan, base * (1 + s * 0.05), base * 0.55 * (1 + s * 0.04), R * 0.0025, mat);
       }
+      flush(mat);
     }
   }
 
