@@ -87,7 +87,7 @@ float surf(vec2 xz, float depth, out vec4 o, out vec2 g){
   float seg = smoothstep(0.18, 0.62, nB + 0.25 * sin(ph * 0.5));
   float A = uSurf.x * (0.45 + 0.75 * grp) * (0.35 + 0.65 * seg);
   A *= 0.55 + 0.8 * (1.0 - smoothstep(1.5, 12.0, depth));        // shoaling
-  float db = 1.25 * A + 0.25;                                        // breaks at h ≈ 0.8 · depth
+  float db = 1.4 * A + 0.5;                                        // breaks at h ≈ 0.8 · depth
   float br = smoothstep(db * 1.6, db * 0.75, depth);
   A *= mix(1.0, 0.4, smoothstep(db * 0.7, -0.2, depth));             // bore decays up the beach
   A *= (1.0 - smoothstep(210.0, 360.0, s)) * smoothstep(-5.0, 0.5, s) * m;
@@ -274,8 +274,11 @@ void main(){
   float gust = texture2D(tDetail, vXZ / 1300.0 + vec2(uDetail.w * 0.0011, 0.37)).a * 0.6
              + texture2D(tDetail, (mat2(0.6, -0.8, 0.8, 0.6) * vXZ) / 340.0 + vec2(0.71, uDetail.w * 0.0023)).a * 0.4;
   float gk = smoothstep(0.28, 0.72, gust);
-  float dk = uDetail.z * (0.35 + 0.65 * shoal) * mix(0.45, 1.4, gk);
-  vec2 ds = ((d1.rg * 2.0 - 1.0) * 0.55 + (d2.rg * 2.0 - 1.0) * 0.4) * dk;
+  float dk = uDetail.z * (0.8 + 0.2 * clamp(shoal, 0.0, 1.0)) * mix(0.5, 1.4, gk);
+  // finest capillaries (1.2 m tile) keep the near water crisp
+  vec2 uv0 = (mat2(0.6, -0.8, 0.8, 0.6) * pw) / 1.23 + vec2(uDetail.w * 0.31, -uDetail.w * 0.07);
+  vec2 d0 = (texture2D(tDetail, uv0).rg * 2.0 - 1.0) * (1.0 - smoothstep(0.02, 0.09, foot));
+  vec2 ds = ((d1.rg * 2.0 - 1.0) * 0.55 + (d2.rg * 2.0 - 1.0) * 0.4 + d0 * 0.3) * dk;
   float dfade = smoothstep(0.6, 6.0, foot);
   var += dfade * 0.09 * dk * dk;
   ds *= 1.0 - dfade * 0.85;

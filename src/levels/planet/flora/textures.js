@@ -13,7 +13,7 @@ export const ATLAS_COLS = 4, ATLAS_ROWS = 2;
 /** uv rect of a tile: [u0, v0, u1, v1] (with a half-texel inset). */
 export function tileRect(t) {
   const c = t % ATLAS_COLS, r = Math.floor(t / ATLAS_COLS);
-  const e = 1.5 / 1024;
+  const e = 2 / 2048;
   return [c / ATLAS_COLS + e, 1 - (r + 1) / ATLAS_ROWS + e, (c + 1) / ATLAS_COLS - e, 1 - r / ATLAS_ROWS - e];
 }
 
@@ -153,16 +153,18 @@ let _atlas = null;
 /** Shared foliage atlas (built once per page). */
 export function foliageAtlas() {
   if (_atlas) return _atlas;
-  const S = 256, W = S * ATLAS_COLS, H = S * ATLAS_ROWS;
+  // drawn in 256-unit tile space, rasterised at 2× (512 px tiles) so close
+  // leaves keep crisp, smooth alpha edges
+  const S = 512, D = 256, W = S * ATLAS_COLS, H = S * ATLAS_ROWS;
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   const rng = new Random(9127);
   const draw = [drawBroad, drawNeedles, drawMaple, drawFrond, (c, s, r) => drawBroad(c, s, r, true), drawStrands, drawFern, null];
   for (let t = 0; t < draw.length; t++) {
     const c = t % ATLAS_COLS, r = Math.floor(t / ATLAS_COLS);
-    ctx.save(); ctx.translate(c * S, r * S);
-    ctx.beginPath(); ctx.rect(0, 0, S, S); ctx.clip();
-    if (draw[t]) draw[t](ctx, S, rng); else { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, S, S); }
+    ctx.save(); ctx.translate(c * S, r * S); ctx.scale(S / D, S / D);
+    ctx.beginPath(); ctx.rect(0, 0, D, D); ctx.clip();
+    if (draw[t]) draw[t](ctx, D, rng); else { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, D, D); }
     ctx.restore();
   }
   const img = ctx.getImageData(0, 0, W, H);

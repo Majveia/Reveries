@@ -146,7 +146,7 @@ const BLADE_BODY = /* glsl */ `
   vec3 lean = fwd * (rnd - 0.5) * 1.25 + side * (fl_hash(rnd * 91.3) - 0.5) * 0.45;
   lean += wd * sway;
   vec3 pp = base - uPlayer; float pv = dot(pp, gUp); pp -= gUp * pv; float pd = length(pp);
-  lean += (pp / max(pd, 1e-3)) * smoothstep(1.25, 0.1, pd) * 1.5 * step(abs(pv), 2.5);
+  lean += (pp / max(pd, 1e-3)) * smoothstep(1.6, 0.1, pd) * 1.6 * step(abs(pv), 2.5);
   float L2 = dot(lean, lean); if (L2 > 1.1) { lean *= inversesqrt(L2) * 1.05; L2 = 1.1; }
   float shrink = 1.0 - 0.38 * L2;
 #ifdef FLOWER
@@ -164,7 +164,7 @@ const BLADE_BODY = /* glsl */ `
   vec3 tang = gUp * shrink + lean * 2.0 * t;
 #ifdef FLOWER
   if (part > 0.5) {
-    float hs = uHeadSize * (0.7 + 0.6 * rnd) * vis * min(wk, 2.2);
+    float hs = uHeadSize * (0.55 + 0.9 * rnd * rnd) * vis * min(wk, 2.2);
     vec3 hup = normalize(tang + gUp * 0.6);
     vec3 hs1 = normalize(cross(hup, side)); vec3 hs2 = cross(hs1, hup);
     p += (hs1 * position.x + hs2 * position.z + hup * position.y) * hs;
@@ -192,9 +192,11 @@ const BLADE_BODY = /* glsl */ `
   } else { vGCol = uStemCol * mix(0.45, 1.0, t); vGlow = 0.0; }
   vTrans = 0.6;
 #else
-  float ao = mix(0.5, 1.0, smoothstep(0.0, 0.85, t));
+  // deep root occlusion inside the sward, sunlit tips; per-blade jitter fades
+  // with distance so the far field resolves to the clump colour, not noise
+  float ao = mix(0.24, 1.0, smoothstep(0.0, 0.8, t));
   vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
-  vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * (0.86 + 0.28 * rnd);
+  vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * mix(0.86 + 0.28 * rnd, 1.0, smoothstep(8.0, 35.0, dC));
   // glowing blades come in patches (a few metres across), not as uniform frost
   vec3 gpc = floor((uAnchor + base) * 0.3);
   float gpatch = smoothstep(0.55, 0.85, fract(sin(dot(gpc, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
@@ -289,7 +291,7 @@ export class Grass {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind,
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
-      uR0: { value: this.r0 }, uFar: { value: this.far }, uWidthMax: { value: 3.2 }, uStiff: { value: P.stiff ?? 1 },
+      uR0: { value: this.r0 }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
       uGlow: { value: P.glow || 0 }, uTransK: { value: 0.22 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
     };
     this.mat = makeBladeMaterial(this.U, false);
@@ -388,8 +390,22 @@ export class Grass {
       const nz = this.flora.noiseScale;
       const cellM = (Math.PI * 0.5 * R) / N;
       const slopeK = (G - 1) / cellM;
+      // Voronoi-ish clumps (Tsushima-style): blades gather around clump centres
+      // that share a height, a facing and a tone; a low filler sward between
+      const crng = cellRng(this.seed, 13, face, i, j);
+      const NK = Math.max(4, Math.round((cellM * cellM) / 1.8)), clumps = [];
+      const crad = 0.6 / cellM;
+      for (let k = 0; k < NK; k++) { const a = crng(), b = crng(), hm = crng(), cy = crng(), cv = crng(), cw = crng(); clumps.push([a, b, 0.55 + 1.1 * hm * hm, cy * 6.2832, (cv - 0.5) * 0.24, cw * 2 - 1]); }
       for (let k = 0; k < gen; k++) {
-        const u = rng(), v = rng(), r1 = rng(), r2 = rng(), r3 = rng();
+        let u = rng(), v = rng();
+        const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng(), r5 = rng();
+        let clump = null;
+        if (r4 < 0.72) {
+          clump = clumps[Math.floor(r5 * NK) % NK];
+          const a = u * 6.2832, rr0 = Math.sqrt(v) * crad;
+          u = clump[0] + Math.cos(a) * rr0; v = clump[1] + Math.sin(a) * rr0;
+          u -= Math.floor(u); v -= Math.floor(v);
+        }
         const fu = u * (G - 1), fv = v * (G - 1);
         const iu = Math.min(G - 2, fu | 0), iv = Math.min(G - 2, fv | 0), du = fu - iu, dv = fv - iv;
         const h00 = H[iu * G + iv], h10 = H[(iu + 1) * G + iv], h01 = H[iu * G + iv + 1], h11 = H[(iu + 1) * G + iv + 1];
@@ -431,8 +447,14 @@ export class Grass {
         _c.r *= 1 + 0.16 * n3; _c.b *= 1 - 0.12 * n3;
         let hh = THREE.MathUtils.lerp(P.h[0], P.h[1], r3 * r3) * (0.75 + 0.5 * (n1 * 0.5 + 0.5)) * (0.55 + 0.45 * g) * (0.4 + 0.6 * clr);
         let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2);
+        let yaw = r2 * 6.2832 + u * 31.4;
+        if (clump) {
+          hh *= clump[2]; yaw = clump[3] + (r2 - 0.5) * 1.3;
+          _c.multiplyScalar(1 + clump[4]); _c.r *= 1 + clump[5] * 0.07; _c.b *= 1 - clump[5] * 0.08;
+        } else hh *= 0.62;
+        if (!isReed && r5 < 0.045 && !clump && P.seedHeads !== false) { hh = (P.seedH || 0.85) * (0.8 + 0.6 * r3); ww *= 0.55; _c.lerp(dry, 0.55); } // tall seed stems
         if (isReed) { _c.copy(reed).multiplyScalar(0.8 + r2 * 0.4); hh = 0.9 + r3 * 1.1; ww *= 1.5; }
-        out.push(x - cx, y - cy, z - cz, k / full, r2 * 6.2832 + u * 31.4, hh, ww, packColor(_c));
+        out.push(x - cx, y - cy, z - cz, k / full, yaw, hh, ww, packColor(_c));
       }
       // fallen leaves under the forest canopy
       if (this.Lt) {
@@ -480,7 +502,7 @@ export class Grass {
           if (r1 > g) continue;
           // one colour dominates a patch, a few others sprinkle through it
           const pc = Math.floor((valueNoise3(x * nz.flower * 0.5, y * nz.flower * 0.5, z * nz.flower * 0.5, 53) * 0.5 + 0.5) * fcols.length * 0.999);
-          const col = r3 < 0.78 ? fcols[pc] : fcols[Math.floor(r3 * 4.5 * fcols.length) % fcols.length];
+          const col = r3 < 0.9 ? fcols[pc] : fcols[Math.floor(r3 * 9.5 * fcols.length) % fcols.length];
           _c.copy(col).multiplyScalar(0.8 + 0.35 * r2);
           const hh = THREE.MathUtils.lerp(F.h[0], F.h[1], r2);
           fout.push(x - cx, y - cy, z - cz, k / ffull, r3 * 6.2832, hh, 0.012, packColor(_c));

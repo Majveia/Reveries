@@ -26,8 +26,8 @@ export const TRANS_W = 256, TRANS_H = 64, MS_SIZE = 32, SKY_W = 192, SKY_H = 108
 export const AP_SLICES = 32, AP_RES = 32; // froxel volume: 32×32 screen tiles × 32 depth slices
 
 // Tunables (visual optical depths, vertical, at density 1).
-const TAU_R = 0.46; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
-const TAU_O = 0.035; // ozone (green), scaled by the planet's life
+const TAU_R = 0.40; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
+const TAU_O = 0.05; // ozone (green), scaled by the planet's life
 export const SUN_E0 = 4.6; // sun illuminance at the top of the atmosphere
 
 // ---------------------------------------------------------------------------------
@@ -465,20 +465,24 @@ export class AtmosphereModel {
     this.HR = HR; this.HM = HM;
     this._prof = { HR, HM, topR, topM, normR, normM };
     const density = this.present ? (A.density ?? 1) : 0;
-    const ray = A.rayleigh || [0.18, 0.42, 1.0];
+    const ray0 = A.rayleigh || [0.18, 0.42, 1.0];
+    // mild spectral sharpening: the art weights are perceptual; λ^-4 scattering is more
+    // selective than they read, so the zenith stays saturated (deep blue, deep ochre…)
+    const rmx = Math.max(ray0[0], ray0[1], ray0[2], 1e-3);
+    const ray = ray0.map((v) => rmx * Math.pow(Math.max(v, 0) / rmx, 1.3));
     const u = this.uniforms;
     u.uBetaR.value.set(ray[0], ray[1], ray[2]).multiplyScalar(TAU_R * density / colR);
     // Mie: aerosols, haze. mieColor is the single-scattering albedo tint.
     const haze = A.haze ?? 0.3, mie = A.mie ?? 0.4;
     const w = this.weather;
     // clamp the aerosol column: a dusty sky keeps a readable sun disc and a darker zenith
-    const tauM = Math.min((mie * (0.045 + 0.3 * haze) + w.dust * 0.35 + w.overcast * 0.08) * density, 0.6);
+    const tauM = Math.min((mie * (0.025 + 0.16 * haze) + w.dust * 0.3 + w.overcast * 0.08) * density, 0.55);
     const mc = new THREE.Color(A.mieColor || '#ffffff');
     const mx = Math.max(mc.r, mc.g, mc.b, 1e-3);
     const ms = tauM / colM;
     u.uBetaMs.value.set(mc.r / mx, mc.g / mx, mc.b / mx).multiplyScalar(ms * 0.92);
     u.uBetaMe.value.set(ms, ms, ms);
-    u.uMieG.value = THREE.MathUtils.clamp(0.82 - 0.1 * haze - 0.1 * w.dust, 0.55, 0.85);
+    u.uMieG.value = THREE.MathUtils.clamp(0.83 - 0.06 * haze - 0.04 * w.dust, 0.74, 0.86); // dust keeps a bright aureole
     // Ozone (only where there is life to make it).
     const life = THREE.MathUtils.clamp(this.planet.life ?? 0.4, 0, 1);
     const oc = 0.45 * T, ow = 0.25 * T;

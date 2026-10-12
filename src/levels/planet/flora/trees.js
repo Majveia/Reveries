@@ -12,7 +12,10 @@ import { Random, seedFrom } from '../../../core/Random.js';
 const CELL = 128;
 const T_COVER = (T) => T.cover ?? 0;
 const TIER_FRAC = [1, 0.5, 0.22];
-const TIER_SCALE = [1, 1.18, 1.5];
+const TIER_D = [620, 1250];
+// continuous thinning with distance (never below what the cell tier generated),
+// survivors grow a little so forests keep their coverage
+const thinAt = (d) => (d < 300 ? 1 : d < TIER_D[0] ? 1 - 0.5 * (d - 300) / (TIER_D[0] - 300) : d < TIER_D[1] ? 0.5 - 0.28 * (d - TIER_D[0]) / (TIER_D[1] - TIER_D[0]) : 0.22);
 const _dir = [0, 0, 0];
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vector3();
 const _c = new THREE.Color();
@@ -36,6 +39,14 @@ const WIND_APPLY = /* glsl */ `
   transformed += inverse(mat3(modelMatrix * flIM)) * flOff;
 `;
 
+// mesh side of the mesh ↔ impostor dithered crossfade (instanced trees only)
+const FADE_V = /* glsl */ `
+#ifdef USE_INSTANCING
+  vLFade = smoothstep(uFade.x, uFade.y, length(flBase - cameraPosition));
+#else
+  vLFade = 0.0;
+#endif
+`;
 const BARK_FRAG = /* glsl */ `
 float fl_vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float a = fl_h(i), b = fl_h(i + vec2(1.0, 0.0)), c = fl_h(i + vec2(0.0, 1.0)), d = fl_h(i + vec2(1.0, 1.0));
@@ -45,11 +56,12 @@ float fl_vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
 function barkMaterial(U, depth = false) {
   const mat = depth ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
-    sh.vertexShader = 'attribute vec3 aWind;\nvarying vec2 vBUv;\nvarying float vBGlow;\n' + WIND_GLSL + sh.vertexShader
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_APPLY + '\nvBUv = uv; vBGlow = aWind.z;');
+    sh.vertexShader = 'attribute vec3 aWind;\nvarying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nuniform vec2 uFade;\n' + WIND_GLSL + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_APPLY + FADE_V + '\nvBUv = uv; vBGlow = aWind.z;');
     if (depth) return;
-    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + BARK_FRAG + sh.fragmentShader
+    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + IGN_GLSL + BARK_FRAG + sh.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
+  if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
   // bark furrows, faded to their mean where they would alias (no shimmering streaks)
   float flFw = fwidth(vBUv.x * 9.0) + fwidth(vBUv.y * 2.7);
   float flAA = 1.0 - smoothstep(0.35, 1.2, flFw);
@@ -67,84 +79,146 @@ function leafMaterial(U, map, depth = false) {
     ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.42 })
     : new THREE.MeshStandardMaterial({ vertexColors: true, map, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
-    sh.vertexShader = 'attribute vec3 aWind;\nvarying float vLGlow;\nvarying float vLBack;\n' + WIND_GLSL + sh.vertexShader
+    sh.vertexShader = 'attribute vec3 aWind;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nuniform vec2 uFade;\n' + WIND_GLSL + sh.vertexShader
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 ${WIND_APPLY}
+${FADE_V}
   vLGlow = aWind.z;
   vec3 flWP = (modelMatrix * flIM * vec4(transformed, 1.0)).xyz;
-  vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 4.0);`);
+  vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 2.5);`);
     if (depth) return;
-    sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
+    sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nuniform vec3 uKeyColor;\nuniform vec3 uKeyDir;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + IGN_GLSL + sh.fragmentShader
       .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
+  if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
   // dissolve foliage cards that come within ~2.5 m of the lens (dithered, no pop)
   float flNear = smoothstep(0.45, 1.7, length(vViewPosition));
   if (flNear < 1.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > flNear) discard;`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
-      .replace('#include <opaque_fragment>', `// backlit translucency: sun shining through the crown, warmer and more saturated
-  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.95 * vLBack) * 0.42;
+      .replace('#include <opaque_fragment>', `// warm sunlit rims, cool blue-green shade side (depth inside the crown)
+  float flNdl = dot(normal, normalize((viewMatrix * vec4(uKeyDir, 0.0)).xyz));
+  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), smoothstep(-0.35, 0.65, flNdl));
+  // backlit translucency: sun shining through the crown, warmer and more saturated
+  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.95 * vLBack) * 0.6;
   // bioluminescence follows the leaf texture (veins, bright leaflets, strand
   // beads) instead of flooding whole cards: luminance-keyed mask with falloff
   vec3 flTx = texture2D(map, vMapUv).rgb;
   float flL = clamp(dot(flTx, vec3(0.333)), 0.0, 1.0);
   // whole leaf softly lit from within, veins and leaflets brighter (no salt-and-pepper speckle)
   float flGM = 0.28 + 1.25 * smoothstep(0.5, 0.95, flL);
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.72) * vLGlow * flGM * (0.05 + 2.6 * uNight);
+  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.72) * vLGlow * flGM * (0.05 + 3.6 * uNight);
 #include <opaque_fragment>`);
   }, depth ? 'flora-leaf-depth' : 'flora-leaf');
 }
 
 // --- impostors ----------------------------------------------------------------
+// Multi-view relit impostors: every tree variant is baked from 8 azimuths × 3
+// elevations into an albedo atlas (sqrt-encoded, AO baked from vertex colours)
+// and a normal atlas (tree-local normals + bioluminescence mask in alpha). At
+// run time the 4 nearest views are blended and relit with the real sun, sky,
+// shadows and translucency, so distant forests keep their volume from every
+// side and glow with soft HDR gradients at night. A dithered crossfade hides
+// the mesh ↔ impostor switch.
+const IMP_AZ = 8, IMP_EL = 3, IMP_ELSTEP = 0.6109; // 0°, 35°, 70°
+const IGN_GLSL = /* glsl */ `float fl_ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+`;
 const IMP_VERT = /* glsl */ `
 attribute vec3 iPos;   // base, relative to anchor
-attribute vec4 iDat;   // size, yOffset, tile, glow
+attribute vec4 iC;     // crown centre in tree-local metres (scaled), radius
+attribute vec3 iX;     // tree-local +X in world space
+attribute vec4 iDat;   // variant, glow, fade-in start, -
 attribute vec3 iCol;
 uniform vec3 uCam;
-uniform float uTiles;
+uniform vec2 uFade;
 varying vec3 vICol;
+varying vec2 vIUv;
+flat varying vec4 vIF;   // az0, az1, el0, el1
+flat varying vec3 vIW;   // az weight, el weight, variant
 varying float vIGlow;
 varying float vIBack;
+varying float vIFade;
+varying vec3 vIX;
+varying vec3 vIUp;
 ${WIND_GLSL}
 `;
 const IMP_BODY = /* glsl */ `
   vec3 iUp = normalize(uAnchor + iPos);
-  vec3 iTc = uCam - iPos; iTc -= iUp * dot(iTc, iUp); iTc = normalize(iTc + vec3(1e-4));
-  vec3 iRight = normalize(cross(iUp, iTc));
-  float iSw = sin(uTime * 0.8 + iPos.x * 0.05 + iPos.z * 0.04) * 0.012 * uWind.w * position.y * iDat.x;
-  vec3 p = iPos + iRight * (position.x * iDat.x + iSw) + iUp * (position.y * iDat.x + iDat.y);
-  vec3 objectNormal = normalize(iRight * position.x * 1.3 + iUp * (position.y - 0.45) * 0.9 + iTc * 0.8);
-  vICol = iCol; vIGlow = iDat.w;
-  vIBack = pow(max(dot(normalize(p - uCam), uKeyDir), 0.0), 4.0);
+  vec3 iXa = normalize(iX - iUp * dot(iX, iUp));
+  vec3 iZa = cross(iXa, iUp);
+  vec3 iCtr = iPos + iXa * iC.x + iUp * iC.y + iZa * iC.z;
+  vec3 iTo = uCam - iCtr; float iDist = length(iTo); vec3 iVd = iTo / max(iDist, 1e-3);
+  float iLy = clamp(dot(iVd, iUp), 0.0, 0.985);
+  float iAz = atan(dot(iVd, iZa), dot(iVd, iXa));
+  float iFa = fract(iAz / 6.2831853 + 1.0) * ${IMP_AZ.toFixed(1)};
+  float iA0 = floor(iFa); float iWa = iFa - iA0; iA0 = mod(iA0, ${IMP_AZ.toFixed(1)}); float iA1 = mod(iA0 + 1.0, ${IMP_AZ.toFixed(1)});
+  float iFe = clamp(asin(iLy) / ${IMP_ELSTEP}, 0.0, ${(IMP_EL - 1).toFixed(1)});
+  float iE0 = min(floor(iFe), ${(IMP_EL - 2).toFixed(1)}); float iWe = iFe - iE0;
+  vec3 iBR = normalize(cross(iUp, iVd) + iXa * 1e-4);
+  vec3 iBU = cross(iVd, iBR);
+  // gentle crown sway, stronger toward the top of the billboard
+  float iSw = sin(uTime * 0.8 + iPos.x * 0.05 + iPos.z * 0.04) * 0.01 * uWind.w * (position.y + 1.0) * iC.w;
+  vec3 p = iCtr + iBR * (position.x * iC.w + iSw) + iBU * position.y * iC.w;
+  vec3 objectNormal = iVd;
+  vICol = iCol; vIGlow = iDat.y;
+  vIUv = position.xy * 0.5 + 0.5;
+  vIF = vec4(iA0, iA1, iE0, iE0 + 1.0); vIW = vec3(iWa, iWe, iDat.x);
+  vIX = iXa; vIUp = iUp;
+  vIBack = pow(max(dot(-iVd, uKeyDir), 0.0), 2.5);
+  vIFade = smoothstep(uFade.x, uFade.y, iDist);
 `;
-function impostorMaterial(U, tex) {
-  const mat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.38, side: THREE.DoubleSide, roughness: 0.7, metalness: 0 });
+function impostorMaterial(U, alb, nrm) {
+  const mat = new THREE.MeshStandardMaterial({ alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.78, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
     sh.vertexShader = IMP_VERT + sh.vertexShader
       .replace('#include <beginnormal_vertex>', IMP_BODY)
-      .replace('#include <begin_vertex>', `vec3 transformed = p;
-  float iT = iDat.z; float iC = mod(iT, uTiles); float iR = floor(iT / uTiles);
-  vMapUv = (vec2(iC, iR) + vec2(position.x + 0.5, position.y) * 0.985 + 0.0075) / uTiles;`);
-    sh.fragmentShader = 'varying vec3 vICol;\nvarying float vIGlow;\nvarying float vIBack;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + sh.fragmentShader
-      .replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vICol;')
-      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
-      .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * uKeyColor * (0.05 + 0.5 * vIBack) * 0.3;
-  // distant glowing forests shimmer softly (keyed to the brighter texels), never a flat cyan wash
-  float iGM = 0.55 + 0.45 * clamp(dot(diffuseColor.rgb, vec3(0.333)) * 5.0, 0.0, 1.0);
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.6) * vIGlow * iGM * 0.9 * (0.03 + 2.0 * uNight);
+      .replace('#include <begin_vertex>', 'vec3 transformed = p;');
+    sh.fragmentShader = `uniform sampler2D uImpAlb; uniform sampler2D uImpNrm; uniform vec3 uImpGrid;
+varying vec3 vICol; varying vec2 vIUv; flat varying vec4 vIF; flat varying vec3 vIW;
+varying float vIGlow; varying float vIBack; varying float vIFade; varying vec3 vIX; varying vec3 vIUp;
+uniform vec3 uKeyColor; uniform vec3 uKeyDir; uniform float uNight; uniform vec3 uGlowCol;
+${IGN_GLSL}
+vec2 fl_impUV(float a, float e) {
+  float v = floor(vIW.z + 0.5); float bx = mod(v, uImpGrid.x), by = floor(v / uImpGrid.x + 1e-3);
+  return (vec2(bx * ${IMP_AZ.toFixed(1)} + a, by * ${IMP_EL.toFixed(1)} + e) + clamp(vIUv, 0.004, 0.996)) / uImpGrid.yz;
+}
+` + sh.fragmentShader
+      .replace('#include <map_fragment>', `
+  vec2 iu00 = fl_impUV(vIF.x, vIF.z), iu10 = fl_impUV(vIF.y, vIF.z), iu01 = fl_impUV(vIF.x, vIF.w), iu11 = fl_impUV(vIF.y, vIF.w);
+  vec4 iAlb = mix(mix(texture2D(uImpAlb, iu00), texture2D(uImpAlb, iu10), vIW.x), mix(texture2D(uImpAlb, iu01), texture2D(uImpAlb, iu11), vIW.x), vIW.y);
+  vec4 iNrm = mix(mix(texture2D(uImpNrm, iu00), texture2D(uImpNrm, iu10), vIW.x), mix(texture2D(uImpNrm, iu01), texture2D(uImpNrm, iu11), vIW.x), vIW.y);
+  if (fl_ign(gl_FragCoord.xy) >= vIFade) discard;   // complementary to the mesh dither
+  diffuseColor.rgb *= iAlb.rgb * iAlb.rgb * vICol;
+  diffuseColor.a = iAlb.a;`)
+      .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+  vec3 iNl = iNrm.xyz * 2.0 - 1.0;
+  normal = normalize((viewMatrix * vec4(vIX * iNl.x + vIUp * iNl.y + cross(vIX, vIUp) * iNl.z, 0.0)).xyz);`)
+      .replace('#include <opaque_fragment>', `
+  // warm sunlit rims, cool shade side, light through the crown
+  float iNdl = dot(normal, normalize((viewMatrix * vec4(uKeyDir, 0.0)).xyz));
+  outgoingLight *= mix(vec3(0.86, 0.95, 1.08), vec3(1.06, 1.0, 0.9), smoothstep(-0.3, 0.6, iNdl));
+  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.6 * vIBack) * 0.45;
+  // bioluminescence: soft baked mask (veins, leaflets, strands), HDR so it blooms
+  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vIGlow * iNrm.a * 2.0 * (0.03 + 3.2 * uNight);
 #include <opaque_fragment>`);
-  }, 'flora-impostor');
+  }, 'flora-impostor-oct');
 }
 
 const BAKE_VERT = /* glsl */ `
 attribute vec3 color;
-varying vec3 vC; varying vec2 vU;
-void main() { vC = color; vU = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+attribute vec3 aWind;
+varying vec3 vC; varying vec2 vU; varying vec3 vN; varying float vG;
+void main() { vC = color; vU = uv; vN = normal; vG = aWind.z; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const BAKE_FRAG = /* glsl */ `
 uniform sampler2D map; uniform float uLeaf;
-varying vec3 vC; varying vec2 vU;
+varying vec3 vC; varying vec2 vU; varying vec3 vN; varying float vG;
+layout(location = 0) out highp vec4 gAlb;
+layout(location = 1) out highp vec4 gNrm;
 void main() {
-  vec4 t = uLeaf > 0.5 ? texture2D(map, vU) : vec4(1.0);
-  if (t.a < 0.42) discard;
-  gl_FragColor = vec4(t.rgb * vC, 1.0);
+  vec4 t = uLeaf > 0.5 ? texture(map, vU) : vec4(1.0);
+  if (t.a < 0.5) discard;
+  gAlb = vec4(sqrt(clamp(t.rgb * vC, 0.0, 1.0)), 1.0);
+  float lum = dot(t.rgb, vec3(0.333));
+  float gm = uLeaf > 0.5 ? 0.28 + 1.25 * smoothstep(0.5, 0.95, lum) : 0.35;
+  gNrm = vec4(normalize(vN) * 0.5 + 0.5, clamp(vG * gm * 0.5, 0.0, 1.0));
 }`;
 
 export class Trees {
@@ -165,6 +239,7 @@ export class Trees {
     const U = {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind, uGlowCol: { value: new THREE.Color(T.glowCol || '#7fe6ff') },
+      uFade: { value: new THREE.Vector2(this.meshRange - 22, this.meshRange + 22) },
     };
     this.U = U;
     this.barkMat = barkMaterial(U); this.barkDepth = barkMaterial(U, true);
@@ -212,13 +287,13 @@ export class Trees {
     this._bakeImpostors();
     // impostor instancing
     const ig = new THREE.InstancedBufferGeometry();
-    ig.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3));
+    ig.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
     ig.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
     ig.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
     ig.setIndex([0, 1, 2, 0, 2, 3]);
     this.impGeo = ig; this._impCap = 0; this._growImp(4096);
-    this.IU = { ...U, uCam: fl.uniforms.uCam, uTiles: { value: this.tiles } };
-    this.impMat = impostorMaterial(this.IU, this.impRT.texture);
+    this.IU = { ...U, uCam: fl.uniforms.uCam, uImpGrid: { value: this.impGrid }, uImpAlb: { value: this.impRT.textures[0] }, uImpNrm: { value: this.impRT.textures[1] } };
+    this.impMat = impostorMaterial(this.IU);
     this.impMesh = new THREE.Mesh(ig, this.impMat);
     this.impMesh.frustumCulled = false; this.impMesh.receiveShadow = true; this.impMesh.castShadow = false;
     fl.group.add(this.impMesh);
@@ -226,7 +301,7 @@ export class Trees {
     this.colliders = new Map();
     this.layer = new CellLayer({
       R: this.R, cellSize: CELL, radius: this.farRange, moveThresh: 12, cacheMax: 900,
-      tierOf: (dmin) => (dmin > this.farRange ? -1 : dmin < this.meshRange + 260 ? 0 : dmin < 1100 ? 1 : 2),
+      tierOf: (dmin) => (dmin > this.farRange ? -1 : dmin < TIER_D[0] ? 0 : dmin < TIER_D[1] ? 1 : 2),
       covers: (c, tier) => c.data && c.data.tier <= tier,
       build: (c, tier) => this._build(c, tier),
     });
@@ -264,54 +339,67 @@ export class Trees {
   _growImp(cap) {
     const g = this.impGeo;
     const mk = (n, s) => { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * s), s); a.setUsage(THREE.DynamicDrawUsage); return a; };
-    g.setAttribute('iPos', mk(cap, 3)); g.setAttribute('iDat', mk(cap, 4)); g.setAttribute('iCol', mk(cap, 3));
+    g.setAttribute('iPos', mk(cap, 3)); g.setAttribute('iC', mk(cap, 4)); g.setAttribute('iX', mk(cap, 3)); g.setAttribute('iDat', mk(cap, 4)); g.setAttribute('iCol', mk(cap, 3));
     g._maxInstanceCount = undefined; // re-derive the instance cap from the new buffers
     this._impCap = cap;
   }
 
-  // Render each variant from the side into an atlas tile (albedo + baked canopy AO).
+  // Bake every tree variant from IMP_AZ × IMP_EL views (MRT: albedo, normal+glow).
   _bakeImpostors() {
-    const n = Math.max(1, this.variants.length);
-    const tiles = Math.ceil(Math.sqrt(n));
-    this.tiles = tiles;
-    const TS = this.flora.engine.quality.pick(128, 192, 256, 256);
-    const size = tiles * TS;
-    const rt = new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true });
+    const vars = this.variants.filter((v) => !v.under);
+    vars.forEach((v, k) => (v.impIndex = k));
+    const n = Math.max(1, vars.length);
+    const TS = this.flora.engine.quality.pick(64, 96, 128, 128);
+    const bpr = Math.max(1, Math.round(Math.sqrt(n * IMP_EL / IMP_AZ)));
+    const nby = Math.ceil(n / bpr);
+    const cols = bpr * IMP_AZ, rows = nby * IMP_EL;
+    this.impGrid = new THREE.Vector3(bpr, cols, rows);
+    const rt = new THREE.WebGLRenderTarget(cols * TS, rows * TS, { count: 2, type: THREE.UnsignedByteType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true });
+    for (const t of rt.textures) { t.anisotropy = 4; }
     this.impRT = rt;
     const renderer = this.flora.engine.renderer;
     const scene = new THREE.Scene();
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
-    const barkM = new THREE.ShaderMaterial({ vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, uniforms: { map: { value: this.atlas }, uLeaf: { value: 0 } } });
-    const leafM = new THREE.ShaderMaterial({ vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, uniforms: { map: { value: this.atlas }, uLeaf: { value: 1 } }, side: THREE.DoubleSide });
+    const mk = (leaf) => new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, uniforms: { map: { value: this.atlas }, uLeaf: { value: leaf } }, side: THREE.DoubleSide });
+    const barkM = mk(0), leafM = mk(1);
     const prevRT = renderer.getRenderTarget();
     const prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
     const prevAuto = renderer.autoClear;
     renderer.autoClear = false;
-    renderer.setRenderTarget(rt);
+    renderer.setRenderTarget(rt); // allocates storage with mip levels
+    for (const t of rt.textures) t.generateMipmaps = false; // build mips once at the end
     renderer.setClearColor(0x000000, 0); renderer.clear(true, true, true);
-    for (const v of this.variants) {
-      const box = new THREE.Box3();
+    const sph = new THREE.Sphere(), box = new THREE.Box3(), _d = new THREE.Vector3();
+    for (const v of vars) {
+      box.makeEmpty();
       if (v.bark) { v.bark.computeBoundingBox(); box.union(v.bark.boundingBox); }
       if (v.leaves) { v.leaves.computeBoundingBox(); box.union(v.leaves.boundingBox); }
-      const h = box.max.y - Math.max(box.min.y, -0.5), wdt = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
-      const s = Math.max(h, wdt) * 1.04;
-      v.impSize = s; v.impY = Math.max(box.min.y, -0.5);
-      const cx = (box.max.x + box.min.x) * 0.5, cz = (box.max.z + box.min.z) * 0.5;
-      cam.left = -s / 2; cam.right = s / 2; cam.bottom = 0; cam.top = s;
-      cam.position.set(cx, v.impY, cz + 500); cam.lookAt(cx, v.impY, cz); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
-      const col = v.index % tiles, row = Math.floor(v.index / tiles);
-      rt.viewport.set(col * TS, row * TS, TS, TS); rt.scissor.set(col * TS, row * TS, TS, TS); rt.scissorTest = true;
+      box.min.y = Math.max(box.min.y, -0.4);
+      box.getBoundingSphere(sph);
+      const r = sph.radius * 1.02;
+      v.impC = sph.center.clone(); v.impR = r;
+      cam.left = -r; cam.right = r; cam.bottom = -r; cam.top = r; cam.near = 1; cam.far = 2 * r + 100; cam.updateProjectionMatrix();
       // dilated clear colour: the plant's mean foliage tone at zero alpha
       const lc = v.leaves ? v.leaves.getAttribute('color') : v.bark.getAttribute('color');
-      let r = 0, g = 0, b = 0; const cnt = lc.count; for (let k = 0; k < cnt; k += 7) { r += lc.getX(k); g += lc.getY(k); b += lc.getZ(k); } const nn = Math.ceil(cnt / 7);
-      renderer.setRenderTarget(rt);
-      renderer.setClearColor(new THREE.Color(r / nn * 0.8, g / nn * 0.8, b / nn * 0.8), 0); renderer.clear(true, true, true);
+      let cr = 0, cg = 0, cb = 0; const cnt = lc.count; for (let k = 0; k < cnt; k += 7) { cr += lc.getX(k); cg += lc.getY(k); cb += lc.getZ(k); } const nn = Math.ceil(cnt / 7);
       scene.clear();
       if (v.bark) scene.add(new THREE.Mesh(v.bark, barkM));
       if (v.leaves) scene.add(new THREE.Mesh(v.leaves, leafM));
-      renderer.render(scene, cam);
+      const bx = v.impIndex % bpr, by = Math.floor(v.impIndex / bpr);
+      for (let e = 0; e < IMP_EL; e++) for (let a = 0; a < IMP_AZ; a++) {
+        const el = e * IMP_ELSTEP, az = (a / IMP_AZ) * Math.PI * 2;
+        _d.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
+        cam.position.copy(sph.center).addScaledVector(_d, r + 50); cam.up.set(0, 1, 0); cam.lookAt(sph.center); cam.updateMatrixWorld();
+        const x = (bx * IMP_AZ + a) * TS, y = (by * IMP_EL + e) * TS;
+        rt.viewport.set(x, y, TS, TS); rt.scissor.set(x, y, TS, TS); rt.scissorTest = true;
+        renderer.setRenderTarget(rt);
+        renderer.setClearColor(new THREE.Color(Math.sqrt(cr / nn * 0.8), Math.sqrt(cg / nn * 0.8), Math.sqrt(cb / nn * 0.8)), 0); renderer.clear(true, true, true);
+        renderer.render(scene, cam);
+      }
     }
-    rt.scissorTest = false; rt.viewport.set(0, 0, size, size); rt.scissor.set(0, 0, size, size);
+    rt.scissorTest = false; rt.viewport.set(0, 0, rt.width, rt.height); rt.scissor.set(0, 0, rt.width, rt.height);
+    for (const t of rt.textures) t.generateMipmaps = true;
+    scene.clear(); renderer.setRenderTarget(rt); renderer.render(scene, cam); // one mip build for both atlases
     renderer.setRenderTarget(prevRT);
     renderer.setClearColor(prevClear, prevAlpha);
     renderer.autoClear = prevAuto;
@@ -428,17 +516,20 @@ export class Trees {
     const anchor = this.flora.anchor;
     for (const v of this.variants) v.list.length = 0;
     const imp = [];
-    const mr2 = this.meshRange * this.meshRange;
+    const mLo = this.U.uFade.value.x, mHi = this.U.uFade.value.y, mLo2 = mLo * mLo, mHi2 = mHi * mHi;
     const wantCol = new Set();
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
-      const frac = TIER_FRAC[c.tier], fs = TIER_SCALE[c.tier];
+      const frac = TIER_FRAC[c.data.tier];
       for (const t of c.data.trees) {
         if (t.rank >= frac) continue;
         const dx = t.x - cam.x, dy = t.y - cam.y, dz = t.z - cam.z;
         const d2 = dx * dx + dy * dy + dz * dz;
-        t.fs = d2 < 900 * 900 ? 1 : fs; // only far impostors grow
-        if (d2 < mr2) t.v.list.push(t); else imp.push(t);
+        const fd = d2 < 90000 ? 1 : thinAt(Math.sqrt(d2));
+        if (t.rank >= fd) continue;
+        t.fs = 1 + 0.42 * (1 - fd) / 0.78; // thinned forests: survivors grow
+        if (d2 < mHi2) t.v.list.push(t);
+        if (d2 > mLo2) imp.push(t);
         if (player) {
           const px = t.x - player.x, py = t.y - player.y, pz = t.z - player.z;
           if (px * px + py * py + pz * pz < this.colRange * this.colRange && t.v.trunkR > 0.08) wantCol.add(t);
@@ -487,17 +578,22 @@ export class Trees {
     // impostors
     if (imp.length > this._impCap) this._growImp(Math.ceil(imp.length * 1.4));
     const g = this.impGeo, P = g.getAttribute('iPos').array, D = g.getAttribute('iDat').array, C = g.getAttribute('iCol').array;
+    const IC = g.getAttribute('iC').array, IX = g.getAttribute('iX').array;
     for (let k = 0; k < imp.length; k++) {
       const t = imp[k], v = t.v;
       P[k * 3] = t.x - anchor.x; P[k * 3 + 1] = t.y - anchor.y; P[k * 3 + 2] = t.z - anchor.z;
       const ts = t.scale * (t.fs || 1);
-      D[k * 4] = v.impSize * ts; D[k * 4 + 1] = v.impY * ts; D[k * 4 + 2] = v.index; D[k * 4 + 3] = v.glow;
-      const tv = (t.tint - 0.5);
-      _c.setRGB(1 + tv * 0.16, 1 + tv * 0.1, 1 - tv * 0.12);
+      IC[k * 4] = v.impC.x * ts; IC[k * 4 + 1] = v.impC.y * ts; IC[k * 4 + 2] = v.impC.z * ts; IC[k * 4 + 3] = v.impR * ts;
+      // the instance's local +X (same frame as the mesh instance matrix)
+      _v.set(t.nx, t.ny, t.nz); _q.setFromUnitVectors(Y, _v); _q2.setFromAxisAngle(Y, t.yaw); _q.multiply(_q2);
+      _v2.set(1, 0, 0).applyQuaternion(_q); IX[k * 3] = _v2.x; IX[k * 3 + 1] = _v2.y; IX[k * 3 + 2] = _v2.z;
+      D[k * 4] = v.impIndex; D[k * 4 + 1] = v.glow; D[k * 4 + 2] = 0; D[k * 4 + 3] = 0;
+      const tv = (t.tint - 0.5), tv2 = ((t.tint * 13.7) % 1) - 0.5;
+      _c.setRGB(1 + tv * 0.2 + tv2 * 0.1, 1 + tv * 0.12 + tv2 * 0.1, 1 - tv * 0.14 + tv2 * 0.08);
       if (t.sp.tints) _c.multiply(t.sp.tints[Math.floor(t.tint * t.sp.tints.length) % t.sp.tints.length]);
       C[k * 3] = _c.r; C[k * 3 + 1] = _c.g; C[k * 3 + 2] = _c.b;
     }
-    for (const nm of ['iPos', 'iDat', 'iCol']) g.getAttribute(nm).needsUpdate = true;
+    for (const nm of ['iPos', 'iC', 'iX', 'iDat', 'iCol']) g.getAttribute(nm).needsUpdate = true;
     g.instanceCount = imp.length;
     // trunk colliders around the player
     const w = this.world;

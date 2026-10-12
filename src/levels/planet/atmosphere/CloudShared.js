@@ -181,10 +181,13 @@ vec4 cTex3D(highp sampler3D t, vec3 q, float S){
   vec4 c011 = texture(t, vec3(a.x, b.y, b.z)), c111 = texture(t, vec3(b.x, b.y, b.z));
   return mix(mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y), mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y), f.z);
 }
-float cloudHeightProfile(float h, float type){
-  float bottom = smoothstep(0.0, mix(0.06, 0.12, type), h);
-  float topH = mix(0.32, 1.0, type);
-  float top = 1.0 - smoothstep(topH * 0.55, topH, h);
+// Height gradient per cloud type: flat cumulus bases, domed tops that rise with the
+// local coverage (cell centres tower, edges stay low → rounded cauliflower families),
+// stratus as a thin slab, cumulonimbus filling the shell with an anvil spread.
+float cloudHeightProfile(float h, float type, float cov){
+  float bottom = smoothstep(0.0, mix(0.035, 0.09, type), h);
+  float topH = mix(0.28, 1.0, type) * mix(0.45, 1.0, smoothstep(0.15, 0.85, cov));
+  float top = 1.0 - smoothstep(topH * 0.5, topH, h);
   return bottom * top;
 }
 // lod: 0 = full detail, 1 = shape only
@@ -192,28 +195,31 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   float r = length(P);
   float h = (r - uCloudBase) / (uCloudTop - uCloudBase);
   if (h <= 0.0 || h >= 1.0 || wx.r < 0.02) return 0.0;
-  float prof = cloudHeightProfile(h, wx.g);
-  if (prof <= 0.0) return 0.0;
-  // the volume never drops its shape noise (a 2D-coverage × profile field extrudes into vertical walls)
   vec3 q = P * uCloudShapeScale + uCloudWind;
   vec4 n = cTex3D(tCloudShape, q, uCloud3DInfo.x);
+  // kilometre-scale cumulus families: low Worley octave carves the smooth weather coverage into cells
+  float cell = smoothstep(0.2, 0.8, n.g * 0.75 + n.b * 0.25);
+  float cov = clamp(smoothstep(0.0, 1.0, wx.r) * (0.5 + 0.8 * cell), 0.0, 1.0);
+  // anvil spread at the top of tall clouds
+  cov = min(cov * mix(1.0, 1.0 + 0.5 * smoothstep(0.65, 1.0, h), wx.g * wx.g), 1.0);
+  float prof = cloudHeightProfile(h, wx.g, cov);
+  if (prof <= 0.0) return 0.0;
+  // Nubis remap chain: Perlin-Worley dilated by the Worley fBm, shaped by the height
+  // gradient, then cut by coverage (and scaled by it so thin cover stays thin)
   float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
-  float base = cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * prof;
-  // anvil-ish spread at the top of tall clouds; coverage threshold softened so cells are rounded families
-  float cov = smoothstep(0.0, 1.0, wx.r) * mix(1.0, 1.0 + 0.6 * smoothstep(0.6, 1.0, h), wx.g);
-  // kilometre-scale cumulus families: Worley cells (1.75 km / 0.9 km) modulate the
-  // smooth coverage, so cloud outlines come from filtered 3D noise, not weather texels
-  cov = clamp(cov * (0.55 + 0.75 * smoothstep(0.25, 0.85, n.g * 0.7 + n.b * 0.3)), 0.0, 1.0);
-  float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0);
+  float base = clamp(cRemap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0) * prof;
+  float c = clamp(cRemap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0) * mix(0.6, 1.0, cov);
   if (c <= 0.0) return 0.0;
   if (lod < 0.5) {
+    // erosion: wispy at the base, billowy (inverted Worley → round puffs) toward the tops
     vec3 dn = cTex3D(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1, uCloud3DInfo.y).rgb;
     float df = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
-    float dm = mix(df, 1.0 - df, clamp(h * 4.0, 0.0, 1.0));
-    c = cRemap(c, dm * 0.42, 1.0, 0.0, 1.0);
+    float dm = mix(df, 1.0 - df, clamp(h * 5.0, 0.0, 1.0));
+    c = cRemap(c, dm * 0.5, 1.0, 0.0, 1.0);
   }
-  // denser, darker bases where it rains
-  return max(c, 0.0) * (1.0 + wx.b * 0.8) * smoothstep(0.0, 0.15, h + 0.05);
+  // crisp cauliflower edges: steepen the density ramp; denser, darker bases where it rains
+  c = max(c, 0.0);
+  return min(c * 2.2, 1.0 + c) * (1.0 + wx.b * 0.8);
 }
 float cloudDensity(vec3 P, float lod){ return cloudDensityW(P, cloudWeather(P), lod); }
 // Projected layer (seen from orbit): the weather coverage eroded on the sphere

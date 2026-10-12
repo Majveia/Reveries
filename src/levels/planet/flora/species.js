@@ -121,11 +121,23 @@ function card(B, center, ax, ay, w, h, tile, col, canopy, H, flutter = 1, glow =
     d.x /= canopy.rx; d.y /= canopy.ry; d.z /= canopy.rx;
     const rl = d.length();
     const sn = d.clone().normalize();
-    const n = sn.multiplyScalar(0.8).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.2 : -0.2).normalize();
-    // canopy AO: inner and lower leaves darker
-    const ao = (0.22 + 0.78 * THREE.MathUtils.smoothstep(rl, 0.25, 1.05)) * (0.7 + 0.3 * THREE.MathUtils.clamp((p.y - canopy.c.y) / canopy.ry + 0.5, 0, 1));
+    let n, ao;
+    if (canopy.g) {
+      // lobed crown: normals and AO from the leaf's own lobe (cloud-like
+      // masses with dark cores and bright rims), darkened deeper in the crown
+      const G = canopy.g;
+      const dg = p.clone().sub(G.c); dg.x /= G.rx; dg.y /= G.ry; dg.z /= G.rx;
+      const rg = dg.length();
+      n = sn.multiplyScalar(0.62).addScaledVector(dg.normalize(), 0.28).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.14 : -0.14).normalize();
+      ao = (0.1 + 0.9 * THREE.MathUtils.smoothstep(rl, 0.3, 1.0)) * (0.5 + 0.5 * THREE.MathUtils.smoothstep(rg, 0.2, 0.95)) * (0.72 + 0.28 * THREE.MathUtils.clamp((p.y - G.c.y) / G.ry + 0.5, 0, 1)) * 1.12;
+    } else {
+      n = sn.multiplyScalar(0.8).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.2 : -0.2).normalize();
+      // canopy AO: inner and lower leaves darker
+      ao = (0.12 + 0.88 * THREE.MathUtils.smoothstep(rl, 0.3, 1.0)) * (0.7 + 0.3 * THREE.MathUtils.clamp((p.y - canopy.c.y) / canopy.ry + 0.5, 0, 1));
+    }
     c.copy(col).multiplyScalar(ao);
-    B.vert(p, n, c, sx + 0.5 > 0.5 ? u1 : u0, (anchorBottom ? sy : sy + 0.5) > 0.5 ? v1 : v0, swayAt(p.y, H), flutter, glow);
+    // glow follows the lobe shading: luminous rims, dimmer cores (soft HDR gradients)
+    B.vert(p, n, c, sx + 0.5 > 0.5 ? u1 : u0, (anchorBottom ? sy : sy + 0.5) > 0.5 ? v1 : v0, swayAt(p.y, H), flutter, glow * (anchorBottom ? 1 : 0.3 + 0.7 * Math.min(1, ao)));
   }
   B.i.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
@@ -167,16 +179,20 @@ function path(start, dir, len, segs, rng, wiggle, trop) {
 function deciduous(P, rng) {
   const B = new Builder(), L = new Builder();
   const H = P.H;
-  const leafPts = [];
+  const leafPts = [], leafLobe = [];
+  let nLobes = 0;
   const trunkLen = H * (P.trunkK ?? 0.55);
-  const grow = (start, dir, len, r, depth) => {
-    const segs = depth === 0 ? 7 : depth === 1 ? 5 : 3;
-    const pts = path(start, dir, len, segs, rng, P.wiggle * (depth === 0 ? 0.5 : 1), depth === 0 ? 0.04 : P.trop - (P.droop || 0) * depth * 0.3);
-    const radii = pts.map((_, k) => r * (1 - (k / segs) * (depth === 0 ? 0.55 : 0.75)));
-    tube(B, pts, radii, depth === 0 ? 9 : depth === 1 ? 6 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.35) : 0, child: depth > 0 });
+  // a trunk with character (slight lean and crook), limbs that arc upward
+  // (gravitropism) and fork into twigs; each first-order limb carries its own
+  // leaf lobe so crowns read as clustered masses with sky between them
+  const grow = (start, dir, len, r, depth, lobe) => {
+    const segs = depth === 0 ? 8 : depth === 1 ? 6 : depth === 2 ? 4 : 3;
+    const pts = path(start, dir, len, segs, rng, P.wiggle * (depth === 0 ? 0.55 : 1.1), depth === 0 ? 0.03 : P.trop * (depth === 1 ? 1.6 : 1) - (P.droop || 0) * depth * 0.3);
+    const radii = pts.map((_, k) => r * (1 - (k / segs) * (depth === 0 ? 0.5 : 0.72)));
+    tube(B, pts, radii, depth === 0 ? 10 : depth === 1 ? 7 : depth === 2 ? 5 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.5) : 0, child: depth > 0 });
     if (depth >= P.depth) {
-      for (let k = 1; k < pts.length; k++) if (rng.float() < P.leafDensity) leafPts.push(pts[k]);
-      leafPts.push(pts[pts.length - 1]);
+      for (let k = 1; k < pts.length; k++) if (rng.float() < P.leafDensity) { leafPts.push(pts[k]); leafLobe.push(lobe); }
+      leafPts.push(pts[pts.length - 1]); leafLobe.push(lobe);
       return;
     }
     const nk = P.kids[depth];
@@ -191,36 +207,62 @@ function deciduous(P, rng) {
       const ang = P.angle * (0.75 + rng.float() * 0.5) * (depth === 0 ? 1 : 0.85);
       const nd = pd.clone().multiplyScalar(Math.cos(ang)).addScaledVector(perp, Math.sin(ang)).normalize();
       const childLen = len * P.lenK * (depth === 0 ? (1.15 - t * 0.55) : (1.05 - t * 0.4)) * (0.8 + rng.float() * 0.4);
-      const childR = radii[idx] * (0.42 + rng.float() * 0.18);
-      grow(sp, nd, childLen, Math.max(0.025, childR), depth + 1);
+      const childR = radii[idx] * (0.45 + rng.float() * 0.2);
+      grow(sp, nd, childLen, Math.max(0.025, childR), depth + 1, depth === 0 ? nLobes++ : lobe);
     }
     // trunk/leader continues into the crown
-    if (depth === 0 && P.leaderLeaves) for (let k = Math.floor(pts.length * 0.6); k < pts.length; k++) leafPts.push(pts[k]);
+    if (depth === 0 && P.leaderLeaves) { const lb = nLobes++; for (let k = Math.floor(pts.length * 0.6); k < pts.length; k++) { leafPts.push(pts[k]); leafLobe.push(lb); } }
   };
-  grow(new V(0, -0.3, 0), new V((rng.float() - 0.5) * 0.12, 1, (rng.float() - 0.5) * 0.12).normalize(), trunkLen + 0.3, P.trunkR, 0);
-  // canopy ellipsoid from leaf points
+  const lean = new V((rng.float() - 0.5) * 0.22, 1, (rng.float() - 0.5) * 0.22).normalize();
+  grow(new V(0, -0.3, 0), lean, trunkLen + 0.3, P.trunkR, 0, -1);
+  // whole-crown ellipsoid
   const box = new THREE.Box3().setFromPoints(leafPts);
   const canopy = { c: box.getCenter(new V()), rx: Math.max(1, (box.max.x - box.min.x + box.max.z - box.min.z) * 0.25 + P.leafSize * 0.4), ry: Math.max(1, (box.max.y - box.min.y) * 0.5 + P.leafSize * 0.4) };
-  const lc = new THREE.Color();
-  for (const p of leafPts) {
-    lc.copy(P.leafCol).offsetHSL((rng.float() - 0.5) * 0.03, 0, (rng.float() - 0.5) * 0.05);
-    if (P.leafCol2 && rng.float() < 0.35) lc.lerp(P.leafCol2, 0.6 + rng.float() * 0.4);
-    const glow = P.glow ? (rng.float() < 0.5 ? P.glow : P.glow * 0.25) : 0;
-    cluster(L, p.clone().add(new V((rng.float() - 0.5) * 0.5, (rng.float() - 0.3) * 0.4, (rng.float() - 0.5) * 0.5)), P.leafSize, P.leafTile, lc, canopy, H, rng, 1, glow);
+  // lobes: one ellipsoid per first-order limb, each with its own tone
+  const lobes = [];
+  for (let k = 0; k < nLobes; k++) lobes.push({ pts: [], c: new V(), rx: 1, ry: 1, g: canopy, hue: (rng.float() - 0.5) * 0.035, lit: (rng.float() - 0.5) * 0.12 });
+  leafPts.forEach((p, k) => { const lb = lobes[leafLobe[k]]; if (lb) lb.pts.push(p); });
+  for (const lb of lobes) {
+    if (!lb.pts.length) continue;
+    const bb = new THREE.Box3().setFromPoints(lb.pts);
+    bb.getCenter(lb.c); lb.c.y += (bb.max.y - bb.min.y) * 0.12;
+    lb.rx = Math.max(P.leafSize * 0.9, (bb.max.x - bb.min.x + bb.max.z - bb.min.z) * 0.25 + P.leafSize * 0.55);
+    lb.ry = Math.max(P.leafSize * 0.8, (bb.max.y - bb.min.y) * 0.5 + P.leafSize * 0.45);
   }
-  // crown fill: extra sprays on the outer shell of the canopy (only where a
-  // twig is close enough to carry them) so crowns read as full, soft volumes
-  const nFill = Math.round(leafPts.length * (P.fill ?? 0.4));
-  const reach2 = (P.leafSize * 1.6) ** 2;
-  for (let k = 0; k < nFill; k++) {
-    const th = rng.float() * Math.PI * 2, cy = rng.float() * 1.5 - 0.5, sr = Math.sqrt(Math.max(0, 1 - cy * cy)), rr = (0.68 + 0.3 * rng.float()) * 0.88;
-    const p = new V(canopy.c.x + Math.cos(th) * sr * canopy.rx * rr, canopy.c.y + cy * canopy.ry * rr, canopy.c.z + Math.sin(th) * sr * canopy.rx * rr);
-    let best = 1e9;
-    for (const q of leafPts) { const d = q.distanceToSquared(p); if (d < best) best = d; }
-    if (best > reach2) continue;
-    lc.copy(P.leafCol).offsetHSL((rng.float() - 0.5) * 0.03, 0, (rng.float() - 0.5) * 0.05);
-    if (P.leafCol2 && rng.float() < 0.45) lc.lerp(P.leafCol2, 0.6 + rng.float() * 0.4);
-    cluster(L, p, P.leafSize * 0.9, P.leafTile, lc, canopy, H, rng, 1, P.glow ? P.glow * 0.25 : 0);
+  const lc = new THREE.Color();
+  const tint = (lb, k2) => {
+    lc.copy(P.leafCol).offsetHSL(lb.hue + (rng.float() - 0.5) * 0.02, (rng.float() - 0.5) * 0.06, lb.lit + (rng.float() - 0.5) * 0.08);
+    if (P.leafCol2 && rng.float() < k2) lc.lerp(P.leafCol2, 0.6 + rng.float() * 0.4);
+    return lc;
+  };
+  const per = P.perPoint ?? 1;
+  const solo = { c: canopy.c, rx: canopy.rx, ry: canopy.ry, g: canopy, hue: 0, lit: 0 };
+  leafPts.forEach((p, k) => {
+    const lb = lobes[leafLobe[k]] || solo;
+    for (let m = 0; m < per; m++) {
+      const glow = P.glow ? (rng.float() < 0.5 ? P.glow : P.glow * 0.25) : 0;
+      const j = m === 0 ? 0.25 : 0.9;
+      const o = p.clone().add(new V((rng.float() - 0.5) * P.leafSize * j * 1.4, (rng.float() - 0.3) * P.leafSize * j, (rng.float() - 0.5) * P.leafSize * j * 1.4));
+      cluster(L, o, P.leafSize * (0.8 + rng.float() * 0.35), P.leafTile, tint(lb, 0.35), lb, H, rng, 1, glow);
+    }
+  });
+  // lobe fill: sprays on each lobe's outer shell (only near a twig) with a
+  // window cut into every lobe, so masses stay soft but silhouettes break up
+  for (const lb of lobes) {
+    if (!lb.pts.length) continue;
+    const nFill = Math.round(lb.pts.length * (P.fill ?? 0.4) * 2.2);
+    const reach2 = (P.leafSize * 1.5) ** 2;
+    const hole = new V(rng.float() - 0.5, rng.float() - 0.5, rng.float() - 0.5).normalize();
+    for (let k = 0; k < nFill; k++) {
+      const th = rng.float() * Math.PI * 2, cy = rng.float() * 1.6 - 0.6, sr = Math.sqrt(Math.max(0, 1 - cy * cy)), rr = 0.62 + 0.36 * rng.float();
+      const dir = new V(Math.cos(th) * sr, cy, Math.sin(th) * sr);
+      if (dir.dot(hole) > 0.55 && rng.float() < 0.85) continue;
+      const p = new V(lb.c.x + dir.x * lb.rx * rr, lb.c.y + dir.y * lb.ry * rr, lb.c.z + dir.z * lb.rx * rr);
+      let best = 1e9;
+      for (const q of lb.pts) { const d = q.distanceToSquared(p); if (d < best) best = d; }
+      if (best > reach2) continue;
+      cluster(L, p, P.leafSize * (0.75 + rng.float() * 0.3), P.leafTile, tint(lb, 0.45), lb, H, rng, 1, P.glow ? P.glow * 0.25 : 0);
+    }
   }
   // hanging strands (willow / biolum)
   if (P.strands) {
@@ -233,14 +275,17 @@ function deciduous(P, rng) {
       card(L, p.clone().add(new V(0, -len, 0)), new V(Math.cos(a), 0, Math.sin(a)), new V(0, 1, 0), len * 0.2, len, TILE.strand, lc, canopy, H, 0.6, P.strandGlow || 0, true);
     }
   }
-  return { bark: B.geometry(), leaves: L.geometry(), height: box.max.y, crown: canopy.rx, trunkR: P.trunkR };
+  return { bark: B.geometry(), leaves: L.geometry(), height: box.max.y + P.leafSize * 0.5, crown: canopy.rx, trunkR: P.trunkR };
 }
 
 function conifer(P, rng) {
   const B = new Builder(), L = new Builder();
   const H = P.H;
-  const trunk = path(new V(0, -0.3, 0), new V((rng.float() - 0.5) * 0.04, 1, (rng.float() - 0.5) * 0.04).normalize(), H + 0.3, 10, rng, 0.03, 0.02);
-  tube(B, trunk, trunk.map((_, k) => P.trunkR * (1 - k / 10 * 0.92)), 8, P.barkCol, H, { flare: 0.3 });
+  const crook = P.pads ? 0.14 : 0.03;
+  const trunk = path(new V(0, -0.3, 0), new V((rng.float() - 0.5) * crook * 1.5, 1, (rng.float() - 0.5) * crook * 1.5).normalize(), H + 0.3, 10, rng, crook, 0.02);
+  tube(B, trunk, trunk.map((_, k) => P.trunkR * (1 - k / 10 * 0.9)), 9, P.barkCol, H, { flare: P.pads ? 0.45 : 0.3 });
+  const trunkAt = (y) => { const f = THREE.MathUtils.clamp((y + 0.3) / (H + 0.3) * 10, 0, 9.999), i = Math.floor(f); return trunk[i].clone().lerp(trunk[i + 1], f - i); };
+  const longSide = rng.float() * Math.PI * 2; // pines reach further toward the light on one side
   const canopy = { c: new V(0, H * 0.55, 0), rx: H * P.width * 0.6, ry: H * 0.5 };
   const whorls = P.whorls;
   const lc = new THREE.Color();
@@ -253,9 +298,23 @@ function conifer(P, rng) {
     const az0 = rng.float() * Math.PI * 2;
     for (let b = 0; b < nb; b++) {
       const az = az0 + (b / nb) * Math.PI * 2 + (rng.float() - 0.5) * 0.4;
+      if (P.pads && rng.float() < 0.35) continue; // open, irregular tiers
+      const asym = P.pads ? 0.7 + 0.5 * Math.max(0, Math.cos(az - longSide)) : 1;
       const dir = new V(Math.cos(az), -P.droop * (0.6 + rng.float() * 0.8) + 0.15, Math.sin(az)).normalize();
-      const pts = path(new V(trunk[0].x, y, trunk[0].z), dir, reach, 3, rng, 0.15, -P.droop * 0.05);
-      tube(B, pts, [P.trunkR * 0.18 * (1 - t * 0.5), P.trunkR * 0.1, P.trunkR * 0.06, 0.02], 4, P.barkCol, H, { child: true });
+      const pts = path(trunkAt(y), dir, reach * asym, 3, rng, P.pads ? 0.3 : 0.15, P.pads ? 0.09 : -P.droop * 0.05);
+      tube(B, pts, [P.trunkR * 0.3 * (1 - t * 0.5), P.trunkR * 0.18, P.trunkR * 0.1, 0.04 * P.trunkR], P.pads ? 6 : 4, P.barkCol, H, { child: true });
+      if (P.pads) {
+        // 1–2 branchlets carrying their own pads
+        for (let s2 = 0; s2 < 1 + (rng.float() < 0.5 ? 1 : 0); s2++) {
+          const f0 = 0.35 + rng.float() * 0.35, bp = pts[1].clone().lerp(pts[2], f0);
+          const bd2 = pts[2].clone().sub(pts[1]).normalize();
+          const sdir = bd2.clone().applyAxisAngle(UP, (rng.float() < 0.5 ? 1 : -1) * (0.6 + rng.float() * 0.5)); sdir.y += 0.25; sdir.normalize();
+          const bl = path(bp, sdir, reach * 0.4, 2, rng, 0.25, 0.08);
+          tube(B, bl, [P.trunkR * 0.08, P.trunkR * 0.05, 0.02], 4, P.barkCol, H, { child: true });
+          lc.copy(P.leafCol).offsetHSL((rng.float() - 0.5) * 0.02, 0, (rng.float() - 0.5) * 0.07);
+          cluster(L, bl[2].clone().addScaledVector(UP, 0.1), P.leafSize * 0.95, TILE.needle, lc, canopy, H, rng, 0.5);
+        }
+      }
       // needle sprays along the branch: a flat spray plus two sprays rolled
       // ±50° around the branch (bottle-brush volume); pines gather their
       // needles into dense cloud-like pads toward the branch tips
@@ -263,7 +322,7 @@ function conifer(P, rng) {
       const nCards = Math.max(2, Math.round(reach / (P.leafSize * 0.42))) + pad * 3;
       for (let k = 0; k < nCards; k++) {
         let f = (k + 0.6) / nCards;
-        if (pad) f = 0.45 + 0.55 * Math.sqrt(f);
+        if (pad) f = 0.15 + 0.85 * Math.sqrt(f);
         const pIdx = Math.min(2, Math.floor(f * 3));
         const p = pts[pIdx].clone().lerp(pts[pIdx + 1], Math.min(1, f * 3 - pIdx));
         const bd = pts[pIdx + 1].clone().sub(pts[pIdx]).normalize();
@@ -464,14 +523,14 @@ export function buildPlant(kind, rng, pal = {}, opts = {}) {
   const r = () => rng.float();
   const s = opts.scale || 1;
   switch (kind) {
-    case 'broad': return deciduous({ H: (12 + r() * 8) * s, trunkR: (0.36 + r() * 0.22) * s, depth: 3, kids: [7 + Math.floor(r() * 3), 3, 4], angle: 0.8, lenK: 0.62, wiggle: 0.5, trop: 0.07, leafTile: TILE.broad, leafSize: 2.4 * s, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#5a4a3c'), leafDensity: 0.8, crownStart: 0.35, trunkK: 0.5 }, rng);
-    case 'maple': return deciduous({ H: (10.5 + r() * 6) * s, trunkR: (0.3 + r() * 0.16) * s, depth: 3, kids: [6 + Math.floor(r() * 3), 3, 4], angle: 0.85, lenK: 0.66, wiggle: 0.65, trop: 0.05, leafTile: TILE.maple, leafSize: 2.1 * s, leafCol: pal.leaf || C('#b8322a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3e3430'), leafDensity: 0.75, crownStart: 0.32, trunkK: 0.45 }, rng);
-    case 'golden': return deciduous({ H: (12 + r() * 7) * s, trunkR: (0.34 + r() * 0.16) * s, depth: 3, kids: [7, 3, 3], angle: 0.75, lenK: 0.64, wiggle: 0.55, trop: 0.09, leafTile: TILE.broad, leafSize: 2.2 * s, leafCol: pal.leaf || C('#d8a83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#6a6258'), leafDensity: 0.6, crownStart: 0.4, glow: pal.glowAmt || 0.0, trunkK: 0.55 }, rng);
+    case 'broad': return deciduous({ H: (12 + r() * 8) * s, trunkR: (0.46 + r() * 0.26) * s, depth: 3, kids: [5 + Math.floor(r() * 3), 3, 3], angle: 0.85, lenK: 0.66, wiggle: 0.7, trop: 0.08, leafTile: TILE.broad, leafSize: 1.45 * s, perPoint: 2, fill: 0.45, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#5a4a3c'), leafDensity: 0.8, crownStart: 0.35, trunkK: 0.5 }, rng);
+    case 'maple': return deciduous({ H: (10.5 + r() * 6) * s, trunkR: (0.4 + r() * 0.2) * s, depth: 3, kids: [5 + Math.floor(r() * 3), 3, 3], angle: 0.95, lenK: 0.7, wiggle: 0.85, trop: 0.06, leafTile: TILE.maple, leafSize: 1.3 * s, perPoint: 2, fill: 0.4, leafCol: pal.leaf || C('#b8322a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3e3430'), leafDensity: 0.75, crownStart: 0.3, trunkK: 0.38 }, rng);
+    case 'golden': return deciduous({ H: (12 + r() * 7) * s, trunkR: (0.44 + r() * 0.2) * s, depth: 3, kids: [6, 3, 3], angle: 0.8, lenK: 0.68, wiggle: 0.75, trop: 0.1, leafTile: TILE.broad, leafSize: 1.35 * s, perPoint: 2, leafCol: pal.leaf || C('#d8a83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#6a6258'), leafDensity: 0.6, crownStart: 0.4, glow: pal.glowAmt || 0.0, trunkK: 0.42 }, rng);
     case 'birch': return deciduous({ H: (11 + r() * 6) * s, trunkR: (0.16 + r() * 0.07) * s, depth: 2, kids: [12 + Math.floor(r() * 4), 5], angle: 0.65, lenK: 0.4, wiggle: 0.5, trop: -0.02, droop: 0.4, leafTile: TILE.small, leafSize: 2.0 * s, leafCol: pal.leaf || C('#8aa83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#d8d4c8'), leafDensity: 1.0, crownStart: 0.3, flare: 0.1, leaderLeaves: true, trunkK: 0.95 }, rng);
-    case 'biolum': return deciduous({ H: (11 + r() * 9) * s, trunkR: (0.4 + r() * 0.22) * s, depth: 3, kids: [6, 3, 3], angle: 1.0, lenK: 0.7, wiggle: 0.8, trop: 0.02, droop: 0.3, leafTile: TILE.broad, leafSize: 2.3 * s, leafCol: pal.leaf || C('#2f8a5a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3a3440'), leafDensity: 0.8, fill: 0.6, crownStart: 0.4, glow: pal.glowAmt ?? 0.6, strands: 22, strandLen: 4.5 * s, strandCol: pal.glow || C('#5ae0ff'), strandGlow: 1.6, flare: 0.6, trunkK: 0.5 }, rng);
+    case 'biolum': return deciduous({ H: (11 + r() * 9) * s, trunkR: (0.4 + r() * 0.22) * s, depth: 3, kids: [6, 3, 3], angle: 1.0, lenK: 0.7, wiggle: 0.8, trop: 0.02, droop: 0.3, leafTile: TILE.broad, leafSize: 1.5 * s, perPoint: 2, leafCol: pal.leaf || C('#2f8a5a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3a3440'), leafDensity: 0.8, fill: 0.6, crownStart: 0.4, glow: pal.glowAmt ?? 0.6, strands: 22, strandLen: 4.5 * s, strandCol: pal.glow || C('#5ae0ff'), strandGlow: 1.6, flare: 0.6, trunkK: 0.5 }, rng);
     case 'willow': return deciduous({ H: (8 + r() * 4) * s, trunkR: (0.4 + r() * 0.15) * s, depth: 2, kids: [7, 4], angle: 1.0, lenK: 0.7, wiggle: 0.6, trop: 0.05, leafTile: TILE.small, leafSize: 1.6 * s, leafCol: pal.leaf || C('#7a9a4a'), barkCol: pal.bark || C('#4a4238'), leafDensity: 0.7, crownStart: 0.4, strands: 26, strandLen: 4.2 * s, strandCol: (pal.leaf || C('#7a9a4a')).clone().multiplyScalar(0.8), trunkK: 0.45 }, rng);
     case 'conifer': return conifer({ H: (13 + r() * 10) * s, trunkR: (0.3 + r() * 0.12) * s, width: 0.2 + r() * 0.06, whorls: 13 + Math.floor(r() * 5), perWhorl: 6, droop: 0.35, leafSize: 1.9 * s, leafCol: pal.leaf || C('#2f4a2c'), barkCol: pal.bark || C('#4a3a30'), snow: pal.snow || 0 }, rng);
-    case 'pine': return conifer({ H: (10 + r() * 6) * s, trunkR: (0.32 + r() * 0.12) * s, width: 0.36 + r() * 0.1, whorls: 10 + Math.floor(r() * 3), perWhorl: 6, droop: -0.05, shape: 0.35, clearTrunk: 0.42, pads: true, leafSize: 2.3 * s, leafCol: pal.leaf || C('#2a3a28'), barkCol: pal.bark || C('#5a4034') }, rng);
+    case 'pine': return conifer({ H: (10 + r() * 6) * s, trunkR: (0.48 + r() * 0.16) * s, width: 0.36 + r() * 0.1, whorls: 10 + Math.floor(r() * 3), perWhorl: 6, droop: -0.05, shape: 0.35, clearTrunk: 0.3, pads: true, leafSize: 2.3 * s, leafCol: pal.leaf || C('#2a3a28'), barkCol: pal.bark || C('#5a4034') }, rng);
     case 'palm': return palm({ H: (8 + r() * 7) * s, trunkR: 0.22 * s, frond: 4.2 * s, leafCol: pal.leaf || C('#4a8a3a'), barkCol: pal.bark || C('#7a6a52') }, rng);
     case 'fungus': return fungus({ H: (5 + r() * 9) * s, trunkR: (0.35 + r() * 0.35) * s, cap: (3 + r() * 4) * s, capH: 0.3 + r() * 0.3, capCol: pal.leaf || C('#c8b48a'), barkCol: pal.bark || C('#e0d8c4'), gillCol: pal.leaf2, gillGlow: pal.glowAmt ?? 0, spotGlow: (pal.glowAmt ?? 0) * 0.5, stemGlow: (pal.glowAmt ?? 0) * 0.08 }, rng);
     case 'coral': return coral({ H: (5 + r() * 5) * s, trunkR: (0.3 + r() * 0.15) * s, barkCol: pal.bark || C('#d88a9a'), tipCol: pal.leaf || C('#f0c8a0'), tipGlow: pal.glowAmt ?? 0.3 }, rng);
@@ -483,7 +542,7 @@ export function buildPlant(kind, rng, pal = {}, opts = {}) {
       const base = { broad: 'broad', golden: 'golden', biolum: 'biolum', maple: 'maple' }[st] || 'broad';
       const P = {
         H: opts.H || 60, trunkR: (opts.H || 60) * 0.06, depth: 3, kids: [9, 4, 3], angle: 0.85, lenK: 0.62, wiggle: 0.45, trop: base === 'golden' ? 0.14 : 0.05,
-        leafTile: base === 'maple' ? TILE.maple : TILE.broad, leafSize: (opts.H || 60) * 0.12, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2,
+        leafTile: base === 'maple' ? TILE.maple : TILE.broad, leafSize: (opts.H || 60) * 0.08, perPoint: 3, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2,
         barkCol: pal.bark || C('#5a4a3c'), leafDensity: 0.9, crownStart: 0.3, flare: 0.9, glow: pal.glowAmt || 0, trunkK: 0.5,
         strands: base === 'biolum' ? 90 : 0, strandLen: (opts.H || 60) * 0.3, strandCol: pal.glow, strandGlow: 2.2,
       };

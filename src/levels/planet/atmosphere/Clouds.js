@@ -36,6 +36,8 @@ uniform float uNear, uFar, uRev;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
 uniform vec3 uKeyDir, uKeyE;   // key light direction and TOA illuminance
+uniform vec3 uKey2Dir, uKey2E; // second key (moon at night; 0 by day), cheap light march
+uniform vec3 uNightAmb;        // starlight + airglow floor (radiance): unlit clouds read blue-grey, never holes
 uniform vec3 uCityGlow;       // settlement / bioluminescent glow lighting cloud bases from below (radiance)
 uniform vec3 uCloudAlbedo;
 uniform float uSteps, uLightSteps, uMaxDist, uFrame, uOrbitLod;
@@ -50,7 +52,7 @@ float hg(float c, float g){ float g2 = g * g; return 0.0795775 * (1.0 - g2) / po
 // the LUT for the sun and the moon at *this* position on the planet (so the
 // night hemisphere goes black and dusk clouds turn rose and amber).
 vec3 cloudSkyAmb(vec3 up, float r){
-  return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir));
+  return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir)) + uNightAmb;
 }
 
 // Orbit: one textured shell instead of a march (no extruded walls, no dither).
@@ -74,8 +76,10 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float cx = cloudLayer2D(P + e1 * eps, wx), cy = cloudLayer2D(P + e2 * eps, wx);
   vec3 nn = normalize(n - (e1 * (cx - c) + e2 * (cy - c)) * 2.4);
   float mu = abs(dot(rd, n));
-  float tau = c * c * 18.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.22);
-  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.1, mu);
+  // soft optical-depth ramp (no hard decal edges); thins out toward the limb where the
+  // long air path veils it
+  float tau = pow(c, 1.6) * 16.0 * (0.55 + 0.9 * wx.g) / max(mu, 0.25);
+  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.3, mu);
   float muS = dot(n, uKeyDir);
   vec3 Tl = transmittanceToLight(r + 600.0, muS);
   float ndl = dot(nn, uKeyDir);
@@ -128,7 +132,11 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   float dt = seg / N;
   float jit = fract(ign(gl_FragCoord.xy) + uFrame * 0.618034);
   float cosK = dot(rd, uKeyDir);
-  float phase = mix(hg(cosK, 0.78), hg(cosK, -0.22), 0.28) + 0.25 * hg(cosK, 0.96);
+  float phase = mix(hg(cosK, 0.8), hg(cosK, -0.3), 0.3);
+  float silverPh = hg(cosK, 0.93);
+  float cosK2 = dot(rd, uKey2Dir);
+  float phase2 = mix(hg(cosK2, 0.8), hg(cosK2, -0.3), 0.3);
+  bool key2 = uKey2E.r + uKey2E.g + uKey2E.b > 0.0;
   float sigma = uCloudDensity;
   vec3 L = vec3(0.0);
   float T = 1.0;
@@ -168,17 +176,25 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     float ms = 0.0, a = 1.0, b = 1.0, c = 1.0;
     for (int o = 0; o < 3; o++) {
       ms += a * exp(-od * b) * mix(phase, 0.0795775, 1.0 - c);
-      a *= 0.5; b *= 0.4; c *= 0.5;
+      a *= 0.5; b *= 0.5; c *= 0.5;
     }
+    // silver lining: thin, low-optical-depth edges forward-scatter the key light
+    ms += 0.55 * silverPh * exp(-od * 0.3) * (1.0 - smoothstep(0.0, 0.35, d));
     float powder = 1.0 - exp(-ext * 380.0);
-    powder = mix(1.0, powder, 0.65 * smoothstep(-0.2, 0.6, -cosK) + 0.25);
+    powder = mix(1.0, powder, 0.7 * smoothstep(-0.2, 0.6, -cosK));
     vec3 Sk = uKeyE * Tl * ms * powder * 3.14159;
+    if (key2) {
+      // moon: two shape-only light samples, same multiple-scattering octaves
+      float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.12, 1.0) * 0.24 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
+      float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.5) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.25) * 0.0795775;
+      Sk += uKey2E * transmittanceToLight(r, dot(up, uKey2Dir)) * ms2 * 3.14159;
+    }
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
     float ambOcc = exp(-d * sigma * shellH * 0.2 * (1.0 - h01));
     vec3 skyA = cloudSkyAmb(up, r);
     float muSun = dot(up, uSunDir);
     vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA) + uCityGlow;
-    vec3 Sa = mix(gndA, skyA, 0.25 + 0.75 * h01) * (0.22 + 0.78 * ambOcc) * PI * 0.25;
+    vec3 Sa = mix(gndA, skyA, 0.25 + 0.75 * h01) * (0.45 + 0.55 * ambOcc) * PI * 0.25;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -237,7 +253,7 @@ void main(){
   for (int y = -1; y <= 2; y++) for (int x = -1; x <= 2; x++) {
     vec2 tc = (i0 + vec2(float(x), float(y)) + 0.5) / uLowRes;
     vec2 dd = vec2(float(x), float(y)) - f;
-    float wb = exp(-dot(dd, dd) * 0.9);
+    float wb = exp(-dot(dd, dd) * 1.7);
     float dl = linDepth(tc);
     float rel = abs(dl - dc) / max(min(dl, dc), 1.0);
     float wd = 1.0 / (1e-3 + rel * 40.0);
@@ -313,7 +329,7 @@ export default class Clouds {
       uCloudBase: { value: m.Rb + this.baseH }, uCloudTop: { value: m.Rb + this.topH },
       uCloudCov: { value: 1 }, uCloudDensity: { value: this.preset.density },
       uCloudWind: { value: new THREE.Vector3() },
-      uCloudShapeScale: { value: 1 / 7000 }, uCloudDetailScale: { value: 1 / 1100 },
+      uCloudShapeScale: { value: 1 / 5600 }, uCloudDetailScale: { value: 1 / 1500 },
       uCloudWeatherSize: { value: r.weatherSize }, uCloudFlat: { value: 0 },
       uCloud3DInfo: { value: new THREE.Vector3(r.shapeSize, r.detailSize, r.manual3D ? 1 : 0) },
     };
@@ -325,6 +341,7 @@ export default class Clouds {
         tDepth: { value: null }, uFullRes: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uKeyE: { value: new THREE.Vector3() },
+        uKey2Dir: { value: new THREE.Vector3(0, 1, 0) }, uKey2E: { value: new THREE.Vector3() }, uNightAmb: { value: new THREE.Vector3() },
         uCityGlow: { value: new THREE.Vector3() },
         uCloudAlbedo: { value: new THREE.Vector3(1, 1, 1) },
         uSteps: { value: 64 }, uLightSteps: { value: 6 }, uMaxDist: { value: 90000 }, uFrame: { value: 0 }, uOrbitLod: { value: 0 },
@@ -387,11 +404,18 @@ export default class Clouds {
     const sunUp = m.sunE.x + m.sunE.y + m.sunE.z;
     const camUp = _v.copy(ctx.cameraPosition).normalize();
     const sunEl = camUp.dot(this.world.sunDir);
-    if (sunEl > -0.2 || m.moonE.x + m.moonE.y + m.moonE.z < 1e-5 || sunUp <= 0) {
-      mu.uKeyDir.value.copy(this.world.sunDir); mu.uKeyE.value.copy(m.sunE);
-    } else {
-      mu.uKeyDir.value.copy(m.moonDir); mu.uKeyE.value.copy(m.moonE);
-    }
+    // Sun is always key 1 (the transmittance LUT handles the planet's shadow per sample, so
+    // high clouds stay sunlit after the ground goes dark). The moon is key 2 once the sun is
+    // low — both are lit consistently, no hard switch between a sunlit and a moonlit deck.
+    const moonUp = m.moonE.x + m.moonE.y + m.moonE.z;
+    if (sunUp > 0) { mu.uKeyDir.value.copy(this.world.sunDir); mu.uKeyE.value.copy(m.sunE); }
+    else { mu.uKeyDir.value.copy(m.moonDir); mu.uKeyE.value.copy(m.moonE); }
+    const k2 = sunUp > 0 && moonUp > 1e-6 ? 1 - THREE.MathUtils.smoothstep(sunEl, -0.25, 0.05) : 0;
+    mu.uKey2Dir.value.copy(m.moonDir);
+    // scotopic tint: moonlit cloud tops read cool silver, never cream
+    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2);
+    const nightK = light ? light.night : 0;
+    mu.uNightAmb.value.set(1.2e-4, 1.8e-4, 3.0e-4).multiplyScalar(nightK);
     mu.uCityGlow.value.set(0, 0, 0);
     if (light && light.night > 0.05) {
       // night: settlements within a few km light the cloud bases from below

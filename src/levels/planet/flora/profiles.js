@@ -26,8 +26,8 @@ export function floraProfile(kind, A) {
 
   switch (kind) {
     case 'lush': return {
-      grass: { density: 1.0, colors: meadow(4, 0.35).concat(['#8fb04a']), dry: '#c2b46a', reed: '#5f7f3a', h: [0.2, 0.78], w: [0.026, 0.048], stiff: 1, cover: 0.55, needsWater: 0.6, rockVeg: 0.35 },
-      flowers: { style: 'spike', density: 1.0, colors: ['#ffe14d', '#f6f3ea', '#a98cf0', '#fff27a', '#f9b3cf'], h: [0.4, 0.85], size: 0.05, patch: 0.05, scatter: 0.05 },
+      grass: { density: 1.15, colors: meadow(4, 0.35).concat(['#8fb04a']), dry: '#c2b46a', reed: '#5f7f3a', h: [0.15, 0.56], seedH: 0.75, w: [0.026, 0.048], stiff: 1, cover: 0.55, needsWater: 0.6, rockVeg: 0.35 },
+      flowers: { style: 'spike', density: 1.0, colors: ['#ffe14d', '#f6f3ea', '#a98cf0', '#fff27a', '#f9b3cf'], h: [0.3, 0.8], size: 0.075, patch: 0.05, scatter: 0.04 },
       trees: {
         density: 0.007, cover: 0.05, lone: 0.05, grassland: 0.6, arid: 0.08, wet: 0.5, rocky: 0.12, cliffTrees: 0.25, snowy: 0.02, snowLine: 0.4,
         species: [
@@ -37,15 +37,15 @@ export function floraProfile(kind, A) {
           { kind: 'willow', w: 0.08, wet: 1.5, shore: 1.5, pal: () => ({ leaf: C('#7aa04a'), bark: C('#4a4238') }) },
           { kind: 'scrub', w: 0.9, sizeK: 1.0, pal: () => ({ leaf: C('#4f7f36'), bark: C('#4a3e30') }) },
         ],
-        landmark: { style: 'broad', H: 64, name: 'The Old Camphor', text: 'Spirits are said to sleep in its crown.', pal: { leaf: C('#4a8a36'), leaf2: C('#7ab04a'), bark: C('#5a4c3e') } },
+        landmark: { style: 'broad', H: 86, name: 'The Old Camphor', text: 'Spirits are said to sleep in its crown.', pal: { leaf: C('#4a8a36'), leaf2: C('#7ab04a'), bark: C('#5a4c3e') } },
       },
       motes: [{ type: 'petals', colors: ['#f4f0e4', '#f2d24a'] }, { type: 'flies', colors: ['#d8ff6a', '#ffe08a'], glow: 0.7 }],
       under: { density: 0.12, open: 0.18, species: [{ kind: 'fern', w: 1, pal: (k) => ({ leaf: C(['#4f8434', '#5a9038', '#467a30'][k % 3]), leaf2: C('#8ab048') }) }, { kind: 'scrub', w: 0.3, scale: 0.6, pal: () => ({ leaf: C('#4a7c32'), bark: C('#4a3e30') }) }] },
       rocks: { density: 0.0045, color: rock, moss: 0.75, mossCol: '#4e6e2c', size: 1 },
     };
     case 'maple': return {
-      grass: { density: 1.5, colors: meadow(4, 0.3).concat(['#7a8440', '#8a8a48']), dry: '#b0a050', reed: '#6a6a3a', h: [0.16, 0.6], w: [0.032, 0.058], stiff: 0.9, cover: 0.85, needsWater: 0.15, dryBias: 0.0, dryMax: 0.5, rockVeg: 0.6 },
-      flowers: { density: 0.5, colors: ['#d8342a', '#e8e0d0', '#c8282a', '#f0a030'], h: [0.35, 0.7], size: 0.05, patch: 0.15, scatter: 0.02 },
+      grass: { density: 2.2, colors: ['#8a8a3c', '#a8904a', '#b89c52', '#7c7e3a', '#c4a24c', '#6e7436', '#9a7a3a'], dry: '#c8a456', reed: '#6a6a3a', h: [0.14, 0.52], w: [0.034, 0.062], stiff: 0.9, cover: 1.15, widthMax: 5, needsWater: 0.15, dryBias: 0.0, dryMax: 0.5, rockVeg: 0.6 },
+      flowers: { density: 0.6, colors: ['#d8342a', '#e8e0d0', '#c8282a', '#f0a030'], h: [0.3, 0.75], size: 0.07, patch: 0.15, scatter: 0.02 },
       trees: {
         density: 0.0072, cover: 0.2, lone: 0.06, grassland: 0.65, arid: 0.15, wet: 0.5, rocky: 0.4, cliffTrees: 0.55, snowy: 0.05, snowLine: 0.45,
         species: [
@@ -54,15 +54,15 @@ export function floraProfile(kind, A) {
           { kind: 'golden', w: 0.25, pal: () => ({ leaf: C('#e0a83a'), leaf2: C('#f0c050'), bark: C('#4a4038') }) },
           { kind: 'scrub', w: 0.6, rock: 0.8, pal: (k) => ({ leaf: C(['#8a3a26', '#a8482a', '#6a5a2a'][k % 3]), leaf2: C('#c8602a'), bark: C('#3a302c') }) },
         ],
-        landmark: { style: 'maple', H: 58, name: 'The Crimson Elder', text: 'Its leaves fall like embers and never touch the ground.', pal: { leaf: C('#c42a24'), leaf2: C('#e8702a'), bark: C('#3a302c') } },
+        landmark: { style: 'maple', H: 78, name: 'The Crimson Elder', text: 'Its leaves fall like embers and never touch the ground.', pal: { leaf: C('#c42a24'), leaf2: C('#e8702a'), bark: C('#3a302c') } },
       },
       motes: [{ type: 'leaves', colors: ['#c8302a', '#e0702a'] }],
-      litter: { density: 7, colors: ['#b8282a', '#d8502a', '#e08a2a', '#9a2020'], size: 0.13, cover: 0.1 },
+      litter: { density: 16, colors: ['#b8282a', '#d8502a', '#e08a2a', '#9a2020', '#8a5a2a', '#c8a050'], size: 0.11, cover: 0.2 },
       under: { density: 0.14, open: 0.35, moist: [-0.25, 0.2], rockOk: 0.85, species: [{ kind: 'fern', w: 1, pal: (k) => ({ leaf: C(['#a8482a', '#c06a2a', '#7a6a2e'][k % 3]), leaf2: C('#d89a3a') }) }, { kind: 'fern', w: 0.6, pal: () => ({ leaf: C('#4a6a30'), leaf2: C('#7a8a3a') }) }, { kind: 'scrub', w: 0.35, scale: 0.6, pal: (k) => ({ leaf: C(['#9a3a26', '#6a5a2a'][k % 2]), leaf2: C('#c8602a'), bark: C('#3a302c') }) }] },
       rocks: { density: 0.007, color: rock, moss: 0.55, mossCol: '#4a5a32', size: 1.2 },
     };
     case 'bioluminescent': return {
-      grass: { density: 1.0, colors: ['#1f5a46', '#2a6a4a', '#1a4a40', '#3a7a5a'], dry: '#4a6a4a', reed: '#2a5a4a', h: [0.3, 1.1], w: [0.04, 0.075], stiff: 0.8, cover: 0.6, glow: 0.55, glowCol: '#4fe8ff', needsWater: 0.3, rockVeg: 0.85 },
+      grass: { density: 1.0, colors: ['#1f5a46', '#2a6a4a', '#1a4a40', '#3a7a5a'], dry: '#4a6a4a', reed: '#2a5a4a', h: [0.22, 0.8], seedH: 0.9, w: [0.04, 0.075], stiff: 0.8, cover: 0.6, glow: 0.55, glowCol: '#4fe8ff', needsWater: 0.3, rockVeg: 0.85 },
       flowers: { density: 1.2, colors: ['#7f6aff', '#36d8ff', '#ff5ad8', '#b8ff6a'], h: [0.25, 0.7], size: 0.06, patch: 0.0, scatter: 0.08, glow: 1.4, glowCol: '#6fd8ff' },
       trees: {
         density: 0.0085, cover: 0.25, grassland: 0.7, arid: 0.2, wet: 0.7, rocky: 0.5, cliffTrees: 0.75, snowy: 0.05, glowCol: '#5ae8ff',
@@ -72,9 +72,9 @@ export function floraProfile(kind, A) {
           { kind: 'palm', w: 0.3, wet: 1, pal: () => ({ leaf: C('#2a7a5a'), bark: C('#4a4440') }) },
           { kind: 'coral', w: 0.25, pal: () => ({ leaf: C('#ff7ad8'), bark: C('#6a4a8a'), glowAmt: 0.8 }) },
         ],
-        landmark: { style: 'biolum', H: 70, name: 'Tree of Voices', text: 'Every root hums with the memory of the forest.', pal: { leaf: C('#1f6a5e'), leaf2: C('#3a8a7a'), bark: C('#3a3448'), glow: C('#7ae0ff'), glowAmt: 0.7 } },
+        landmark: { style: 'biolum', H: 96, name: 'Tree of Voices', text: 'Every root hums with the memory of the forest.', pal: { leaf: C('#1f6a5e'), leaf2: C('#3a8a7a'), bark: C('#3a3448'), glow: C('#7ae0ff'), glowAmt: 0.7 } },
       },
-      motes: [{ type: 'flies', colors: ['#7af0ff', '#c0a0ff'], glow: 2.2, size: 1.7, height: 6, n: 1.3 }],
+      motes: [{ type: 'flies', colors: ['#7af0ff', '#c0a0ff'], glow: 2.2, size: 1.7, height: 6, n: 1.3 }, { type: 'spores', colors: ['#8af4ff', '#c8fff0', '#d0b0ff'], glow: 1.6, always: true }],
       under: { density: 0.16, open: 0.4, species: [{ kind: 'fern', w: 1, pal: (k) => ({ leaf: C(['#1f6a4e', '#2a5a6a', '#245a40'][k % 3]), leaf2: C('#3ae0d0'), glowAmt: 0.9 }) }, { kind: 'fern', w: 0.4, sizeK: 1.6, pal: () => ({ leaf: C('#3a2a6a'), leaf2: C('#b07aff'), glowAmt: 1.2 }) }] },
       rocks: { density: 0.004, color: rock, moss: 0.85, mossCol: '#1f5a4a', size: 1.1, glowMoss: 0.25 },
     };
@@ -88,7 +88,7 @@ export function floraProfile(kind, A) {
           { kind: 'broad', w: 0.3, pal: () => ({ leaf: C('#7a8a3a'), bark: C('#4a4238') }) },
           { kind: 'scrub', w: 0.6, pal: () => ({ leaf: C('#a89040'), bark: C('#4a4038') }) },
         ],
-        landmark: { style: 'golden', H: 160, name: 'The Erdtree', text: 'Its light is the grace that guides the lost.', pal: { leaf: C('#ffc850'), leaf2: C('#fff0a0'), bark: C('#8a7a5a'), glowAmt: 3.6, glow: C('#ffd27a') } },
+        landmark: { style: 'golden', H: 230, name: 'The Erdtree', text: 'Its light is the grace that guides the lost.', pal: { leaf: C('#ffc850'), leaf2: C('#fff0a0'), bark: C('#8a7a5a'), glowAmt: 3.6, glow: C('#ffd27a') } },
       },
       motes: [{ type: 'leaves', colors: ['#e8b040', '#f8d878'], size: 0.9 }, { type: 'flies', colors: ['#ffd27a', '#fff0b0'], glow: 0.9, always: true }],
       litter: { density: 5, colors: ['#e0a83a', '#f0c050', '#c8902a'], size: 0.12 },

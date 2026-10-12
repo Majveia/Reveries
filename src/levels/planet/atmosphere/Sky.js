@@ -56,16 +56,17 @@ void main(){
   vec3 dc = cubeFaceDir(uFace, st);
   vec3 d = normalize(uCelToGal * dc);
   vec3 L = vec3(0.0), T = vec3(1.0);
-  const int N = 48;
+  const int N = 64;
   float tMax = uRgal * 2.2;
   float prev = 0.0;
+  float jit = hash12(gl_FragCoord.xy + float(uFace) * 61.7) - 0.5;
   float hR = uRgal * 0.28;
   float ca = cos(uBarAngle), sa = sin(uBarAngle);
   for (int i = 0; i < N; i++) {
     float a = (float(i) + 1.0) / float(N);
     float tn = tMax * a * a;
     float dt = tn - prev;
-    float t = prev + 0.5 * dt;
+    float t = prev + (0.5 + 0.8 * jit) * dt;
     prev = tn;
     vec3 p = uObs + d * t;
     float R = length(p.xz);
@@ -82,7 +83,7 @@ void main(){
     float n1 = snoise(p * 3.4), n2 = snoise(p * 9.5 + 3.1), n4 = snoise(p * 22.0 - 1.7);
     float n3 = n2 * 0.5 + 0.5 * sin(dot(p, vec3(19.1, 27.3, 23.7)) + n1 * 4.0);
     float clump = clamp(0.6 + 0.3 * n1 + 0.3 * n2 + 0.15 * n4, 0.0, 2.0);
-    vec3 em = vec3(1.0, 0.86, 0.7) * disk * (0.35 + 1.4 * arm) * clump
+    vec3 em = vec3(0.95, 0.94, 0.92) * disk * (0.35 + 1.4 * arm) * clump
             + uColArms * thin * arm * uSF * 1.6 * (0.6 + 0.6 * n2)
             + uColHII * thin * pow(arm, 2.0) * uSF * max(n3, 0.0) * 2.5
             + uColCore * (bar * 2.2 + bulge * 6.0);
@@ -161,7 +162,8 @@ vec3 starLayer(vec3 d, float scale, float seed, float density, float fmin, float
   float ang = length(d - sd);
   float sig = uPixelAng * 0.7;   // >= ~1.2 px footprint: survives upsampling and FXAA
   float u = max(h.y / max(density, 1e-3), 1e-4);
-  float flux = min(fmin * pow(u, -0.6667), fmax);
+  // N(>F) ∝ F^-0.9 (≈ the naked-eye dN/dm ∝ 10^0.35m): a few dozen brilliant anchors over a fine dust
+  float flux = min(fmin * pow(u, -1.1), fmax);
   float g = exp(-ang * ang / (2.0 * sig * sig)) / (6.2831853 * sig * sig);
   // mostly white with a gentle B-V tint
   vec3 tint = mix(vec3(1.0), starColor(h.z), 0.45);
@@ -220,7 +222,7 @@ void main(){
     // Lommel–Seeliger-ish (flat full moon) blended with Lambert
     float mu0 = max(ndl, 0.0), mu = max(dot(n, -md), 0.05);
     float ls = mu0 / (mu0 + mu) * 2.0;
-    float lit = mix(mu0, ls, 0.55) * smoothstep(-0.02, 0.06, ndl);
+    float lit = mix(mu0, ls, 0.5) * smoothstep(-0.05, 0.14, ndl) * (0.85 + 0.15 * smoothstep(0.0, 0.5, ndl));
     vec3 L = alb * uMoonCol[i].a * uSunE * (2.6 / 3.14159) * lit;
     // planetshine on the night side
     L += alb * uMoonInfo[i].z * (1.0 - smoothstep(-0.1, 0.2, ndl));
@@ -241,7 +243,7 @@ void main(){
     vec3 Lm = uMoonCol[i].rgb * uMoonCol[i].a * uSunE * 0.8 * frac * frac;
     float x = max(th - ar, 0.0);
     float glow = 0.14 * exp(-x / (ar * 1.4)) + 0.03 * exp(-x / (ar * 5.0)) + 0.006 * exp(-x / (ar * 20.0));
-    col += Lm * glow * (1.0 - uSpace) * step(ar, th);
+    col += Lm * glow * (1.0 - uSpace) * mix(0.75, 1.0, step(ar, th));
   }
 
   // ---- sun -----------------------------------------------------------------
@@ -266,30 +268,33 @@ void main(){
     // the band, bulge and star clouds keep their structure; mostly neutral colour.
     // seen from inside the disk the band is mostly neutral starlight: warm only toward
     // the bulge, cool-white in the arms; contrast lives in the dust rifts, not the hue
-    vec3 galD = mix(vec3(gl) * vec3(0.93, 0.96, 1.06), gal, 0.5) * uGalaxyGain * 0.7;
     float gd = gl * uGalaxyGain * 0.7;
-    galD *= smoothstep(0.004, 0.04, gd) * clamp(gd / 0.04, 0.3, 1.5);
+    // blue-white star clouds in the faint arms, warm only in the luminous bulge
+    vec3 gtint = mix(vec3(0.84, 0.92, 1.1), vec3(1.1, 0.96, 0.8), smoothstep(0.03, 0.2, gd));
+    vec3 galD = mix(vec3(gl) * gtint, gal, 0.3) * uGalaxyGain * 0.7;
+    galD *= smoothstep(0.007, 0.05, gd) * clamp(gd / 0.04, 0.3, 1.8);
     // dust: coherent dark rifts hugging the mid-plane (Great-Rift-like) plus mottled
     // star clouds; smooth fBm lanes, anisotropic along the plane (no crackle veins)
     vec3 dg = uCelToGal * dc;
-    float bandM = exp(-dg.y * dg.y / 0.02);
+    float bandM = exp(-dg.y * dg.y / 0.012);
     if (bandM > 0.01) {
-      vec3 fp = vec3(dg.x, dg.y * 3.0, dg.z);
+      // filaments stretched along galactic longitude
+      vec3 fp = vec3(dg.x, dg.y * 5.0, dg.z);
       float lanes = snoise(fp * 4.0 + 1.7) * 0.55 + snoise(fp * 11.0 + vec3(5.1, 2.3, 8.7)) * 0.3 + snoise(fp * 27.0 - 3.3) * 0.15;
-      float rift = smoothstep(-0.05, 0.55, lanes) * exp(-dg.y * dg.y / 0.004);
+      float rift = smoothstep(0.0, 0.45, lanes) * exp(-dg.y * dg.y / 0.0025);
       float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
-      float mott = 0.75 + 0.5 * smoothstep(-0.5, 0.8, snoise(dc * 40.0) * 0.6 + snoise(dc * 110.0) * 0.4);
-      float absorb = clamp(rift * 0.85 + patchy * (1.0 - rift), 0.0, 0.92);
+      float mott = 0.8 + 0.4 * smoothstep(-0.5, 0.8, snoise(dc * 40.0));
+      float absorb = clamp(rift * 0.92 + patchy * (1.0 - rift), 0.0, 0.94);
       galD *= mix(1.0, (1.0 - absorb) * mott, bandM);
       // dust reddens what it does not block
-      galD *= mix(vec3(1.0), vec3(1.08, 0.97, 0.86), absorb * bandM);
+      galD *= mix(vec3(1.0), vec3(1.04, 0.98, 0.92), absorb * bandM);
     }
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
     float dens = smoothstep(0.0, 1.0, gl * 90.0);
-    stars += starLayer(dc, 70.0, 1.0, 0.42, 0.010, 6.0);               // naked-eye stars (~8k)
-    stars += starLayer(dc, 190.0, 7.0, 0.10 + 0.55 * dens, 0.0035, 0.25); // faint field, clustered in the band
-    stars += starLayer(dc, 420.0, 13.0, 0.03 + 0.5 * dens * dens, 0.0016, 0.05); // unresolved band grain
+    stars += starLayer(dc, 70.0, 1.0, 0.3, 0.004, 9.0);                // naked-eye stars (~6k, wide magnitude range)
+    stars += starLayer(dc, 190.0, 7.0, 0.025 + 0.6 * dens, 0.0025, 0.12); // faint field, crowded into the band
+    if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.5 * dens * dens, 0.0014, 0.035); // unresolved band grain (band only)
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
     float el = dot(rd, up);
@@ -428,7 +433,7 @@ export default class Sky {
         uColCore: { value: new THREE.Vector3(...(g.colorCore || [1, 0.8, 0.6])) },
         uColArms: { value: new THREE.Vector3(...(g.colorArms || [0.7, 0.8, 1])) },
         uColHII: { value: new THREE.Vector3(...(g.colorHII || [1, 0.5, 0.6])) },
-        uGain: { value: 0.075 },
+        uGain: { value: 0.06 },
       },
     });
     const fs = makeFullscreen();
