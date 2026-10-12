@@ -42,7 +42,9 @@ export function building(ctx, lot) {
   if (tower) return roundTower(ctx, lot);
 
   const w = Math.max(5, lot.w * rng.range(0.86, 0.98)), d = Math.max(5, lot.d * rng.range(0.82, 0.98));
-  let floors = core ? rng.int(2, 4) : zone < 0.65 ? rng.int(1, 3) : rng.int(1, 2);
+  // district massing: a dense tall core of 3-5 storey town houses stepping down to 1-2 storey
+  // cottages at the edge, so the town reads as a hierarchy instead of a uniform carpet
+  let floors = core ? (rng.chance(0.35) ? rng.int(4, 5) : rng.int(2, 3)) : zone < 0.65 ? rng.int(1, 3) : (rng.chance(0.25) ? 2 : 1);
   if (lot.plaza) floors = Math.max(floors, 3);
   const fh = rng.range(2.9, 3.2);
   const fl = 0.35;

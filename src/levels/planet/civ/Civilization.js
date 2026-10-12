@@ -361,7 +361,7 @@ export default class Civilization {
     }
     }
     w.setTimeOfDay(best?.tod ?? times[0].tod, s.site.dir);
-    if (this._dbg) { f.sunLocal(w.sunDir, sunL); console.warn('[civ-dbg] times', JSON.stringify(times), 'best', JSON.stringify(best), 'sunL', sunL.toArray().map((v) => v.toFixed(3)).join(','), 'sunA', Math.atan2(sunL.z, sunL.x).toFixed(2), 'tod', w.timeOfDay); }
+    if (this._dbg) { f.sunLocal(w.sunDir, sunL); const sn = this.level.sun; console.warn('[civ-dbg] sun', sn?.intensity, sn?.color?.getHexString?.(), 'amb', this.level.hemi?.intensity ?? this.level.ambient?.intensity); console.warn('[civ-dbg] times', JSON.stringify(times), 'best', JSON.stringify(best), 'sunL', sunL.toArray().map((v) => v.toFixed(3)).join(','), 'sunA', Math.atan2(sunL.z, sunL.x).toFixed(2), 'tod', w.timeOfDay); }
     if (!best) { // fallback: high above the centre
       best = { x: c[0] + Rb, z: c[1], camY: ch + 120, yaw: Math.PI, pitch: -0.25, vfov: 0.8 };
     }

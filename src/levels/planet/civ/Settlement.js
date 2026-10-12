@@ -204,6 +204,9 @@ export class Settlement {
       this.group.add(mesh); this.meshes.push(mesh);
       this.archMeshes = this.archMeshes || [];
       this.archMeshes.push(mesh);
+      // per-tier draw distance for ordinary tiles (landmark tiles always draw: they carry the skyline)
+      mesh.geometry.computeBoundingSphere();
+      mesh.userData.civCull = !String(key).startsWith('landmark');
       B.clear();
     }
     yield;
@@ -399,6 +402,15 @@ export class Settlement {
     const sunL = this.frame.sunLocal(this.world.sunDir, this.uniforms.uCivSunL.value);
     this.shadow.update(sunL, this.level.engine.shotMode && !this._shotShadowDone);
     if (this.level.engine.shotMode) this._shotShadowDone = true;
+    // phones: city tiles beyond the tier's draw distance drop out (the far glow LOD keeps the lights)
+    const tileR = this.level.engine.quality.pick(1700, 2800, Infinity, Infinity);
+    if (tileR < Infinity && this.archMeshes) {
+      for (const m of this.archMeshes) {
+        if (!m.userData.civCull) continue;
+        const bs = m.geometry.boundingSphere;
+        m.visible = !bs || camLocal.distanceTo(bs.center) - bs.radius < tileR;
+      }
+    }
     for (const fn of this.anim) fn(t, dt);
     this.people?.update(dt, t, camLocal, camDist);
     this.traffic?.update(dt, t, camLocal, camDist);

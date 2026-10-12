@@ -444,6 +444,32 @@ export default class Vehicles {
     }
   }
 
+  /** Number of collider samples along segment a→b that fall inside a collider grown by `pad` (m). */
+  _segBlocked(a, b, pad = 0.3) {
+    const cols = this.world.colliders;
+    if (!cols || !cols.size) return 0;
+    const mid = _p.copy(a).add(b).multiplyScalar(0.5), reach = a.distanceTo(b) * 0.5 + pad + 30;
+    const near = [];
+    for (const c of cols) { const ce = c.center || c.position; if (ce && ce.distanceToSquared(mid) < reach * reach) near.push(c); }
+    if (!near.length) return 0;
+    let hits = 0;
+    const q = new THREE.Vector3(), l = new THREE.Vector3(), iq = new THREE.Quaternion();
+    for (let i = 0; i <= 16; i++) {
+      q.lerpVectors(a, b, i / 16);
+      for (const c of near) {
+        if (c.type === 'sphere') { if (q.distanceTo(c.center) < c.radius + pad) { hits++; break; } }
+        else if (c.type === 'cylinder') {
+          l.copy(q).sub(c.center); const h = l.dot(c.up);
+          if (h > -pad && h < c.height + pad && l.addScaledVector(c.up, -h).length() < c.radius + pad) { hits++; break; }
+        } else if (c.type === 'box') {
+          l.copy(q).sub(c.center); if (c.quaternion) l.applyQuaternion(iq.copy(c.quaternion).invert());
+          if (Math.abs(l.x) < c.half.x + pad && Math.abs(l.y) < c.half.y + pad && Math.abs(l.z) < c.half.z + pad) { hits++; break; }
+        }
+      }
+    }
+    return hits;
+  }
+
   /** Unit tangent at `dir` pointing toward `target` (any tangent if degenerate). */
   _tangentTo(dir, target) {
     const t = target.clone().normalize().sub(dir);
@@ -478,36 +504,54 @@ export default class Vehicles {
     const sdir = (spot?.dir || site?.dir || w.focus.clone()).clone().normalize();
 
     if (name === 'bike') {
-      const bike = this.list.find((v) => v.type === 'bike');
-      w.setTimeOfDay(this.shotParams?.tod ?? 0.37, sdir);
-      // race past the settlement on the flat, dry ground where the player spawns
+      const bike = this.list.find((v) => v.type === 'bike'), sp = this.shotParams || {};
+      w.setTimeOfDay(sp.tod ?? 0.33, sdir);
+      // pick a run: candidates around the settlement's open fringe (flora thins there, houses in view)
+      // and around the player spawn; score flatness, dryness and an obstacle-free corridor
       const ss = this._playerSpawnSpot();
-      const sd = ss.dir.clone().normalize();
       const center = site?.dir || sdir;
-      const radial = this._tangentTo(sd, center.clone().multiplyScalar(w.radius)).negate();
-      // heading: the candidate that runs ALONG the slope (least height change), so the horizon stays level
-      let head = null, best = Infinity;
-      for (let k = 0; k < 12; k++) {
-        const hd = radial.clone().applyAxisAngle(sd, (k / 12) * Math.PI * 2);
-        const a = sd.clone().addScaledVector(hd, 40 / w.radius).normalize(), b = sd.clone().addScaledVector(hd, -40 / w.radius).normalize();
-        const ha = w.heightAt(a), hb = w.heightAt(b);
-        if (w.hasOcean && Math.min(ha, hb) < w.seaLevel + 1) continue;
-        const sc = Math.abs(ha - hb) + Math.abs(ha + hb - 2 * w.heightAt(sd)) * 0.5 + (k % 6 === 0 ? 0 : 0.01);
-        if (sc < best) { best = sc; head = hd; }
+      const cands = [];
+      const sd0 = ss.dir.clone().normalize();
+      for (let k = 0; k < 12; k++) cands.push({ d: sd0, hd: this._tangentTo(sd0, center.clone().multiplyScalar(w.radius)).applyAxisAngle(sd0, (k / 12) * Math.PI * 2) });
+      if (site) {
+        const t1 = new THREE.Vector3(0, 1, 0).cross(center); if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0); t1.normalize();
+        for (const rf of [0.5, 0.6, 0.72]) for (let k = 0; k < 16; k++) {
+          const ax = t1.clone().applyAxisAngle(center, (k / 16) * Math.PI * 2);
+          const d = center.clone().addScaledVector(ax, site.radius * rf / w.radius).normalize();
+          const radial = this._tangentTo(d, center.clone().multiplyScalar(w.radius)).negate();
+          const tang = radial.clone().cross(d).normalize();
+          cands.push({ d, hd: tang }, { d, hd: tang.clone().negate() });
+        }
       }
-      if (!head) head = radial.clone().cross(sd).normalize();
-      if (this.shotParams?.head) head.applyAxisAngle(sd, this.shotParams.head);
-      const start = sd.clone().addScaledVector(head, -60 / w.radius).normalize();
+      let best = null, bs = Infinity;
+      const P = (d, hd, m) => d.clone().addScaledVector(hd, m / w.radius).normalize();
+      for (const c of cands) {
+        const hs = [-90, -45, 0, 30].map((m) => w.heightAt(P(c.d, c.hd, m)));
+        if (w.hasOcean && Math.min(...hs) < w.seaLevel + 1.5) continue;
+        let sc = Math.abs(hs[0] - hs[2]) * 0.5 + Math.abs(hs[1] - (hs[0] + hs[2]) / 2) + Math.abs(hs[3] - hs[2]) * 0.6;
+        // obstacles near the path / the chase camera (houses, trees, poles)
+        const p0 = P(c.d, c.hd, -70).multiplyScalar(w.radius + hs[0]), p1 = P(c.d, c.hd, 15).multiplyScalar(w.radius + hs[2]);
+        sc += this._segBlocked(p0, p1, 4.5) * 4;
+        if (sc < bs) { bs = sc; best = c; }
+      }
+      const sd = best.d, head = best.hd.clone();
+      if (sp.head) head.applyAxisAngle(sd, sp.head);
+      const start = sd.clone().addScaledVector(head, -64 / w.radius).normalize();
       bike.place(start, head);
       this._boardForShot(bike);
       const inp = this.shotInput = new ScriptInput();
-      inp.move.y = 1; inp.move.x = 0.08; if (!this.shotParams?.noboost) inp.held.add('sprint');
+      inp.move.y = 1; inp.move.x = 0.04; if (!sp.noboost) inp.held.add('sprint');
       this.shotDrive = bike;
       bike.velocity.copy(head).multiplyScalar(55);
       bike._s = 55;
       this._simulate(70);
-      // low, close, beside the rear quarter, looking slightly up past the nose: sky + settlement fill the top third
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(this.shotParams?.bx ?? 2.2), this.shotParams?.by ?? 0.95, -(this.shotParams?.bz ?? 4.3)), target: new THREE.Vector3(0.1, 0.85, 4), fov: 56, minClear: 0.3, bankRoll: 0.1 };
+      // low dramatic chase off the rear quarter, looking down the run toward the horizon (sky in the top third);
+      // camera side chosen so nothing stands between the lens and the rider
+      const side = sp.side ?? (() => {
+        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.9 * sg, 0.85, -3.7), target: new THREE.Vector3(0.35 * sg, 1.25, 20) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5; };
+        return tryS(1) <= tryS(-1) ? 1 : -1;
+      })();
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.9) * side, sp.by ?? 0.85, -(sp.bz ?? 3.7)), target: new THREE.Vector3(0.35 * side, 1.25, 20), fov: sp.fov ?? 64, minClear: 0.45, bankRoll: 0.1 };
       this._updateShotCam();
       return true;
     }
@@ -550,7 +594,7 @@ export default class Vehicles {
       const lft = new THREE.Vector3().crossVectors(upS, fw).normalize();
       let best = null, bs = -Infinity;
       for (let k = 0; k < 18; k++) {
-        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(11, 17), h = R.range(0.6, 4);
+        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(17, 24), h = R.range(0.8, 4.5);
         const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
         const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
         const view = ship.position.clone().sub(cam).normalize();
@@ -560,13 +604,13 @@ export default class Vehicles {
       }
       const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
       // aim slightly ahead of the ship along its path: the ship sits off-centre, leading the frame
-      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.12, 0.9, 3.5), fov: sp.fov ?? R.range(42, 54), minClear: 1.2, bankRoll: 0.25 };
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(44, 54), minClear: 1.2, bankRoll: 0.25 };
       this._updateShotCam();
       return true;
     }
     if (name === 'orbit') {
       const ship = this.hero;
-      w.setTimeOfDay(this.shotParams?.tod ?? 0.705, sdir);
+      w.setTimeOfDay(this.shotParams?.tod ?? 0.745, sdir);
       // low orbit (the 2.5 R spawn) above the afternoon side; nose toward the limb
       const side = new THREE.Vector3(0, 1, 0).cross(sdir).normalize();
       const p = sdir.clone().addScaledVector(side, 0.35).normalize();
@@ -584,7 +628,7 @@ export default class Vehicles {
       ship.space = 1;
       ship._holdForShot = true;
       // rear 3/4, ~30° off the tail axis: plume in profile, planet beyond the ship
-      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? -6.5, this.shotParams?.oy ?? 2.6, this.shotParams?.oz ?? -13), target: new THREE.Vector3(-3.5, -2.2, 30), fov: this.shotParams?.fov ?? 45 };
+      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? -6.5, this.shotParams?.oy ?? 2.6, this.shotParams?.oz ?? -15), target: new THREE.Vector3(-1.5, -2.4, 30), fov: this.shotParams?.fov ?? 45 };
       this._updateShotCam();
       return true;
     }
