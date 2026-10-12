@@ -269,9 +269,9 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
     { z: -1.35, w: 0.31, h: 0.25, y: 0.43, n: 3.4, top: 1.15 },
     { z: -0.8, w: 0.24, h: 0.19, y: 0.34, n: 3.2 },
     { z: -0.15, w: 0.22, h: 0.19, y: 0.33, n: 3.0 },
-    { z: 0.5, w: 0.3, h: 0.26, y: 0.42, n: 3.4, top: 1.25 },
-    { z: 1.15, w: 0.29, h: 0.25, y: 0.44, n: 3.4, top: 1.1 },
-    { z: 1.65, w: 0.2, h: 0.18, y: 0.4, n: 2.8 },
+    { z: 0.5, w: 0.36, h: 0.31, y: 0.45, n: 3.4, top: 1.25 },
+    { z: 1.15, w: 0.35, h: 0.3, y: 0.47, n: 3.4, top: 1.1 },
+    { z: 1.7, w: 0.24, h: 0.21, y: 0.42, n: 2.8 },
     { z: 2.0, w: 0.08, h: 0.08, y: 0.34, n: 2.2 },
   ], { seg: 40 }), bodyPaint, 0.9));
   // keel / chassis spine underneath (dark metal)
@@ -290,7 +290,7 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   ], { seg: 20 }), col('#141518'), 2));
   // windscreen over the front cowl
   const ws = new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
-  ws.scale(0.24, 0.2, 0.42); ws.rotateX(-0.5); ws.translate(0, 0.7, 0.98);
+  ws.scale(0.31, 0.25, 0.48); ws.rotateX(-0.5); ws.translate(0, 0.74, 1.0);
   glass.push(finish(ws, 0xffffff, 1));
   // instrument binnacle + twin headlamp housing
   metal.push(finish(box(0.2, 0.07, 0.16, 0, 0.74, 0.55), DARK, 3));
@@ -303,12 +303,16 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   const pods = [[1.2, 0.42], [-1.25, 0.46]];
   for (const [z, r] of pods) {
     const h = lathe([[0.001, -0.1], [r * 0.85, -0.1], [r, -0.04], [r * 1.02, 0.05], [r * 0.92, 0.11], [0.001, 0.11]], 36);
-    h.rotateX(Math.PI / 2); h.scale(0.6, 1, 1); h.translate(0, 0.06, z);
+    h.translate(0, -0.005, 0); h.rotateZ(Math.PI / 2); h.translate(0, 0.08, z);
     metal.push(finish(h, GUN, 1.5));
-    // cooling fins on the housing rim
-    for (let k = 0; k < 7; k++) {
-      const a = (k / 6 - 0.5) * 2.2;
-      for (const s of [1, -1]) metal.push(finish(box(0.012, 0.09, 0.12, s * Math.sin(1.57 + a * 0.3) * r * 0.62, 0.07, z + Math.cos(1.57 + a) * r * 0.75), BLACK, 3));
+    // hub caps + spoke vanes on both faces (reads as a wheel from the side)
+    for (const s of [1, -1]) {
+      metal.push(finish(new THREE.CircleGeometry(r * 0.42, 24).rotateY(s * Math.PI / 2).translate(s * 0.112, 0.08, z), DARK, 3));
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2, sp = box(0.012, 0.03, r * 0.5, 0, 0, r * 0.62);
+        sp.rotateX(a); sp.translate(s * 0.108, 0.08, z);
+        metal.push(finish(sp, STEEL, 3));
+      }
     }
   }
   // ---- outrigger steering vanes (speeder DNA): long blades sweeping forward past the nose
@@ -342,13 +346,13 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
     paint.push(finish(s < 0 ? flipWinding(fin) : fin, BODY, 2));
   }
   // rear turbine nacelle with intake ring and nozzle petals
-  metal.push(finish(lathe([[0.001, -2.3], [0.16, -2.3], [0.2, -2.22], [0.23, -2.0], [0.22, -1.75], [0.16, -1.55], [0.001, -1.55]], 28).translate(0, 0.5, 0), GUN, 1.5));
-  metal.push(finish(lathe([[0.15, -2.33], [0.185, -2.33], [0.185, -2.18], [0.15, -2.18]], 28).translate(0, 0.5, 0), BLACK, 1.5));
+  metal.push(finish(lathe([[0.001, -2.3], [0.12, -2.3], [0.15, -2.22], [0.175, -2.0], [0.17, -1.75], [0.13, -1.55], [0.001, -1.55]], 28).translate(0, 0.5, 0), GUN, 1.5));
+  metal.push(finish(lathe([[0.11, -2.33], [0.14, -2.33], [0.14, -2.18], [0.11, -2.18]], 28).translate(0, 0.5, 0), BLACK, 1.5));
   // exposed turbine: hub cone + fan blades behind the nacelle lip (seen from the chase cam)
   metal.push(finish(lathe([[0.001, -2.36], [0.05, -2.3], [0.06, -2.26]], 16).translate(0, 0.5, 0), STEEL, 3));
   for (let k = 0; k < 14; k++) {
     const a = (k / 14) * Math.PI * 2;
-    const bl = box(0.012, 0.1, 0.035, 0, 0.1, 0); bl.rotateZ(a); bl.rotateY(0); bl.translate(0, 0.5, -2.315);
+    const bl = box(0.012, 0.075, 0.035, 0, 0.075, 0); bl.rotateZ(a); bl.rotateY(0); bl.translate(0, 0.5, -2.315);
     metal.push(finish(bl, GUN, 3));
   }
   // ribbed coolant hoses: engine → repulsor pods, and chrome exhaust tips
@@ -375,11 +379,12 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   const hoverM = M.glow('#6fe4ff', 8).clone();
   const discs = [];
   for (const [z, r] of pods) {
-    const ring = new THREE.TorusGeometry(r * 0.74, 0.022, 6, 48); ring.rotateX(Math.PI / 2); ring.scale(0.6, 1, 1); ring.translate(0, -0.045, z);
-    const d = new THREE.CircleGeometry(r * 0.45, 24); d.rotateX(Math.PI / 2); d.scale(0.6, 1, 1); d.translate(0, -0.042, z);
-    discs.push(ring, d);
+    // emissive rim bands on both faces of each repulsor wheel (visible from the side/chase)
+    for (const s of [1, -1]) { const ring = new THREE.TorusGeometry(r * 0.8, 0.018, 6, 48); ring.rotateY(Math.PI / 2); ring.translate(s * 0.115, 0.08, z); discs.push(ring); }
+    const d = new THREE.CircleGeometry(r * 0.5, 24); d.rotateX(Math.PI / 2); d.translate(0, -0.33, z);
+    discs.push(d);
   }
-  const nozzleRing = new THREE.TorusGeometry(0.165, 0.012, 6, 32); nozzleRing.translate(0, 0.5, -2.31);
+  const nozzleRing = new THREE.TorusGeometry(0.125, 0.01, 6, 32); nozzleRing.translate(0, 0.5, -2.31);
   discs.push(nozzleRing);
   group.add(new THREE.Mesh(merge(discs.map((g) => finish(g))), hoverM));
   const tailM = M.glow('#ff2a1a', 18);
@@ -391,7 +396,7 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   group.add(head);
   return {
     group, hoverMat: hoverM,
-    nozzles: [{ pos: new THREE.Vector3(0, 0.5, -2.3), r: 0.15, len: 1.4 }],
+    nozzles: [{ pos: new THREE.Vector3(0, 0.5, -2.3), r: 0.11, len: 1.4 }],
     pods: pods.map(([z]) => new THREE.Vector3(0, -0.05, z)),
     seat: new THREE.Vector3(0, 0.02, -0.55), length: 4.6, radius: 2.4,
   };

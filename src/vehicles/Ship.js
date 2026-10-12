@@ -407,7 +407,7 @@ export class Ship {
         const side = Math.random() < 0.5 ? -1 : 1, back = 1 + Math.random() * 13; // downwash under the hull → rooster tail
         _p.copy(this.position).addScaledVector(upN, -clear + 0.2).addScaledVector(fw, -back).addScaledVector(lf, side * (0.3 + Math.random() * 1.2));
         const vel = _v.copy(fw).multiplyScalar(this.speed * (0.1 + Math.random() * 0.12)).addScaledVector(lf, side * (2 + Math.random() * 5)).addScaledVector(upN, g.water ? 6 + Math.random() * 9 : 1 + Math.random() * 3);
-        if (g.water) P.emit(_p, vel, 0.9 + Math.random() * 1.1, 0.9, 5 + Math.random() * 4.5, 0.92, 0.95, 0.98, 0.62, t, true);
+        if (g.water) P.emit(_p, vel, 0.45 + Math.random() * 0.6, 0.9, 5 + Math.random() * 4.5, 0.92, 0.95, 0.98, 0.62, t, true);
         else P.emit(_p, vel, 1.8 + Math.random() * 1.5, 1.0, 5 + Math.random() * 4, dc.r, dc.g, dc.b, 0.3, t, false);
       }
     }

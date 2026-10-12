@@ -49,7 +49,7 @@ export class Bike {
     this.overWater = false; this.groundH = 0;
     this.sleeping = false;
     // VFX
-    this.flame = new Flame({ radius: 0.15, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.17 });
+    this.flame = new Flame({ radius: 0.11, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.17 });
     this.flame.mesh.position.copy(model.nozzles[0].pos);
     this.body.add(this.flame.mesh);
     this.glow = new GroundGlow([0.3, 0.8, 1.0]);
@@ -243,14 +243,14 @@ export class Bike {
     if (this.glow.mesh.visible) {
       this.glow.mesh.position.copy(up).multiplyScalar(top + 0.06);
       this.glow.mesh.quaternion.copy(this.quaternion);
-      this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * (0.45 + 1.5 * (1 - w.daylight));
+      this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * 1.9 * (1 - w.daylight) ** 2;
       this.glow.uniforms.uTime.value = t;
     }
     // tail-light ribbon at speed (Akira light trails)
     _p.copy(this.model.nozzles[0].pos).add(_v.set(0, 0.1, 0.25));
     this.body.updateMatrixWorld();
     _p.applyMatrix4(this.body.matrixWorld);
-    this.lightTrail.push(_p, clamp((sp - 12) / 40, 0, 1) * (0.6 + this.boost));
+    this.lightTrail.push(_p, clamp((sp - 12) / 40, 0, 1) * (0.6 + this.boost) * (1 - 0.85 * w.daylight));
     this.lightTrail.uniforms.uLight.value.setScalar(1.6 + this.boost * 1.6);
     // dust / spray
     if (sp > 6 && hgt < 4) {
