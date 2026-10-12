@@ -15,16 +15,18 @@ vec3 webPalette(float h){
   vec3 c1 = vec3(0.030, 0.010, 0.120);   // faint sheet: deep indigo
   vec3 c2 = vec3(0.150, 0.070, 0.620);   // violet-blue sheet / thin filament
   vec3 c3 = vec3(0.100, 0.420, 1.000);   // cyan-blue filament
-  vec3 c4 = vec3(0.260, 0.800, 1.100);   // electric cyan filament spine
-  vec3 c5 = vec3(1.650, 0.760, 0.250);   // amber group
-  vec3 c6 = vec3(1.900, 1.350, 0.750);   // white-gold cluster core
+  vec3 c4 = vec3(0.200, 0.780, 1.200);   // electric cyan filament spine
+  vec3 c45 = vec3(0.900, 0.920, 1.050);  // hot white crossover (where filaments feed a node)
+  vec3 c5 = vec3(1.300, 0.640, 0.200);   // amber group
+  vec3 c6 = vec3(1.600, 1.150, 0.560);   // white-gold cluster core
   h = clamp(h, 0.0, 1.2);
   if (h < 0.20) return mix(c0, c1, h / 0.20);
   if (h < 0.36) return mix(c1, c2, (h - 0.20) / 0.16);
   if (h < 0.46) return mix(c2, c3, (h - 0.36) / 0.10);
   if (h < 0.54) return mix(c3, c4, (h - 0.46) / 0.08);
-  if (h < 0.63) return mix(c4, c5, (h - 0.54) / 0.09);
-  return mix(c5, c6, clamp((h - 0.63) / 0.27, 0.0, 1.0));
+  if (h < 0.63) return mix(c4, c45, smoothstep(0.54, 0.63, h));
+  if (h < 0.76) return mix(c45, c5, smoothstep(0.63, 0.76, h));
+  return mix(c5, c6, clamp((h - 0.76) / 0.24, 0.0, 1.0));
 }
 // the young universe (z ≳ 3): dim crimson plasma → amber → first blue-white protogalaxies
 vec3 earlyPalette(float h){
@@ -129,17 +131,16 @@ void main(){
   float val = fade * near * emis / (pxWorld * pxWorld * norm) / (uScale * uScale) * 1e-3; // ×1e-3 keeps half-float sums finite
   val *= pow(min(1.0, uPxMax / px), uClampK);              // under-sampled near field thins to a dim haze
   val = min(val, 30.0);
-  // aerial perspective of the web: distant structure cools to violet and fades exponentially
+  // aerial perspective of the web: distant structure fades exponentially (and cools to violet in
+  // the composite). Scalar channels only — colour is palette-mapped per PIXEL from the
+  // accumulated mass-weighted heat, so neighbouring sprites never produce colour confetti.
   float fd = max(dist - uFogNear, 0.0);
   float tr = exp(-fd / uFog);
-  vec3 col = mix(webPalette(heat), earlyPalette(heat), uEarly);
-  float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  col = mix(col, mix(vec3(0.16, 0.08, 0.70), vec3(0.45, 0.10, 0.06), uEarly) * (lum * 0.8 + 0.02), (1.0 - tr) * 0.65);
   val *= tr * uDim;
   // primordial glow (the first instants after the Bang): warm amber plasma
-  col = mix(col, vec3(1.25, 0.62, 0.28), uWarm);
   val *= 1.0 + 5.0 * uWarm * uWarm;
-  vC = vec4(col * val, val);
+  // r: Σ mass·heat · g: Σ mass·haze · b: sample count (×1e-3) · a: Σ mass
+  vC = vec4(val * heat, val * (1.0 - tr), 1e-3, val);
 }`;
 
 const TRACER_FRAG = /* glsl */ `
@@ -188,12 +189,12 @@ void main(){
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float thr = mix(0.40, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
+  float thr = mix(0.34, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
   // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
   float lum = smoothstep(thr, thr + 0.32, heat) * (0.25 + 3.4 * u * u * u * u);
   if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
-  float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 620.0 / max(dist, 5.0);
+  float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 150.0 / sqrt(max(dist, 5.0));   // pin-sharp at every distance
   float core = clamp(uPxK * (0.7 + 1.0 * u * u) * sqrt(30.0 / max(dist, 4.0)), 1.0, 2.6);   // sharp, sub-3px HDR points
   // the brightest ~0.3% get diffraction spikes (a much larger, mostly empty sprite)
   float spike = step(0.997, u) * smoothstep(0.55, 0.75, heat) * (1.0 - uWarm);
@@ -227,35 +228,49 @@ void main(){
 
 const COMPOSITE_FRAG = /* glsl */ `
 uniform sampler2D tInput; uniform sampler2D tAccum; uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
-uniform vec2 uTexel; uniform float uSmooth; uniform float uSharpA;
+uniform vec2 uTexel; uniform float uSmooth; uniform float uSharpA; uniform float uEarly; uniform float uWarm; uniform float uCap;
 varying vec2 vUv;
+${PALETTE_GLSL}
 void main(){
   vec3 base = texture2D(tInput, vUv).rgb;
   vec4 acc = texture2D(tAccum, vUv);
-  // Adaptive screen-space kernel smoothing (SPH-style): where the projected sheet is thin and
-  // sparsely sampled (sheets, void walls, filament skirts) the discrete tracer sprites are
-  // integrated over a wider disc, so matter reads as a continuous luminous medium instead of
-  // speckle; dense spines and nodes keep the sharp full-resolution kernel.
+  // Adaptive screen-space kernel smoothing (SPH-style), driven by the local SAMPLE COUNT (not the
+  // density): wherever fewer than a few sprites overlap a pixel — sheets, filament skirts, and the
+  // sparse member swarms of collapsed halos alike — the tracers are integrated over a wider disc,
+  // so matter reads as a continuous luminous medium; well-sampled pixels keep the sharp kernel.
+  // the kernel widens up to 3x where the local sample count is low (gaps between sparse sprites)
+  float c0 = acc.b * 1000.0;
+  float rad = uSmooth * mix(3.0, 1.0, smoothstep(0.3, uSharpA, c0));
   vec4 bl = acc * 0.16; float ws = 0.16;
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < 20; i++) {
     float fi = float(i) + 0.5;
-    float r = sqrt(fi / 14.0) * uSmooth;
+    float r = sqrt(fi / 20.0) * rad;
     float an = fi * 2.3999632;
-    float w = exp(-2.0 * fi / 14.0);
+    float w = exp(-2.0 * fi / 20.0);
     bl += texture2D(tAccum, vUv + vec2(cos(an), sin(an)) * r * uTexel) * w; ws += w;
   }
   bl /= ws;
-  float Ab = min(bl.a, 60000.0) * 1000.0;
-  float k = smoothstep(0.0, 1.0, log2(max(Ab, 1e-3) / uSharpA) * 0.2 + 0.5);   // wide log-space crossfade: no seams
+  float k = smoothstep(0.5, uSharpA, c0) * smoothstep(0.3, uSharpA, bl.b * 1000.0);
   acc = mix(bl, acc, k);
   float A = min(acc.a, 60000.0) * 1000.0;
-  vec3 C = min(acc.rgb, vec3(60000.0)) * 1000.0 / max(A, 1e-6);
+  float hm = acc.r / max(acc.a, 1e-12);                     // mass-weighted heat along the ray
+  float haze = clamp(acc.g / max(acc.a, 1e-12), 0.0, 1.0);  // fraction seen through the fog
+  vec3 C = mix(webPalette(hm), earlyPalette(hm), uEarly);
+  float lum = dot(C, vec3(0.2126, 0.7152, 0.0722));
+  C = mix(C, mix(vec3(0.16, 0.08, 0.70), vec3(0.45, 0.10, 0.06), uEarly) * (lum * 0.8 + 0.02), haze * 0.65);
+  C = mix(C, vec3(1.25, 0.62, 0.28), uWarm);
   // log column-density response with a black floor (faint sheets fall to true black, OLED)
-  // and an HDR shoulder so only the densest nodes exceed 1 and bloom
   float x = log(1.0 + pow(A / uA0, uToe));
   float xf = max(x - uFloor, 0.0);
-  float I = uGain * xf * xf / (xf + 0.6) + uHi * pow(A / uA0 * 0.01, 1.35);
-  gl_FragColor = vec4(base + C * I * uExposure, 1.0);
+  float I = uGain * xf * xf / (xf + 0.6) + uHi * (1.0 - exp(-A / (uA0 * 60.0)));
+  vec3 w = C * I * uExposure;
+  // highlight shoulder: the web itself never clips — it rolls off below display white with its
+  // hue intact (gold stays gold); only the brightest-cluster-galaxy cores exceed 1 and bloom
+  float wl = dot(w, vec3(0.2126, 0.7152, 0.0722));
+  float knee = 0.6 * uCap;
+  // logarithmic shoulder: dense cores keep a visible gradient all the way up instead of a plateau
+  if (wl > knee) w *= min(uCap, knee + (uCap - knee) * log(1.0 + (wl - knee) / 0.3) / log(1.0 + 6.0 / 0.3)) / wl;
+  gl_FragColor = vec4(base + w, 1.0);
 }`;
 
 export class WebRenderer {
@@ -264,7 +279,7 @@ export class WebRenderer {
     this.sim = sim;
     const { TW, m, L, T } = sim;
     this.params = {
-      gain: 0.30, a0: 60, hi: 0.015, toe: 1.4, floor: 1.2, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 60, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0, pxMax: 5, near: 10, early: 0, dim: 1, clampK: 1.0, smooth: 3.2, sharpA: 4000,
+      gain: 0.30, a0: 60, hi: 0.12, cap: 0.95, toe: 1.4, floor: 0.6, exposure: 1, gamma: 2.2, shimmer: 1, warm: 0, fog: 60, sizeK: 1.0, shape: 2, scale: 1, overlap: 1.4, contrastK: 1, galaxies: 1, fogNear: 0, pxMax: 5, near: 10, early: 0, dim: 1, clampK: 1.0, smooth: 3.2, sharpA: 4.0,
     };
     const geo = new THREE.BufferGeometry();
     const SUBS = Math.max(1, opts.subs ?? 1);
@@ -311,7 +326,7 @@ export class WebRenderer {
     const self = this;
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uTexel: { value: new THREE.Vector2() }, uSmooth: { value: 3 }, uSharpA: { value: 600 } },
+      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uTexel: { value: new THREE.Vector2() }, uSmooth: { value: 3 }, uSharpA: { value: 4 }, uEarly: { value: 0 }, uWarm: { value: 0 }, uCap: { value: 0.9 } },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
     this.effect = {
@@ -322,6 +337,7 @@ export class WebRenderer {
         u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe; u.uFloor.value = self.params.floor;
         const pxK = (self.accRT?.height || 720) / 720;
         u.uTexel.value.set(1 / (self.accRT?.width || 1), 1 / (self.accRT?.height || 1)); u.uSmooth.value = self.params.smooth * pxK; u.uSharpA.value = self.params.sharpA;
+        u.uEarly.value = self.params.early; u.uWarm.value = self.params.warm; u.uCap.value = self.params.cap ?? 0.9;
         ctx.fullscreen(self.compMat, output);
       },
     };

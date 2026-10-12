@@ -86,16 +86,19 @@ export class Star {
           // mesogranular / supergranular brightness modulation riding on top (SDO / DKIST look)
           vec3 wq = qs * uCell;
           wq += 0.55 * vec3(snoise(qs * uCell * 0.21 + uTime * 0.015), snoise(qs * uCell * 0.21 + 17.0 - uTime * 0.015), snoise(qs * uCell * 0.21 + 31.0));
+          // two interleaved granule populations (normal + large/exploding granules) blended by a slow
+          // mask: breaks the single-size Voronoi foam into the irregular DKIST look
           vec3 g1 = gcell(wq + vec3(0.0, 0.0, uTime * 0.03));
-          float edge = g1.y - g1.x;
-          float lane = smoothstep(-0.02, 0.35 + 0.15 * g1.z, edge);           // wide, diffuse intergranular lanes
-          float dome = pow(clamp(1.0 - g1.x / 0.8, 0.0, 1.0), 1.5);         // bright hot upflow, falling off radially
-          float cellT = 0.88 + 0.2 * g1.z;                                   // per-granule temperature
-          float sub = snoise(wq * 2.3 + uTime * 0.05);                       // exploding-granule texture
-          float gran = cellT * (0.45 + 0.55 * dome) * mix(0.7, 1.0, lane) * (0.95 + 0.05 * sub);
-          gran += (1.0 - lane) * 0.08 * (0.5 + 0.5 * snoise(wq * 6.0));     // magnetic bright points in the lanes
-          vec3 g2 = gcell(wq * 2.1 + 7.0 + vec3(uTime * 0.04));
-          gran *= 0.92 + 0.08 * smoothstep(0.0, 0.3, g2.y - g2.x);
+          vec3 g2 = gcell(wq * 0.78 + 7.0 + vec3(uTime * 0.02));
+          float gmix = smoothstep(-0.1, 0.6, snoise(qs * uCell * 0.08 + 41.0)) * 0.7;
+          float edge = mix(g1.y - g1.x, (g2.y - g2.x) * 1.15, gmix);
+          float f1 = mix(g1.x, g2.x, gmix), gz = mix(g1.z, g2.z, gmix);
+          float lane = smoothstep(-0.02, 0.1 + 0.2 * gz, edge);             // thin, dark intergranular lanes
+          float dome = clamp(1.0 - f1 / 0.9, 0.0, 1.0);                         // hot upflow fading to the cell edges
+          float cellT = 0.86 + 0.24 * gz;                                       // per-granule temperature
+          float sub = snoise(wq * 2.3 + uTime * 0.05);                          // exploding-granule texture
+          float gran = cellT * (0.38 + 0.62 * dome) * mix(0.45, 1.0, lane) * (0.94 + 0.06 * sub);
+          gran += (1.0 - lane) * 0.1 * smoothstep(0.55, 0.9, snoise(wq * 6.0)); // magnetic bright points in the lanes
           // filter the pattern toward its mean where it gets sub-pixel or foreshortened at the limb
           float fsh = fwidth(wq.x) + fwidth(wq.y) + fwidth(wq.z);
           gran = mix(gran, 0.66, clamp(smoothstep(0.35, 1.3, fsh) * 0.85 + (1.0 - smoothstep(0.05, 0.4, mu)) * 0.7, 0.0, 1.0));
@@ -122,14 +125,19 @@ export class Star {
             float az = atan(dot(o, t2), dot(o, t1));
             float fi = float(i) * 13.1;
             vec2 cs = vec2(cos(az), sin(az));
-            float r = dd * (1.0 + 0.25 * fbm(vec3(cs * 1.1, fi), 3) + 0.06 * snoise(q * uCell * 0.3));
-            float ru = dd * (1.0 + 0.3 * fbm(vec3(cs * 1.7, fi + 5.0), 3));
-            float u = 1.0 - smoothstep(0.30, 0.48, ru);
+            float r = dd * (1.0 + 0.38 * fbm(vec3(cs * 0.9, fi), 2) + 0.07 * snoise(vec2(az * 9.0, fi)) + 0.05 * snoise(q * uCell * 0.3));
+            float ru = dd * (1.0 + 0.4 * fbm(vec3(cs * 1.4, fi + 5.0), 3));
+            float u = 1.0 - smoothstep(0.30, 0.40, ru);
+            // fragmented umbra: 2-3 dark cores split by bright umbral dots/lanes
+            vec2 lq = vec2(dot(o, t1), dot(o, t2)) / s4.w;
+            float frag = snoise(lq * 3.2 + fi) + 0.5 * snoise(lq * 9.0 - fi);
+            u *= smoothstep(-0.55, 0.05, frag);
+            u = max(u, (1.0 - smoothstep(0.08, 0.2, length(lq - 0.12 * vec2(cos(fi), sin(fi))))) * 0.9);
             // light bridge: a bright granular lane cutting through the umbra
             vec2 lp = vec2(dot(o, t1), dot(o, t2)) / s4.w;
             float bridge = exp(-pow((lp.x * 0.8 + lp.y * 0.6 + 0.08 * snoise(lp * 6.0 + fi)) / 0.045, 2.0)) * step(0.5, fract(fi * 0.37 + 0.2));
             u *= 1.0 - 0.75 * bridge;
-            float pp = 1.0 - smoothstep(0.8, 1.05, r);
+            float pp = 1.0 - smoothstep(0.95, 1.0, r);
             // filaments: fast in azimuth, slow along the radius, with dark cores and bright grains at their heads
             float fil = 0.5 + 0.5 * snoise(vec2(az * 62.0, r * 2.2 + fi));
             fil = mix(fil, 0.5 + 0.5 * snoise(vec2(az * 140.0, r * 4.0 - fi)), 0.45);
@@ -149,13 +157,12 @@ export class Star {
           I = mix(I, 0.95 * penI, pen);   // penumbra: filaments replace granulation
           I *= mix(1.0, 0.07, umbra);
           // limb darkening (wavelength dependent: the limb is redder and dimmer)
-          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.42, 0.72, 1.15) * mix(1.0, 0.55, uHot));
-          limb *= 0.35 + 0.65 * smoothstep(0.0, 0.25, mu);
+          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.6, 0.9, 1.3) * mix(1.0, 0.55, uHot));
+          limb *= 0.55 + 0.45 * smoothstep(0.0, 0.12, mu);
           // far view: true stellar colour; close-up: a warm white-light filter — yellow-white granule tops, amber lanes
           vec3 farTone = uColor * mix(vec3(1.0, 0.78, 0.6), vec3(1.0), clamp(I, 0.0, 1.0)) * I;
-          vec3 nearTone = ramp(I * mix(0.74, 0.95, uHot) * (0.72 + 0.28 * smoothstep(0.0, 0.7, mu)) + 0.03) * pow(max(I, 0.0), 1.7) * 0.55;
+          vec3 nearTone = ramp(I * mix(0.74, 0.95, uHot) * (0.72 + 0.28 * smoothstep(0.0, 0.7, mu)) + 0.03) * pow(max(I, 0.0), 2.0) * 0.78;
           vec3 c = mix(farTone, nearTone, uFilter) * limb * uI;
-          c *= mix(vec3(1.0), vec3(1.0, 0.55, 0.3), max(umbra, pen * 0.5) * 0.6);
           gl_FragColor = vec4(c, 1.0);
         }`,
     });
@@ -279,7 +286,9 @@ export class Star {
           // wide veiling glare (scatter in the eye / lens): warm, very low amplitude
           core += 0.006 / (1.0 + r * r * 40.0);
           float ring = 0.0;
-          vec3 c = uColor * (core + spikes * 0.12 + rays) + vec3(0.6, 0.8, 1.0) * ring;
+          // colour gradient: white-hot core -> stellar colour -> warm scattered halo
+          vec3 tint = mix(mix(vec3(1.0), uColor, 0.45), uColor * vec3(1.08, 0.78, 0.5), smoothstep(0.02, 0.35, r));
+          vec3 c = tint * (core + spikes * 0.05 + rays) + vec3(0.6, 0.8, 1.0) * ring;
           gl_FragColor = vec4(c * uVis * uI * smoothstep(1.0, 0.8, r), 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true,
@@ -311,6 +320,80 @@ export class Star {
       }
     }
     return out;
+  }
+
+  // Volumetric quiescent prominence for the shot limb: a stack of translucent slices through one
+  // coherent 3D emission field: an arched magnetic flux rope over a hedgerow curtain of fine vertical
+  // threads, eroded by fbm, with coronal rain beading down the legs. H-alpha, bright enough to bloom.
+  _buildSheet(rng, color, dir) {
+    const R = this.radius;
+    const tan = new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
+    const side = new THREE.Vector3().crossVectors(dir, tan).normalize();
+    const span = R * 0.42, H = R * 0.2, NS = this.engine.quality.pick(6, 8, 12, 14), thick = R * 0.035;
+    const pos = [], sl = [], idx = [];
+    for (let j = 0; j < NS; j++) {
+      const o = ((j + 0.5) / NS - 0.5) * 2 * thick;
+      const base = pos.length / 3;
+      for (const [x, y] of [[-0.3, -0.03], [0.3, -0.03], [0.3, 0.3], [-0.3, 0.3]]) {
+        const v = dir.clone().multiplyScalar(R * (0.985 + y)).addScaledVector(tan, x * R).addScaledVector(side, o);
+        pos.push(v.x, v.y, v.z); sl.push(j / NS);
+      }
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('aSlice', new THREE.Float32BufferAttribute(sl, 1));
+    g.setIndex(idx);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: color }, uI: { value: 3.4 / NS }, uK: { value: 1 }, uTime: { value: 0 }, uRad: { value: R },
+        uDir: { value: dir }, uTan: { value: tan }, uSide: { value: side }, uSpan: { value: span }, uH: { value: H }, uThick: { value: thick } },
+      vertexShader: /* glsl */`
+        attribute float aSlice; varying float vS; varying vec3 vWP;
+        void main(){ vS = aSlice; vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
+      fragmentShader: /* glsl */`
+        ${NOISE_GLSL}
+        uniform vec3 uColor, uDir, uTan, uSide; uniform float uI, uK, uTime, uRad, uSpan, uH, uThick;
+        varying float vS; varying vec3 vWP;
+        void main(){
+          float hgt = length(vWP) - uRad;                       // height above the photosphere
+          float x = dot(vWP, uTan) / (uSpan * 0.5);             // along the filament channel
+          float z = dot(vWP, uSide) / uThick;                   // across (slice depth)
+          float y = hgt / uH;
+          // flux-rope spine: a slightly asymmetric semi-ellipse, sagging in the middle (twisted rope)
+          float xx = x + 0.12 * sin(y * 2.0 + 0.6);
+          float sp = sqrt(max(1.0 - xx * xx, 0.0)) * (1.0 - 0.18 * exp(-xx * xx * 6.0));
+          float t = uTime * 0.02;
+          vec3 wq = vec3(x * 3.0, y * 3.0, z * 0.6 + vS * 0.3);
+          float warp = fbm(wq * 0.9 + vec3(0.0, -t, 0.0), 3);
+          float d = abs(y - sp + 0.12 * warp);
+          float knot = 0.45 + 0.9 * smoothstep(-0.3, 0.5, fbm(vec3(x * 4.0 - t * 2.0, y * 1.5, vS), 3));
+          float rope = exp(-d * d / 0.03) * step(abs(xx), 1.05) * knot;
+          // hedgerow curtain hanging below the rope down to the chromosphere
+          float curtain = smoothstep(-0.02, 0.25, sp - y) * smoothstep(1.02, 0.5, abs(xx)) * (0.6 + 0.5 * smoothstep(0.0, 0.8, sp - y + 0.3));
+          // fine vertical threads: noise stretched ~1:8 along the local vertical
+          float th = 0.5 + 0.5 * snoise(vec3(x * 46.0 + 4.0 * warp, y * 4.5 - t * 3.0, z * 1.5 + vS * 2.0));
+          th = mix(pow(th, 3.0), th, 0.25);
+          // erosion: large holes and ragged edges
+          float er = smoothstep(-0.25, 0.35, fbm(wq * 1.7 + vec3(t, 0.0, 0.0), 4) + 0.25);
+          // coronal rain: bright beads streaming down the legs
+          float legs = smoothstep(0.55, 0.95, abs(x)) * step(abs(x), 1.0);
+          float rain = legs * smoothstep(0.8, 0.98, snoise(vec3(x * 60.0, y * 14.0 + uTime * 0.25, vS * 3.0))) * smoothstep(0.0, 0.3, sp - y + 0.1);
+          float slab = exp(-z * z * 1.6);                       // soft volume edge across the slices
+          float dens = (max(rope * (0.6 + 0.6 * th), curtain * th) * er + rain * 0.8) * slab;
+          dens *= smoothstep(-0.02, 0.03, hgt / uRad) ;           // emerges from the chromosphere
+          dens *= exp(-max(y - 1.0, 0.0) * 4.0);
+          // against the disk a prominence is an absorbing filament, not emission
+          vec3 V = normalize(cameraPosition - vWP);
+          float bq = dot(vWP, -V), cq = dot(vWP, vWP) - uRad * uRad;
+          float onDisk = step(bq, 0.0) * smoothstep(0.0, 0.03 * uRad * uRad, bq * bq - cq);
+          dens *= 1.0 - 0.92 * onDisk;
+          vec3 c = uColor * (1.0 + vec3(0.25, 0.35, 0.3) * rope * th);   // hot rope core whitens slightly
+          gl_FragColor = vec4(c * dens * uI * uK, 1.0);
+        }`,
+      blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(g, mat); m.frustumCulled = false;
+    this.loops.add(m);
   }
 
   _buildLoops(rng, col, hot) {
@@ -387,6 +470,7 @@ export class Star {
     // much dimmer than the disk. One is placed on the shot limb (+x side).
     const nProm = 5;
     for (let k = 0; k < nProm; k++) {
+      if (k === 0) { this._buildSheet(rng, hAlpha, new THREE.Vector3(0.05, 0.22, -1).normalize()); continue; }
       const dir = k === 0 ? new THREE.Vector3(0.05, 0.22, -1).normalize() : randDir(0.9);
       const tan = k === 0 ? new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize() : tangentOf(dir);
       const mat = mkMat(hAlpha, 0.55, 0.25, 0.1);

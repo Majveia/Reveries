@@ -24,12 +24,21 @@ function rockGeometry(seed, detail) {
   const nc = 4 + detail * 3;
   for (let i = 0; i < nc; i++) { const [x, y, z] = rng.unitVector(); const rad = 0.12 + 0.5 * Math.pow(rng.float(), 2.2); craters.push([new THREE.Vector3(x, y, z), rad, rad * rng.range(0.25, 0.45)]); }
   const planes = [];
-  const np = rng.int(1, 4);
-  for (let i = 0; i < np; i++) { const [x, y, z] = rng.unitVector(); planes.push([new THREE.Vector3(x, y, z), rng.range(0.62, 0.86)]); }
+  // big bodies are shattered fragments: more, deeper fracture planes with near-knife edges
+  const np = detail >= 4 ? rng.int(4, 7) : rng.int(1, 4);
+  const soft = detail >= 4 ? 0.03 : 0.12;
+  for (let i = 0; i < np; i++) { const [x, y, z] = rng.unitVector(); planes.push([new THREE.Vector3(x, y, z), detail >= 4 ? rng.range(0.55, 0.8) : rng.range(0.62, 0.86)]); }
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i).normalize();
     let r = 1 + 0.3 * n.fbm3(v.x * 1.2, v.y * 1.2, v.z * 1.2, 4) + 0.1 * n.ridged3(v.x * 3, v.y * 3, v.z * 3, 4) - 0.06;
     if (detail >= 3) r += 0.025 * n.ridged3(v.x * 9, v.y * 9, v.z * 9, 3) + 0.012 * n.fbm3(v.x * 22, v.y * 22, v.z * 22, 2);
+    if (detail >= 4) {
+      // terraced ledges and abs-noise creases: layered, fractured rock rather than a smooth pebble
+      const tn = 0.5 + 0.5 * n.fbm3(v.x * 2.2 + 5, v.y * 2.2, v.z * 2.2, 3);
+      const steps = 7, tq = tn * steps, terr = (Math.floor(tq) + Math.pow(tq - Math.floor(tq), 4)) / steps;
+      r += (terr - tn) * 0.09;
+      r -= 0.035 * (1 - Math.abs(n.fbm3(v.x * 5.5 - 3, v.y * 5.5, v.z * 5.5, 3))) ** 6;
+    }
     for (const [c, rad, depth] of craters) {
       const d = v.distanceTo(c) / rad;
       if (d < 1.3) r += d < 1 ? -depth * (1 - d * d) * 0.9 : depth * 0.5 * (1 - (d - 1) / 0.3);
@@ -37,7 +46,7 @@ function rockGeometry(seed, detail) {
     // fracture faces: clamp the radius against a few planes (soft-min keeps edges crisp but not knife-sharp)
     for (const [pn, off] of planes) {
       const c = v.dot(pn);
-      if (c > 0.05) { const lim = off / c; if (r > lim) r = lim + (r - lim) * 0.12; }
+      if (c > 0.05) { const lim = off / c; if (r > lim) r = lim + (r - lim) * soft; }
     }
     pos.setXYZ(i, v.x * r * sx, v.y * r * sy, v.z * r * sz);
   }
@@ -106,7 +115,7 @@ void main(){
   float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce) * ndl;
   // fill: starlight scattered by the belt's own dust + the galactic band (cool, from the shadow side)
   float fillW = 0.55 + 0.45 * max(dot(N, -L), 0.0);
-  vec3 c = alb * uSun * (lit * opp) + uSun * spec + alb * uSun * vec3(0.045, 0.05, 0.068) * fillW;
+  vec3 c = alb * uSun * (lit * opp) + uSun * spec + alb * uSun * vec3(0.1, 0.105, 0.13) * fillW;
   // backlit fringe: a dust-coated limb forward-scatters the star (Henyey-Greenstein, g = 0.7)
   float ndv = max(dot(Ng, V), 0.0);
   float cosT = dot(-V, L);
@@ -114,7 +123,7 @@ void main(){
   // pixel-sized rocks: no rim and a dimmer disc, so the far belt reads as texture, not salt
   float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
   c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 0.9 * (1.0 - tiny);
-  c *= 1.0 - 0.55 * tiny;
+  c *= 1.0 - 0.75 * tiny;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -216,7 +225,7 @@ export class Belt {
           // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
           // backlit, the motes swell into a soft forward-scattering haze (energy spread over a larger sprite)
           float sz = clamp(150.0 / dist, 2.5, 11.0) * (1.0 + 1.5 * fwd);
-          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.12 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
+          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.36 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
           gl_PointSize = sz * uDpr;
         }`,
       fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,

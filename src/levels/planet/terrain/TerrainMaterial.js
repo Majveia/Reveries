@@ -317,9 +317,9 @@ const FRAG_SURFACE = /* glsl */`
   float peb = 0.0;
   {
     vec4 g1 = nA( D.zxy + 4.4, 1.0 / 16.0 ); w = octW( 1.0 / 16.0, pix );
-    gSoil += g1.xyz * 0.06 * w; hGrass += g1.w * 0.5;
+    gSoil += g1.xyz * 0.018 * w; hGrass += g1.w * 0.5; // soft ground: detail via albedo/AO, not normal waves (no 'crumpled plastic')
     w = octW( 1.0, pix );
-    if ( w > 0.0 ) { vec4 g2 = nA( D + 8.8, 1.0 ); gSoil += g2.xyz * 0.02 * w; hGrass += g2.w * 0.3 * w; }
+    if ( w > 0.0 ) { vec4 g2 = nA( D + 8.8, 1.0 ); gSoil += g2.xyz * 0.012 * w; hGrass += g2.w * 0.3 * w; }
     w = octW( 0.5, pix );
     if ( w > 0.0 ) { vec4 pb = nB( D.yzx + 2.0, 0.5 ); peb = ( 1.0 - smoothstep( 0.0, 0.45, pb.x ) ) * w; hGrass += peb * 0.2; }
   }
@@ -416,7 +416,8 @@ const FRAG_SURFACE = /* glsl */`
     // zonal wind frame (west → east), matching the dune phase in TerrainHeight
     vec3 east = vec3( up.z, 0.0, -up.x );
     vec3 wt = dot( east, east ) > 1e-4 ? normalize( east ) : normalize( uWindDir - up * dot( uWindDir, up ) + vec3( 1e-4 ) );
-    leeF = smoothstep( 0.04, 0.3, dot( Ng, wt ) ) * sandA;
+    // slip faces only where the surface really is steep: low-amplitude crests must not print lines
+    leeF = smoothstep( 0.04, 0.3, dot( Ng, wt ) ) * sandA * smoothstep( 0.03, 0.12, slope ); // slope = 1-cos: 14°..28°
     vec3 wb = cross( up, wt );
     vec4 wq = nA( D + 21.0, 1.0 / 16.0 );
     // primary ripples (~0.22 m) + megaripples (~1.6 m), curved by noise
@@ -435,11 +436,12 @@ const FRAG_SURFACE = /* glsl */`
     float p2 = f2 < 0.7 ? f2 / 0.7 : ( 1.0 - f2 ) / 0.3;
     float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3; d2 /= lam2 / 1.6;
     // ripples die on slip faces and on the knife-edge brink (cav < 0.5 → convex)
-    float crestF = smoothstep( 0.47, 0.4, cav );
+    float crestF = smoothstep( 0.47, 0.4, cav ) * smoothstep( 0.01, 0.05, slope );
     float w1 = octW( 3.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) );
     // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
-    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.15, 0.7, wq2.w + wq.w * 0.35 ) * 0.7;
-    gSand += wt * ( d1 / lam ) * 0.0026 * w1 + wt * ( d2 / 1.6 ) * 0.02 * w2;
+    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7;
+    // crisp wind ripples catching the light; megaripples are rare, gentle patches
+    gSand += wt * ( d1 / lam ) * 0.005 * w1 + wt * ( d2 / 1.6 ) * 0.006 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1;
     w = octW( 0.25, pix );
@@ -530,7 +532,7 @@ const FRAG_SURFACE = /* glsl */`
   // ---- near-field ground cover (0.1–1 m): the earth between the grass blades ----
   // clumps of turf with dark soil gaps, leaf litter / dry thatch specks and
   // small embedded stones, so sparse grass reads as ground, not paint.
-  float stoneN = 0.0;
+  float stoneN = 0.0, groundAO = 1.0;
   {
     float wc = octW( 1.0 / 4.0, pix );
     if ( wc > 0.0 ) {
@@ -540,6 +542,7 @@ const FRAG_SURFACE = /* glsl */`
       grassCol *= 1.0 + ( cl.z - 0.5 ) * 0.22 * wc;           // clump-to-clump value jitter
       grassCol = mix( grassCol, grassCol * vec3( 1.12, 1.06, 0.8 ), smoothstep( 0.7, 0.95, cl.z ) * 0.5 * wc );
       grassCol = mix( grassCol, dirt, gap * 0.75 * wc );
+      groundAO -= gap * 0.4 * wc; // turf gaps sit in the shade of the blades
       float wl = octW( 1.0 / 1.5, pix );
       if ( wl > 0.0 ) {
         vec4 lt = nB( D.yzx + 3.0, 1.0 / 1.5 );          // ~19 cm litter flakes
@@ -552,6 +555,7 @@ const FRAG_SURFACE = /* glsl */`
         vec4 sn = nB( D + 17.0, 1.0 / 2.0 );             // ~25 cm cells, sparse pebbles
         float st = smoothstep( 0.3, 0.18, sn.x ) * step( 0.86, sn.z ) * ws;
         stoneN = st;
+        groundAO *= 1.0 - 0.55 * ( smoothstep( 0.4, 0.3, sn.x ) * step( 0.86, sn.z ) * ws - st ); // contact ring
         vec3 pebC = mix( uRockA, uRockB, fract( sn.z * 13.1 ) ) * ( 0.75 + 0.5 * smoothstep( 0.3, 0.0, sn.x ) );
         grassCol = mix( grassCol, pebC, st );
       }
@@ -572,14 +576,14 @@ const FRAG_SURFACE = /* glsl */`
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );
   soilCol = mix( soilCol, uRockA * 0.9, 0.25 + peb * 0.4 );
-  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.035 * rippleShade );
+  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.07 * rippleShade );
   // troughs: darker, redder (iron-stained, coarse lag); crests paler & finer
   float trough = smoothstep( 0.52, 0.62, cav );
   sandCol = mix( sandCol, sandCol * vec3( 0.92, 0.84, 0.77 ), trough * 0.45 );
   sandCol *= 1.0 + 0.06 * meso;
   // lee (slip) faces: finer, darker avalanche sand; crests catch light
   sandCol *= 1.0 - 0.09 * leeF;
-  sandCol *= 1.0 + 0.08 * smoothstep( 0.46, 0.38, cav );
+  sandCol *= 1.0 + 0.08 * smoothstep( 0.46, 0.38, cav ) * smoothstep( 0.01, 0.05, slope );
   vec3 snowCol = uSnow * ( 0.94 + 0.06 * meso );
 
   // ---- composite with height-based blending ----
@@ -643,6 +647,7 @@ const FRAG_SURFACE = /* glsl */`
   ao *= 1.0 - crack * 0.6 * wRock;
   ao *= mix( 1.0, 0.75 + 0.25 * clamp( hRock + 0.5, 0.0, 1.0 ), wRock );
   ao *= mix( 0.9 + 0.1 * clamp( hGrass * 0.5 + 0.5, 0.0, 1.0 ), 1.0, max( wRock, wSand ) );
+  ao *= mix( clamp( groundAO, 0.35, 1.0 ), 1.0, max( max( wRock, wSand ), wSnow ) );
   tAO = ao;
 
   // ---- volcanic glow in deep cracks of hot basalt ----

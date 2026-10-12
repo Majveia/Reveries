@@ -17,8 +17,8 @@ float ringDensity(float x, float seed){
   d += smoothstep(0.64, 0.66, x) * (0.58 - 0.12 * smoothstep(0.8, 0.95, x)) * (1.0 - smoothstep(0.955, 0.965, x)); // A ring
   d += smoothstep(0.592, 0.6, x) * (1.0 - smoothstep(0.62, 0.64, x)) * (0.13 + 0.05 * rNoise(x * 300.0 + seed));                       // dusty Cassini division
   d *= 1.0 - 0.75 * exp(-pow((x - 0.888) / 0.0035, 2.0));                                          // Encke gap
-  d *= 1.0 - 0.45 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
-  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.24;                                                  // F ring
+  d *= 1.0 - 0.25 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
+  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.11;                                                  // F ring
   // plateaus and ringlets at every scale
   float fine = 0.56 + 0.22 * rNoise(x * 70.0 + seed) + 0.2 * rNoise(x * 260.0 + seed * 3.0) + 0.14 * rNoise(x * 900.0 + seed) + 0.08 * rNoise(x * 2600.0);
   float plateau = 1.0 + 0.35 * smoothstep(0.55, 0.9, rNoise(x * 34.0 + seed * 7.0)) * step(x, 0.25);
@@ -254,25 +254,31 @@ void main(){
   float night = smoothstep(0.04, -0.16, ndlG);
 #ifdef HAS_MAP
   if (uCiv > 0.5 && !ocean) {
-    // metropolitan regions follow the habitable lowlands and coasts
+    // metropolitan regions follow the habitable lowlands and coasts (Black Marble: lights trace
+    // shorelines, rivers and highway corridors; interiors and highlands stay dark)
     float region = smoothstep(0.3, 0.65, fbm(sd * 2.6 + 20.0, 3) + cityPot * 0.5 - 0.15) * smoothstep(0.05, 0.35, cityPot);
-    float coast = smoothstep(0.2, 0.0, h) * 0.6 + smoothstep(0.06, 0.0, abs(h)) * 0.6;
+    float coast = smoothstep(0.1, 0.0, h) * 1.2 + smoothstep(0.035, 0.0, abs(h)) * 1.0;
+    float inland = smoothstep(0.3, 0.08, h);                                                        // highlands stay dark
+    // river valleys / transport corridors: thin meandering filaments of light across the lowlands
+    float rv = abs(fbm(sd * 6.5 + 31.0, 4));
+    float corridor = smoothstep(0.03, 0.004, rv) * smoothstep(0.22, 0.02, h);
     vec2 wc = worley(sd * 70.0);
     // heavy-tailed metropolitan hierarchy: a few megalopolises outshine everything else
-    float mega = pow(0.5 + 0.5 * snoise(sd * 9.0 + 3.0), 4.0) * 7.0 + 0.35;
-    float cores = smoothstep(0.13, 0.0, wc.x) * (0.6 + 0.4 * snoise(sd * 500.0));                                    // city cores
-    float sprawl = smoothstep(0.42, 0.04, wc.x) * smoothstep(0.45, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
-    float roads = smoothstep(0.02, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x) * smoothstep(0.3, 0.7, snoise(sd * 260.0) * 0.5 + 0.5); // highways between cities
+    float mega = pow(0.5 + 0.5 * snoise(sd * 9.0 + 3.0), 6.0) * 12.0 + 0.2;
+    float cores = smoothstep(0.07, 0.0, wc.x) * (0.6 + 0.4 * snoise(sd * 500.0));                                    // city cores
+    float sprawl = smoothstep(0.3, 0.03, wc.x) * smoothstep(0.5, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
+    float roads = smoothstep(0.009, 0.0, wc.y - wc.x) * smoothstep(0.6, 0.2, wc.x);                                 // highways between cities
     vec2 wt = worley(sd * 260.0 + 7.0);
-    float town = smoothstep(0.14, 0.0, wt.x) * smoothstep(0.2, 0.6, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
-    // sparkle: suburbs and towns resolve into grains of light, not a smooth glow
-    float grain = smoothstep(0.35, 0.95, snoise(sd * 900.0) * 0.5 + 0.5) * 1.6 + 0.15;
-    float lights = region * (cores * 2.2 * mega + (sprawl * 0.7 * min(mega, 2.5) + town * 0.9) * grain + roads * 0.35 * min(mega, 3.0)) * (0.35 + 0.65 * coast) * 1.3;
+    float town = smoothstep(0.1, 0.0, wt.x) * smoothstep(0.3, 0.7, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
+    // sparkle: suburbs and towns resolve into pin-sharp grains of light, not a smooth glow
+    float grain = smoothstep(0.55, 0.98, snoise(sd * 1400.0) * 0.5 + 0.5) * 2.2 + 0.06;
+    float net = clamp(coast + corridor * 1.2, 0.0, 1.6) + 0.12;
+    float lights = region * (cores * 2.4 * mega + (sprawl * 0.8 * min(mega, 3.0) + town * 0.8) * grain * net + roads * grain * 0.9 * min(mega, 3.0) + corridor * grain * 0.6) * net * inland * 1.1;
     lights *= 1.0 - smoothstep(0.3, 0.6, snow);
     // sodium amber suburbs vs LED-white downtowns
     vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);
     lights *= (uCiv - 1.0) * 1.3;
-    emis += lc * lights * night * 3.4 * (1.0 - cloud * 0.8);
+    emis += lc * lights * night * 8.0 * (1.0 - cloud * 0.8);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);
@@ -407,10 +413,11 @@ void main(){
   float tc = dot(oc, rd);
   vec3 P = ro + rd * max(tc, 0.0);
   float hgt = length(P - uCenter);
-  float Hs = (uRa - uR) * 0.22;
+  float Hs = (uRa - uR) * 0.18;
   float x = max(hgt - uR, 0.0);
-  // optical depth ∝ exp(-x/H) · sqrt(2πRH)  (grazing column)
-  float tau = exp(-x / Hs) * sqrt(6.2832 * uR * Hs) / Hs * 0.05 * uDensity;
+  // optical depth ∝ exp(-x/H) · sqrt(2πRH)  (grazing column); the outer edge fades faster (razor-thin limb)
+  float xs = x / (uRa - uR);
+  float tau = exp(-x / Hs - xs * xs * 2.5) * sqrt(6.2832 * uR * Hs) / Hs * 0.042 * uDensity;
   float hit = smoothstep(uR * 0.992, uR * 1.004, hgt);
   vec3 n = normalize(P - uCenter);
   vec3 L = normalize(-uCenter);
@@ -421,13 +428,16 @@ void main(){
   float g = 0.7;
   float phaseM = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cosT, 1.5) * 0.08;
   vec3 ray = mix(vec3(1.0, 0.4, 0.15), uAtmo, smoothstep(-0.12, 0.3, mu));
+  // ozone (Chappuis) absorption deepens the blue in the dense lower limb; the haze top whitens
+  ray *= mix(vec3(1.0), vec3(0.72, 0.9, 1.1), clamp(tau * 0.6, 0.0, 1.0));
+  ray = mix(ray, vec3(dot(ray, vec3(0.33))) * 1.1, smoothstep(0.35, 0.9, xs) * 0.5);
   vec3 c = uSun * (ray * phaseR + vec3(1.0, 0.85, 0.7) * phaseM) * (1.0 - exp(-tau)) * lit * hit;
   // backlit ring of light at the terminator (sunlight through the limb)
-  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 2.0 * min(uBack, 1.0) * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * hit;
+  c += vec3(1.0, 0.45, 0.2) * uSun * phaseM * 0.5 * min(uBack, 1.0) * (1.0 - exp(-tau)) * smoothstep(0.25, -0.05, mu) * smoothstep(-0.35, -0.05, mu) * smoothstep(0.3, 0.6, cosT) * hit;
   // backlit halo: when the star sits behind the world the whole limb lights up by forward (Mie) scattering
   float hgB = 0.4375 / pow(1.5625 - 1.5 * cosT, 1.5);
   vec3 tintB = mix(vec3(1.0, 0.72, 0.45), mix(uAtmo, vec3(1.0), 0.4), smoothstep(-0.2, 0.2, mu));
-  c += tintB * uSun * hgB * 0.16 * uBack * (1.0 - exp(-tau * 5.0)) * smoothstep(-0.45, 0.0, mu) * hit;
+  c += tintB * uSun * hgB * 0.16 * uBack * (1.0 - exp(-tau * 5.0)) * smoothstep(-0.45, 0.0, mu) * smoothstep(-0.1, 0.6, cosT) * hit;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -463,7 +473,8 @@ void main(){
   // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer
   vec3 tint = mix(vec3(0.62, 0.5, 0.42), vec3(1.06, 0.98, 0.86), smoothstep(0.22, 0.34, x));
   tint = mix(tint, vec3(0.84, 0.86, 0.9), smoothstep(0.6, 0.68, x));
-  vec3 alb = uCol * tone * tint * vec3(1.1, 1.0, 0.84);   // icy particles under a sunlike star read warm cream
+  vec3 alb = uCol * tone * tint;
+  alb = mix(vec3(dot(alb, vec3(0.3, 0.55, 0.15))), alb, 0.5);   // water-ice particles: neutral grey-beige (Cassini)
   // self-gravity wakes: faint azimuthal clumping that gives the A ring its grain up close
   float ang = atan(vLP.y, vLP.x);
   float wake = rNoise(ang * 900.0 + x * 400.0 + uSeed) * smoothstep(0.66, 0.75, x) * (1.0 - smoothstep(0.003, 0.02, fw));

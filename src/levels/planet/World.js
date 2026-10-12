@@ -303,7 +303,16 @@ export class World {
       }
       const flat = Math.sqrt(var2 / 8);
       const coast = this.hasOcean ? Math.max(0, 1 - (h - this.seaLevel) / 300) : 0;
-      const score = -flat * 1.0 + coast * 40 - Math.max(0, h - (this.hasOcean ? this.seaLevel : 0) - this.terrainParams.relief * 0.5) * 0.05 + rng.float() * 8;
+      // prominence (terrain): reward sites with a ridgeline / dune sea / massif rising
+      // 3–8 km away, so hero vistas always have layered relief to look across
+      let ring = h;
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 6) * Math.PI * 2 + (k >= 6 ? 0.5 : 0), rr = (k < 6 ? 3200 : 7500) / this.radius;
+        const p = _d.copy(dir).addScaledVector(t1, Math.cos(a) * rr).addScaledVector(t2, Math.sin(a) * rr).normalize();
+        ring = Math.max(ring, this.heightAt(p));
+      }
+      const prom = Math.min(ring - h, this.terrainParams.relief * 0.6);
+      const score = -flat * 1.0 + coast * 40 + prom * 0.035 - Math.max(0, h - (this.hasOcean ? this.seaLevel : 0) - this.terrainParams.relief * 0.5) * 0.05 + rng.float() * 8;
       cands.push({ dir: dir.clone(), h, flat, score });
     }
     cands.sort((a, b) => b.score - a.score);

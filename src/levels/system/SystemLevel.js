@@ -337,6 +337,7 @@ export default class SystemLevel {
     const L = this.layout;
     return {
       hero: async () => {
+        this.backdrop.bandMat.uniforms.uK.value = 1;
         // beside the ringed giant at a ~115° phase angle: a lit crescent with open rings in the
         // foreground, the star and the inner worlds strung along their orbits beyond it
         const sp = this.planets.find((x) => x.planet.rings) || this._planet(2);
@@ -380,6 +381,7 @@ export default class SystemLevel {
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
       star: async () => {
+        this.backdrop.bandMat.uniforms.uK.value = 1;
         this.focus = null;
         const R = L.starR;
         const d0 = new THREE.Vector3(0.05, 0.22, -1).normalize();
@@ -388,14 +390,16 @@ export default class SystemLevel {
         this._poseDir(d0.clone().multiplyScalar(R * 0.92), R * 0.95, dir);
       },
       gasgiant: async () => {
+        this.backdrop.bandMat.uniforms.uK.value = 0.55;   // galactic band yields to close-up subjects
         const sp = this.planets.find((x) => x.planet.kind === 'gas' && x.planet.rings) || this.planets.find((x) => x.planet.kind === 'gas') || this._planet(5);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
         const dir = s.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.9);
         dir.addScaledVector(sp.ringN, 0.42);
-        this._poseDir(sp.position, (sp.ringOut || sp.R * 2) * 2.25, dir);
+        this._poseDir(sp.position, (sp.ringOut || sp.R * 2) * 1.8, dir);
       },
       planet: async () => {
+        this.backdrop.bandMat.uniforms.uK.value = 0.6;   // galactic band yields to close-up subjects
         const sp = this._planet(2);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
@@ -404,37 +408,47 @@ export default class SystemLevel {
         this._poseDir(sp.position, sp.R * 3.1, dir);
       },
       belt: async () => {
+        this.backdrop.bandMat.uniforms.uK.value = 1;
         this.focus = null;
         const b = this.belts.find((x) => x.kind !== 'kuiper') || this.belts[0];
         if (!b) { this._pose(new THREE.Vector3(), this.extent, 0.4, 0.1); return; }
-        // a big boulder at ~75° phase (mostly lit, hard terminator), the star low in the frame corner,
-        // the belt streaming away toward it
-        // hero boulder: a large rock with company — mid-size neighbours give foreground/background depth
         const P = b.instances.map((it) => b.instancePosition(it, this.days, new THREE.Vector3()));
+        const up = new THREE.Vector3(0, 1, 0);
+        const ph = THREE.MathUtils.degToRad(112);   // ~40% lit: a sculpted terminator, the belt haze glowing toward the star
+        const camFor = (pos, S) => {
+          const s = pos.clone().multiplyScalar(-1).normalize();
+          const t = new THREE.Vector3().crossVectors(up, s).normalize();
+          const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.2).normalize();
+          return pos.clone().addScaledVector(dirC, S * 4.8);
+        };
+        // hero boulder: a large rock with mid-size company at varied depths, and nothing sitting
+        // between it and the lens (no clipped foreground rock)
         let bi = 0, bScore = -Infinity;
+        const tmp = new THREE.Vector3();
         b.instances.forEach((it, i) => {
           if (it.s < 0.3) return;
-          let nb = 0;
-          for (let j = 0; j < P.length; j++) { const o = b.instances[j]; if (j !== i && o.s > 0.06) { const dd = P[j].distanceTo(P[i]); if (dd < it.s * 9) nb += Math.min(1, o.s / 0.15); } }
-          const sc = it.s * 4 + Math.min(nb, 8);
+          const cam = camFor(P[i], it.s), dRock = cam.distanceTo(P[i]);
+          const ax = P[i].clone().sub(cam).normalize();
+          let nb = 0, occ = 0;
+          for (let j = 0; j < P.length; j++) {
+            const o = b.instances[j]; if (j === i || o.s < 0.06) continue;
+            const dd = P[j].distanceTo(P[i]);
+            if (dd < it.s * 12) nb += Math.min(1, o.s / 0.15);
+            tmp.copy(P[j]).sub(cam); const dc = tmp.length();
+            if (dc < dRock * 1.05 && tmp.dot(ax) > dc * 0.8) occ += 1 + o.s * 4;
+          }
+          const sc = it.s * 4 + Math.min(nb, 10) - occ * 6;
           if (sc > bScore) { bScore = sc; bi = i; }
         });
-        const best = b.instances[bi];
-        const pos = P[bi];
-        const S = best.s;
-        const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
-        const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(121);   // ~1/4 lit: a hot regolith crescent, the belt haze glowing toward the star
-        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.22).normalize();
-        const cam = pos.clone().addScaledVector(dirC, S * 3.6);
-        // wide lens: the star sits near the left edge of the frame, the half-lit boulder right of centre
-        this.camera.fov = 54; this.camera.updateProjectionMatrix();
+        const pos = P[bi], S = b.instances[bi].s;
+        const cam = camFor(pos, S);
+        this.camera.fov = 52; this.camera.updateProjectionMatrix();
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
         const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
-        // the boulder sits right of centre, the star just inside the left edge
+        // the boulder sits right of centre, the star inside the left third
         const sepSR = toStar.angleTo(toRock);
-        const lookDir = toStar.clone().applyAxisAngle(axis, Math.max(sepSR * 0.5, sepSR - Math.atan(0.42 * Math.tan(hfov / 2))));
+        const lookDir = toStar.clone().applyAxisAngle(axis, Math.max(sepSR * 0.5, sepSR - Math.atan(0.5 * Math.tan(hfov / 2))));
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },

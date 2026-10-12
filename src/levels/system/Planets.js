@@ -158,7 +158,7 @@ export class SystemPlanet {
 
     // ---- atmosphere shell -----------------------------------------------------------
     if (atmoDensity > 0.05) {
-      const Ra = this.R * (planet.kind === 'gas' ? 1.035 : 1.055);
+      const Ra = this.R * (planet.kind === 'gas' ? 1.03 : 1.035);
       this.atmoMat = new THREE.ShaderMaterial({
         uniforms: { uSun: { value: sun }, uCenter: { value: this.position }, uR: { value: this.R }, uRa: { value: Ra }, uAtmo: { value: planet.kind === 'gas' && planet.gasBands ? linFromArr(planet.gasBands.colors[0]).lerp(new THREE.Color(0.95, 0.9, 0.8), 0.5) : atmoCol }, uDensity: { value: atmoDensity * (planet.kind === 'gas' ? 0.12 : 1) }, uBack: { value: 1.0 } },
         vertexShader: /* glsl */`varying vec3 vWP; void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
@@ -229,7 +229,7 @@ export class SystemPlanet {
     og.setAttribute('position', new THREE.BufferAttribute(pts, 3));
     og.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
     this.orbitMat = new THREE.ShaderMaterial({
-      uniforms: { uPhase: { value: 0 }, uCol: { value: atmoDensity > 0.05 ? atmoCol.clone().lerp(new THREE.Color(1, 1, 1), 0.55) : new THREE.Color(0.8, 0.82, 0.9) }, uA: { value: 0.035 }, uHi: { value: 0 }, uDim: { value: 1 } },
+      uniforms: { uPhase: { value: 0 }, uCol: { value: atmoDensity > 0.05 ? atmoCol.clone().lerp(new THREE.Color(1, 1, 1), 0.55) : new THREE.Color(0.8, 0.82, 0.9) }, uA: { value: 0.075 }, uHi: { value: 0 }, uDim: { value: 1 } },
       vertexShader: /* glsl */`attribute float aPhase; varying float vP; varying float vD; varying float vE;
         void main(){ vP = aPhase; vec4 mv = modelViewMatrix * vec4(position, 1.0); vD = -mv.z;
           vE = abs(normalize(cameraPosition - (modelMatrix * vec4(position, 1.0)).xyz).y);

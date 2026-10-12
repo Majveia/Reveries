@@ -2,7 +2,7 @@
 // through the PM solver's Gaussian-smoothed density field (periodic, 2D-tiled
 // 3D texture), emitting where gas has fallen into filaments and nodes —
 // violet warm-hot medium in filaments, golden intracluster plasma in nodes.
-// Optically thin emission ∝ (ρ − ρ₀)^1.15; rendered at ¼ resolution and added
+// Optically thin emission ∝ ρ² above a threshold; rendered at ¼ resolution and added
 // to the HDR frame. Empty space stays exactly black.
 
 import * as THREE from 'three';
@@ -42,7 +42,7 @@ void main(){
   for (int i = 0; i < N; i++) {
     vec3 p = uCam + dir * t;
     float rho = rhoAt(p);
-    float e = pow(max(rho - uThresh, 0.0), 1.15);
+    float e = max(rho - uThresh, 0.0) * rho / (1.0 + rho / 60.0) * 0.04;          // two-body (bremsstrahlung-like) ∝ ρ²: hugs nodes and spines
     if (e > 0.0) {
       float r = length(p - uCenter) / uRadius;
       float edge = 1.0 - smoothstep(0.75, 1.0, r);

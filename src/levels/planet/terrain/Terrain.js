@@ -410,16 +410,23 @@ export default class Terrain {
 
   /** Synchronous convergence (screenshots): build every missing chunk on the main thread. */
   _converge() {
-    for (let it = 0; it < 40; it++) {
+    // hard caps (chunk builds and wall time) so a pathological view can never
+    // stall a screenshot; logged so a slow settle is diagnosable
+    const t0 = performance.now(), cap = this.maxChunks * 2;
+    let built = 0, it = 0;
+    for (; it < 40; it++) {
       this._applyResults(Infinity);
       const want = this._select();
-      if (!want.length) return;
+      if (!want.length) break;
       for (const n of want) {
         if (n.pending) continue;
         const data = buildChunk(this.world.terrain, this._job(n));
         this._attach(n, data);
+        built++;
       }
+      if (built > cap || performance.now() - t0 > 45000) { console.warn(`[terrain] converge capped: ${built} builds, ${it + 1} passes, ${this.chunkCount} chunks, ${this.drawCount} drawn`); break; }
     }
+    if (built > 0 && performance.now() - t0 > 5000) console.info(`[terrain] converge ${built} builds ${it} passes ${(performance.now() - t0) | 0} ms, ${this.drawCount} drawn`);
   }
 
   /** Stream until the current view needs nothing more (async, uses workers). */
@@ -509,6 +516,15 @@ export default class Terrain {
     const r = this.engine.renderer;
     const prevRT = r.getRenderTarget(), prevAuto = r.autoClear;
     const sm = r.shadowMap.enabled;
+    // coarse casters only: each drawn chunk is replaced by its ancestor whose
+    // vertex spacing matches the shadow-map texel (finer geometry is invisible
+    // in this map) → a fraction of the triangles/calls of the main view
+    const minSp = ((2 * extent) / this._sunRT.width) * 0.75;
+    const sunSet = this._sunSet || (this._sunSet = new Set()), shown = this._sunShown || (this._sunShown = []);
+    sunSet.clear(); shown.length = 0;
+    for (const n of this._draw || []) { let a = n; while (a.spacing < minSp && a.parent?.chunk) a = a.parent; sunSet.add(a); }
+    for (const m of this.meshes) { if (m.visible) shown.push(m); m.visible = false; }
+    for (const a of sunSet) if (a.chunk) a.chunk.mesh.visible = true;
     for (const m of this.meshes) m.material = this._depthMat;
     r.shadowMap.enabled = false;
     r.autoClear = true;
@@ -517,7 +533,8 @@ export default class Terrain {
     r.setRenderTarget(prevRT);
     r.autoClear = prevAuto;
     r.shadowMap.enabled = sm;
-    for (const m of this.meshes) m.material = this.material;
+    for (const m of this.meshes) { m.material = this.material; m.visible = false; }
+    for (const m of shown) m.visible = true;
     // world → shadow uv / depth. Reversed depth: z already in [0, 1] (near = 1).
     const rev = !!sc.reversedDepth;
     const bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, rev ? 1 : 0.5, rev ? 0 : 0.5, 0, 0, 0, 1);

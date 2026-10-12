@@ -36,8 +36,8 @@ export default class CosmosLevel {
     this.effects = [];
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
-      blackPoint: 0.004, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.3, bloomRadius: 0.7, bloomThreshold: 1.0, streak: 0.05,
+      blackPoint: 0.008, blackToe: 0.03, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
+      bloomStrength: 0.3, bloomRadius: 0.35, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
     };
     this.L = BOX;
     this.halos = [];
@@ -296,14 +296,19 @@ export default class CosmosLevel {
     p.warm = 0.85 * (1 - smooth((a - 0.022) / 0.05));
     p.early = 1 - smooth((a - 0.17) / 0.2);
     p.shimmer = 1;
+    // inside, the fog-integrated column of the whole periodic box forms a uniform floor: raise the
+    // black floor with it so voids stay true black and only discrete structure reads
+    p.floor = 0.6 + 0.65 * inside;
+    // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
+    p.smooth = 3.2 * (1 + 1.3 * p.early); p.sharpA = 4 + 40 * p.early;
     p.dim = 1; p.lights = 1;
     if (this._shotP) Object.assign(p, this._shotP);
     if (this._dbg) Object.assign(p, this._dbg);
     this.glow.center.copy(this.center);
     this.glow.enabled = this.mode !== 'early'; // the glow samples the live mesh, not the z≈5 snapshot
     this.glow.fog = p.fog; this.glow.fogNear = p.fogNear;
-    this.glow.thresh = p.glowThresh ?? 4.5;
-    this.glow.strength = (p.glow ?? 0.006) * (1 - p.warm) * (1 - 0.6 * p.early);
+    this.glow.thresh = p.glowThresh ?? 14;
+    this.glow.strength = (p.glow ?? 0.006) * (1 - p.warm) * (1 - 0.6 * p.early) * (1 - 0.85 * inside);   // inside, the glow would veil the voids
 
     // flash of the Big Bang
     const tr = e.postfx.transition;
@@ -364,7 +369,7 @@ export default class CosmosLevel {
     const e = this.engine;
     // the deep field fades while we are inside the web (it would be hidden by more web)
     const camD = this.camera.position.distanceTo(this.rig.target);
-    this.deep.update(this.camera, e.postfx.height, smooth((camD - 0.35 * this.L) / (0.5 * this.L)) * (1 - this.web.params.warm));
+    this.deep.update(this.camera, e.postfx.height, Math.max(0.25, smooth((camD - 0.35 * this.L) / (0.5 * this.L))) * (1 - this.web.params.warm));
     const time = e.shotMode ? 12.0 : e.time;
     this.web.accumulate(this.camera, this.disp, this.center, time, e.shotMode);
     this.lights.update(this.mode === 'early' ? [] : this.halos, (h, out) => this._haloWorld(h, out), this.camera, e.postfx.height, this.web.params, time, this.disp.a);
@@ -434,10 +439,41 @@ export default class CosmosLevel {
     });
   }
 
+  /**
+   * The best filament for a cinematic "inside the web" frame: the pair (home, B) of massive halos
+   * whose connecting line runs through the densest continuous matter (a real filament spine).
+   */
+  _filamentPair() {
+    const s = this.sim, H = s.H, g = this._grid, L = this.L;
+    const at = (p) => {
+      const i = (v) => ((Math.floor(v / L * H) % H) + H) % H;
+      return g[(i(p.z) * H + i(p.y)) * H + i(p.x)];
+    };
+    const A = new THREE.Vector3(this.ref[0].x, this.ref[0].y, this.ref[0].z);
+    let best = null, bs = -Infinity;
+    for (let k = 1; k < Math.min(this.ref.length, 40); k++) {
+      const h = this.ref[k];
+      const d = new THREE.Vector3(h.x, h.y, h.z).sub(A);
+      d.x -= L * Math.round(d.x / L); d.y -= L * Math.round(d.y / L); d.z -= L * Math.round(d.z / L);
+      const len = d.length();
+      if (len < 22 || len > 60) continue;
+      let lo = Infinity, sum = 0;
+      for (let j = 2; j <= 14; j++) {
+        const v = Math.log(1 + at(_w.copy(A).addScaledVector(d, j / 16)));
+        lo = Math.min(lo, v); sum += v;
+      }
+      const sc = lo * 2 + sum / 13 + 0.35 * Math.log10(h.mass);
+      if (sc > bs) { bs = sc; best = d.clone(); }
+    }
+    return { A, d: best || new THREE.Vector3(30, 6, 18) };
+  }
+
   _shots() {
     return {
-      hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(), 52, 0.3, 0.05); },
-      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.3, gain: 0.42, pxMax: 3.5, galaxies: 0.3, smooth: 1.5, sharpA: 40 }; this._pose(this.home, this._heroOffset(58, HERO.yaw + 0.4, 0.26), 55, 0.2, 0); },
+      // the whole periodic volume as one luminous object at z≈0: the resolution scale is sub-pixel
+      hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(1.65 * this.L, HERO.yaw, 0.38), 34, 0.0, 0.0); },
+      // z≈5: the delicate proto-web, a dim ember lattice in which only the rarest peaks have ignited
+      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.0, gain: 0.55, galaxies: 0.12, lights: 0 }; this._pose(this.home, this._heroOffset(0.85 * this.L, HERO.yaw + 0.4, 0.3), 40, 0.0, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;
@@ -447,15 +483,18 @@ export default class CosmosLevel {
         this.aTarget = this.sim.a;
         this._pose(this.home, this._heroOffset(d, HERO.yaw + 0.5, 0.3), 50);
       },
-      // the home supercluster node: filaments converge on a luminous core; dark matter dimmed so
-      // member galaxies and intracluster light carry the image
-      node: async () => { this.mode = 'live'; this._shotP = { dim: 0.42, hi: 0.004 }; this._pose(this.home, this._heroOffset(44, HERO.yaw + 2.2, 0.22), 38, -0.12, 0); },
+      // the home supercluster node: filaments converge on a luminous core
+      node: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(30, HERO.yaw + 2.2, 0.22), 40, -0.12, 0); },
+      // inside the web: a few Mpc off the spine of the richest filament leaving home, looking down
+      // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
         this._shotP = null;
-        // inside the web: from the emptiest nearby void, looking across the filaments toward home
-        const off = this._voidOffset(40);
-        this._pose(this.home, off, 62, 0.15, 0);
+        const { A, d } = this._filamentPair();
+        const B = A.clone().add(d);
+        const side = new THREE.Vector3(0, 1, 0).cross(d).normalize();
+        const cam = A.clone().addScaledVector(d, 0.12).addScaledVector(side, 4.5).add(new THREE.Vector3(0, 2.5, 0));
+        this._pose(B, cam.sub(B), 70, 0.0, 0);
       },
     };
   }
