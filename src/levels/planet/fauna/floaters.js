@@ -73,18 +73,19 @@ void main() {
   vec3 base = mix(vec3(1.0), vCol, 0.3);
   vec3 gcol = vCol * 1.6;
   vec3 amb = mix(uGround, uSky, dot(N, up) * 0.5 + 0.5);
-  vec3 lit = base * (uKeyColor * (wrap * 0.22 + trans * 0.5) + amb * 0.9);
+  vec3 lit = base * (uKeyColor * (wrap * 0.1 + trans * 0.35) + amb * 0.35) * (1.0 - 0.75 * uNight);
   float glowI = vGlowI * (0.04 + 1.0 * uNight);
   vec3 glow = vec3(0.0);
   float alpha;
   if (vRig.x < 0.5) {
     // bell: radial veins + rim band glow
     float ang = atan(vW.x, vW.z);
-    float veins = smoothstep(0.82, 1.0, abs(sin(vRig.z * 8.0)));
+    float va = sin(vRig.z * 8.0); float vfw = max(fwidth(va), 1e-3);
+    float veins = (1.0 - smoothstep(0.08 - vfw, 0.08 + vfw, abs(va))) * smoothstep(0.05, 0.4, vRig.y);
     float rimBand = smoothstep(0.25, 0.0, abs(vRig.y - 0.92));
     glow = mix(gcol, mix(uGlowA, uGlowB, 0.5) * 0.5, vRig.y * 0.5) * (0.06 + veins * 0.5 + rimBand * 1.5 + vRig.w * 0.35) * (0.5 + 0.9 * vPulse);
-    alpha = clamp(0.1 + fres * 0.6 + vRig.w * 0.12 + rimBand * 0.2, 0.0, 0.9);
-    lit += base * uSky * fres * 0.8;
+    alpha = clamp(0.05 + fres * 0.45 + vRig.w * 0.06 + rimBand * 0.25 + veins * 0.15, 0.0, 0.75);
+    lit += base * uSky * fres * 0.35;
   } else {
     float bead = smoothstep(0.85, 1.0, sin(vRig.y * (vRig.x > 1.5 ? 14.0 : 40.0) - vPulse * 4.0) * 0.5 + 0.5);
     glow = gcol * (0.15 + bead * 1.2) * (1.0 - vRig.y * 0.7);
@@ -195,12 +196,12 @@ function buildWhale(style) {
     return Math.max(r, 0.03);
   }, 40, 22);
   const col = (p, n) => {
-    const t = smooth(-0.35, 0.35, n.y);
+    const t = smooth(-0.6, 0.5, n.y + 0.15 * (vnoise(p.x * 14, p.y * 14, p.z * 6) - 0.5));
     let c = [lerp(belly.r, back.r, t), lerp(belly.g, back.g, t), lerp(belly.b, back.b, t)];
-    // ventral pleats
-    if (n.y < -0.2 && p.z > -0.05) { const pl = smooth(0.3, 0.9, Math.abs(Math.sin(p.x * 260))) * 0.35; c = c.map((v) => v * (1 - pl)); }
-    // barnacle / lichen constellations
-    const b = smooth(0.74, 0.8, vnoise(p.x * 90, p.y * 90, p.z * 40)) * (t > 0.3 ? 1 : 0.4);
+    // throat pleats: broad soft grooves fading toward the flanks
+    if (n.y < -0.25 && p.z > -0.02) { const pl = smooth(0.55, 1.0, Math.abs(Math.sin(p.x * 70))) * 0.22 * smooth(-0.25, -0.7, n.y); c = c.map((v) => v * (1 - pl)); }
+    // lichen / barnacle drifts on the back and flanks only (no regular rows)
+    const b = smooth(0.8, 0.86, vnoise(p.x * 55 + 7, p.y * 55, p.z * 22)) * smooth(0.0, 0.3, n.y) * smooth(0.25, 0.0, p.z) * 0.8;
     c = [lerp(c[0], mark.r, b), lerp(c[1], mark.g, b), lerp(c[2], mark.b, b)];
     const v = 0.85 + 0.3 * vnoise(p.x * 30, p.y * 30, p.z * 12);
     return c.map((x) => x * v);
@@ -212,17 +213,23 @@ function buildWhale(style) {
     const e = blob(0.006, 0.006, 0.006, null, 6, 4); e.translate(s * 0.084, -0.014, 0.36);
     parts.push(paint(e, () => [0.01, 0.01, 0.01], () => [0.14, 0, 0, 0], style.glow ? () => 1.5 : null));
   }
-  // pectoral fins (long, humpback-like, knobbly leading edge)
+  // pectoral fins: long humpback blades with thickness and a tubercled leading edge, drooping ~30 deg
   for (const s of [-1, 1]) {
-    const out = [[0, 0.06], [0.08, 0.04], [0.2, -0.02], [0.32, -0.1], [0.34, -0.13], [0.3, -0.12], [0.18, -0.07], [0.06, -0.04], [0, -0.04]].map(([x, z]) => [s * (0.08 + x), 0.2 + z]);
-    const g = membrane(out, 0.0);
-    g.rotateZ(s * -0.25);
-    g.translate(0, -0.035, 0);
-    parts.push(paint(g, (p, n) => col(p, V(0, s * p.x > 0.15 ? -1 : 0.2, 0)), (p) => [clamp(0.5 - p.z, 0, 1), s, clamp((Math.abs(p.x) - 0.08) / 0.3, 0, 1) * 1.6, -0.035], glowFn));
+    const fin = blob(0.05, 0.011, 0.19, (z, x) => {
+      const t = z * 0.5 + 0.5; // 0 root .. 1 tip
+      let k = Math.pow(Math.sin(Math.PI * Math.pow(t, 0.55)), 0.7) * (1 - 0.55 * t);
+      if (x * s < 0) k *= 1 + 0.18 * Math.max(0, Math.sin(t * 40)) * (1 - t); // tubercles on the leading edge
+      return Math.max(k, 0.05);
+    }, 24, 10);
+    fin.translate(0, 0, 0.19);
+    fin.rotateY(s * (Math.PI / 2 + 0.45));       // reach out sideways, swept back
+    fin.rotateZ(s * -0.52);                      // droop
+    fin.translate(s * 0.075, -0.04, 0.21);
+    parts.push(paint(fin, (p, n) => col(p, V(0, n.y > 0 ? 0.6 : -0.8, 0)), (p) => [clamp(0.5 - p.z, 0, 1), s, clamp((Math.abs(p.x) - 0.07) / 0.3, 0, 1) * 1.6, -0.04], glowFn));
   }
   // flukes
-  const fl = [[0, -0.42], [0.06, -0.47], [0.14, -0.54], [0.12, -0.56], [0.05, -0.53], [0, -0.51], [-0.05, -0.53], [-0.12, -0.56], [-0.14, -0.54], [-0.06, -0.47]];
-  const flg = membrane(fl, 0.004);
+  const fl = [[0, -0.42], [0.07, -0.48], [0.18, -0.57], [0.15, -0.6], [0.06, -0.555], [0, -0.535], [-0.06, -0.555], [-0.15, -0.6], [-0.18, -0.57], [-0.07, -0.48]];
+  const flg = membrane(fl, 0.008);
   parts.push(paint(flg, (p) => col(p, V(0, 1, 0)), (p) => [clamp(0.5 - p.z, 0, 1), 0, 0, 0], glowFn));
   // dorsal ridge bumps
   for (let i = 0; i < 5; i++) {
@@ -279,7 +286,7 @@ export class Floaters {
       const style = WHALE_STYLE[A] || WHALE_STYLE.default;
       const geo = buildWhale(style);
       const uni = { uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color(style.glow || '#000000') }, uLen: { value: 1 } };
-      const mats = rigMaterial({ roughness: 0.62 }, WHALE_RIG, uni, 'whale-' + A);
+      const mats = rigMaterial({ roughness: 0.62 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.22, aoMin: 0.6 });
       mats.mat.side = THREE.DoubleSide;
       const { mesh, anim } = makeInstanced(geo, mats, 8, { shadow: true });
       mesh.receiveShadow = true;
@@ -287,7 +294,7 @@ export class Floaters {
       this.wMesh = mesh; this.wAnim = anim; this.wU = uni; this.wGlow = new THREE.Color(style.glow || '#000000');
       // a deterministic pod roaming the region of the first settlement + the opposite hemisphere
       const rng = new Random(seedFrom(fauna.seed, 'whales'));
-      const n = q.pick(2, 3, 4, 5);
+      const n = q.pick(1, 2, 2, 3);
       const homes = (this.world.sites.length ? this.world.sites : [{ dir: new THREE.Vector3(0.3, 0.5, 0.8).normalize() }]).slice(0, 3);
       for (let i = 0; i < n; i++) {
         const h = homes[i % homes.length].dir;
@@ -302,8 +309,8 @@ export class Floaters {
     const a = o.ang ?? rng.range(0, TAU), rr = o.dist ?? rng.range(600, 2600);
     const d = dir.clone().multiplyScalar(R).addScaledVector(t1, Math.cos(a) * rr).addScaledVector(t2, Math.sin(a) * rr).normalize();
     const gh = Math.max(w.heightAt(d), w.hasOcean ? w.seaLevel : -1e9);
-    const len = o.len ?? rng.range(70, 140);
-    const alt = o.alt ?? rng.range(380, 900);
+    const len = o.len ?? rng.range(220, 360);
+    const alt = o.alt ?? rng.range(700, 1400);
     const head = o.heading ?? rng.range(0, TAU);
     return { pos: d.clone().multiplyScalar(R + gh + alt), len, alt, head, speed: len * rng.range(0.05, 0.08), phase: rng.range(0, TAU), turn: rng.range(-0.012, 0.012), t1, t2, forced: !!o.forced };
   }
@@ -354,6 +361,8 @@ export class Floaters {
       this.jU.uNight.value = fa.night;
       const arr = this.jMesh.instanceMatrix.array, an = this.jAnim.array, col = this.jMesh.instanceColor.array;
       let n = 0;
+      for (const j of this.jellies) j._d = j.p.distanceToSquared(cam);
+      this.jellies.sort((a, b) => b._d - a._d);
       for (const j of this.jellies) {
         if (n >= this.jMax) break;
         _u.copy(j.base).normalize();

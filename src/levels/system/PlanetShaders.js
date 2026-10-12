@@ -18,7 +18,7 @@ float ringDensity(float x, float seed){
   d += smoothstep(0.592, 0.6, x) * (1.0 - smoothstep(0.62, 0.64, x)) * (0.13 + 0.05 * rNoise(x * 300.0 + seed));                       // dusty Cassini division
   d *= 1.0 - 0.75 * exp(-pow((x - 0.888) / 0.0035, 2.0));                                          // Encke gap
   d *= 1.0 - 0.25 * exp(-pow((x - 0.94) / 0.0012, 2.0));                                            // Keeler gap
-  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.11;                                                  // F ring
+  d += exp(-pow((x - 0.99) / 0.0028, 2.0)) * 0.05;                                                  // F ring
   // plateaus and ringlets at every scale
   float fine = 0.56 + 0.22 * rNoise(x * 70.0 + seed) + 0.2 * rNoise(x * 260.0 + seed * 3.0) + 0.14 * rNoise(x * 900.0 + seed) + 0.08 * rNoise(x * 2600.0);
   float plateau = 1.0 + 0.35 * smoothstep(0.55, 0.9, rNoise(x * 34.0 + seed * 7.0)) * step(x, 0.25);
@@ -271,9 +271,9 @@ void main(){
     vec2 wt = worley(sd * 260.0 + 7.0);
     float town = smoothstep(0.1, 0.0, wt.x) * smoothstep(0.3, 0.7, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
     // sparkle: suburbs and towns resolve into pin-sharp grains of light, not a smooth glow
-    float grain = smoothstep(0.55, 0.98, snoise(sd * 1400.0) * 0.5 + 0.5) * 2.2 + 0.06;
-    float net = clamp(coast + corridor * 1.2, 0.0, 1.6) + 0.12;
-    float lights = region * (cores * 2.4 * mega + (sprawl * 0.8 * min(mega, 3.0) + town * 0.8) * grain * net + roads * grain * 0.9 * min(mega, 3.0) + corridor * grain * 0.6) * net * inland * 1.1;
+    float grain = smoothstep(0.45, 0.95, snoise(sd * 1400.0) * 0.5 + 0.5) * 2.4 + 0.12;
+    float net = clamp(coast + corridor * 1.2, 0.0, 1.6) + 0.3;
+    float lights = region * (cores * 2.4 * mega + (sprawl * 0.8 * min(mega, 3.0) + town * 0.8) * grain * net + roads * grain * 0.9 * min(mega, 3.0) + corridor * grain * 0.6) * net * inland * 2.6;
     lights *= 1.0 - smoothstep(0.3, 0.6, snow);
     // sodium amber suburbs vs LED-white downtowns
     vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);

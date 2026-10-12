@@ -337,7 +337,8 @@ export default class SystemLevel {
     const L = this.layout;
     return {
       hero: async () => {
-        this.backdrop.bandMat.uniforms.uK.value = 1;
+        this.backdrop.bandMat.uniforms.uK.value = 1;   // galactic band yields to close-up subjects
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
         // beside the ringed giant at a ~115° phase angle: a lit crescent with open rings in the
         // foreground, the star and the inner worlds strung along their orbits beyond it
         const sp = this.planets.find((x) => x.planet.rings) || this._planet(2);
@@ -381,7 +382,8 @@ export default class SystemLevel {
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
       star: async () => {
-        this.backdrop.bandMat.uniforms.uK.value = 1;
+        this.backdrop.bandMat.uniforms.uK.value = 1;   // galactic band yields to close-up subjects
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
         this.focus = null;
         const R = L.starR;
         const d0 = new THREE.Vector3(0.05, 0.22, -1).normalize();
@@ -391,6 +393,7 @@ export default class SystemLevel {
       },
       gasgiant: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 0.55;   // galactic band yields to close-up subjects
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.3;   // distant belt rocks must not read as confetti in close-ups
         const sp = this.planets.find((x) => x.planet.kind === 'gas' && x.planet.rings) || this.planets.find((x) => x.planet.kind === 'gas') || this._planet(5);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
@@ -400,6 +403,7 @@ export default class SystemLevel {
       },
       planet: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 0.6;   // galactic band yields to close-up subjects
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.4;   // distant belt rocks must not read as confetti in close-ups
         const sp = this._planet(2);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
@@ -408,13 +412,14 @@ export default class SystemLevel {
         this._poseDir(sp.position, sp.R * 3.1, dir);
       },
       belt: async () => {
-        this.backdrop.bandMat.uniforms.uK.value = 1;
+        this.backdrop.bandMat.uniforms.uK.value = 0.6;   // galactic band yields to close-up subjects
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
         this.focus = null;
         const b = this.belts.find((x) => x.kind !== 'kuiper') || this.belts[0];
         if (!b) { this._pose(new THREE.Vector3(), this.extent, 0.4, 0.1); return; }
         const P = b.instances.map((it) => b.instancePosition(it, this.days, new THREE.Vector3()));
         const up = new THREE.Vector3(0, 1, 0);
-        const ph = THREE.MathUtils.degToRad(112);   // ~40% lit: a sculpted terminator, the belt haze glowing toward the star
+        const ph = THREE.MathUtils.degToRad(120);   // ~1/3 lit: a sculpted terminator, the belt haze glowing toward the star
         const camFor = (pos, S) => {
           const s = pos.clone().multiplyScalar(-1).normalize();
           const t = new THREE.Vector3().crossVectors(up, s).normalize();
@@ -448,7 +453,7 @@ export default class SystemLevel {
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
         // the boulder sits right of centre, the star inside the left third
         const sepSR = toStar.angleTo(toRock);
-        const lookDir = toStar.clone().applyAxisAngle(axis, Math.max(sepSR * 0.5, sepSR - Math.atan(0.5 * Math.tan(hfov / 2))));
+        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(sepSR * 0.6, Math.atan(0.7 * Math.tan(hfov / 2))));
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },

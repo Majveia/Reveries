@@ -28,7 +28,8 @@
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,6 +46,27 @@ for (let i = 0; i < argv.length; i++) {
 const PORT = 5173;
 const BASE = `http://localhost:${PORT}/`;
 const LOCK = '/tmp/reveries-shoot.lock';
+// Google Fonts: headless Chromium's font fetches fail behind the sandbox proxy
+// (net::ERR_TOO_MANY_RETRIES) although curl reaches them, which left shots in
+// fallback fonts and logged a false console error. Serve them from a local cache
+// (outside the repo) filled with curl; fall back to an empty response.
+const FONT_CACHE = '/tmp/reveries-fontcache';
+async function serveFont(route) {
+  const req = route.request(), u = req.url();
+  const css = u.includes('fonts.googleapis.com');
+  const ct = css ? 'text/css; charset=utf-8' : 'font/woff2';
+  try {
+    const f = path.join(FONT_CACHE, crypto.createHash('sha1').update(u).digest('hex'));
+    if (!fs.existsSync(f)) {
+      fs.mkdirSync(FONT_CACHE, { recursive: true });
+      execFileSync('curl', ['-sS', '-f', '--max-time', '20', '-A', req.headers()['user-agent'] || 'Mozilla/5.0', '-o', f + '.tmp', u]);
+      fs.renameSync(f + '.tmp', f);
+    }
+    await route.fulfill({ status: 200, contentType: ct, body: fs.readFileSync(f), headers: { 'access-control-allow-origin': '*' } });
+  } catch {
+    await route.fulfill({ status: 200, contentType: ct, body: '', headers: { 'access-control-allow-origin': '*' } }).catch(() => {});
+  }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function serverUp() {
@@ -142,7 +164,9 @@ async function main() {
     const ctx = await browser.newContext({ viewport: { width: W, height: H }, ignoreHTTPSErrors: true, deviceScaleFactor: 1, isMobile: !!args.mobile, hasTouch: !!args.mobile });
     const page = await ctx.newPage();
     await page.route(/\/@vite\/client(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: VITE_CLIENT_STUB }));
+    await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, serveFont);
     page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(`[${m.type()}] ${m.text()}`.slice(0, 600)); });
+    page.on('requestfailed', (r) => logs.push(`[requestfailed] ${r.url().slice(0, 160)} ${r.failure()?.errorText || ''}`));
     page.on('pageerror', (e) => logs.push(`[pageerror] ${String(e.stack || e).slice(0, 1200)}`));
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
     const timeout = parseInt(args.timeout || '300', 10) * 1000;

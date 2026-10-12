@@ -55,6 +55,37 @@ function buildFish() {
   return mergeParts(parts);
 }
 
+// Fireflies: additive HDR motes hovering over the grass from dusk on, each with its own slow blink.
+const FIREFLY_VERT = /* glsl */ `
+attribute vec4 aHome; // xyz relative to the fauna anchor, w seed
+uniform float uFTime; uniform float uOn;
+varying vec2 vUv; varying float vB;
+void main() {
+  float sd = aHome.w * 97.0, t = uFTime;
+  vec3 up = normalize(aHome.xyz + modelMatrix[3].xyz);
+  vec3 c = aHome.xyz + vec3(sin(t * 0.31 + sd) * 1.6 + sin(t * 0.9 + sd * 2.0) * 0.4, 0.0, cos(t * 0.27 + sd * 3.0) * 1.6 + cos(t * 1.1 + sd) * 0.4);
+  c += up * (0.5 + 0.9 * (0.5 + 0.5 * sin(t * 0.43 + sd * 5.0)));
+  float period = 3.0 + 5.0 * fract(sd * 0.37);
+  float ph = fract(t / period + aHome.w * 13.0);
+  vB = smoothstep(0.0, 0.08, ph) * (1.0 - smoothstep(0.1, 0.45, ph)) * uOn;
+  vUv = position.xy;
+  vec4 mv = modelViewMatrix * vec4(c, 1.0);
+  mv.xy += position.xy * 0.22 * step(0.002, vB);
+  gl_Position = projectionMatrix * mv;
+}
+`;
+const FIREFLY_FRAG = /* glsl */ `
+uniform vec3 uColor; varying vec2 vUv; varying float vB;
+void main() {
+  float r = length(vUv);
+  float core = exp(-r * r * 40.0), halo = exp(-r * r * 6.0) * 0.12;
+  float a = (core + halo) * vB;
+  if (a < 0.002) discard;
+  gl_FragColor = vec4(uColor * a, 1.0);
+}
+`;
+const FIREFLY_COL = { pandora: '#5affd8', rick: '#b8ff5a', moebius: '#ffe28a', default: '#d8ff6a' };
+
 const _u = new THREE.Vector3(), _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _p = new THREE.Vector3(), _f = new THREE.Vector3();
 
 export class SmallLife {
@@ -71,6 +102,19 @@ export class SmallLife {
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.bMax * 3).fill(1), 3);
       fauna.root.add(mesh);
       this.b = { mesh, anim, uni, list: [], pal: (PALETTES[A] || PALETTES.ghibli).map((h) => new THREE.Color(h)), glow: A === 'pandora' || A === 'rick' };
+    }
+    if (MEADOWS.includes(A)) {
+      const n = fauna.q.pick(90, 180, 300, 420);
+      const g = new THREE.InstancedBufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      const home = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4); home.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('aHome', home); g.instanceCount = 0;
+      const uni = { uFTime: fauna.uniforms.uFTime, uOn: { value: 0 }, uColor: { value: new THREE.Color(FIREFLY_COL[A] || FIREFLY_COL.default).multiplyScalar(14) } };
+      const mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({ vertexShader: FIREFLY_VERT, fragmentShader: FIREFLY_FRAG, uniforms: uni, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      mesh.frustumCulled = false; mesh.renderOrder = 4;
+      fauna.root.add(mesh);
+      this.ff = { mesh, geo: g, home, uni, n, abs: [], center: null, anchor: new THREE.Vector3(1e9, 0, 0) };
     }
     if (this.world.hasOcean) {
       const geo = buildFish();
@@ -136,6 +180,36 @@ export class SmallLife {
       B.mesh.count = n;
     }
     if (this.fish) this._updateFish(dt, cam, alt);
+    if (this.ff) this._updateFireflies(cam, alt);
+  }
+
+  _updateFireflies(cam, alt) {
+    const F = this.ff, fa = this.fauna, w = this.world, R = w.radius;
+    const on = smooth(0.18, 0.45, fa.night) * (alt < 150 ? 1 : 0);
+    F.uni.uOn.value = on;
+    F.mesh.visible = on > 0.01;
+    if (!F.mesh.visible) return;
+    if (!F.center || F.center.distanceTo(cam) > 30) {
+      // deterministic swarm over dry, open ground within ~50 m (re-seeded per 40 m cell)
+      _u.copy(cam).normalize(); tangentBasis(_u, _t1, _t2);
+      const key = `${Math.round(_u.x * R / 40)},${Math.round(_u.y * R / 40)},${Math.round(_u.z * R / 40)}`;
+      const rng = new Random(seedFrom(fa.seed, 'ff', key));
+      F.center = cam.clone(); F.abs.length = 0;
+      for (let i = 0; i < F.n * 2 && F.abs.length < F.n * 2; i++) {
+        const a = rng.range(0, TAU), r = 3 + Math.pow(rng.float(), 0.7) * 50;
+        const d = _p.copy(_u).multiplyScalar(R).addScaledVector(_t1, Math.cos(a) * r).addScaledVector(_t2, Math.sin(a) * r).normalize();
+        const h = w.heightAt(d);
+        if (w.hasOcean && h < w.seaLevel + 0.3) continue;
+        F.abs.push(d.clone().multiplyScalar(R + h), rng.float());
+      }
+      F.anchor.set(1e9, 0, 0);
+    }
+    if (!F.anchor.equals(fa.anchor)) {
+      F.anchor.copy(fa.anchor);
+      const a = F.home.array; let k = 0;
+      for (let i = 0; i + 1 < F.abs.length; i += 2) { const p = F.abs[i]; a[k++] = p.x - fa.anchor.x; a[k++] = p.y - fa.anchor.y; a[k++] = p.z - fa.anchor.z; a[k++] = F.abs[i + 1]; }
+      F.geo.instanceCount = k / 4; F.home.needsUpdate = true;
+    }
   }
 
   _updateFish(dt, cam, alt) {
@@ -174,5 +248,5 @@ export class SmallLife {
     F.mesh.count = n; F.mesh.instanceMatrix.needsUpdate = true; F.anim.needsUpdate = true;
   }
 
-  dispose() { for (const m of [this.b?.mesh, this.fish?.mesh]) if (m) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); m.customDepthMaterial?.dispose(); } }
+  dispose() { for (const m of [this.b?.mesh, this.fish?.mesh, this.ff?.mesh]) if (m) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); m.customDepthMaterial?.dispose(); } }
 }

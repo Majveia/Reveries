@@ -125,16 +125,88 @@ export default class Civilization {
   }
 
   _shotCity(s, o = {}) {
+    this._dbg = true;
     const w = this.level.world, f = s.frame, plan = s.plan;
     // the light is part of the composition: try the evening and the morning golden hour (same sun
     // elevation, mirrored azimuth) and keep whichever lets the camera put the sun where the style wants it
     const target = o.night ? -0.2 : (s.style.shotSun ?? 0.14);
-    const times = [this._timeFor(s, target)];
-    if (!o.night && !s.style.eveningOnly) times.push(this._timeFor(s, target, 0.06, 0.48));
     const sunL = new THREE.Vector3();
     let sunA = 0;
     const c = plan.center;
     const Rb = Math.max(120, plan.builtRadius);
+    const R0 = f.R || 40000;
+    const ch0 = f.hAt(c[0], c[1]);
+    // fraction of the town that sees the sun (karst pillars, ridges and cliffs can drown the whole
+    // town in shadow at golden hour, leaving a key-less grey frame)
+    const sunVis = () => {
+      f.sunLocal(w.sunDir, sunL);
+      if (sunL.y <= 0.005) return 0;
+      const yaw = Math.atan2(sunL.z, sunL.x), tp = sunL.y / Math.hypot(sunL.x, sunL.z);
+      let lit = 0, n = 0;
+      for (const [ox, oz] of [[0, 0], [0.45, 0], [-0.45, 0], [0, 0.45], [0, -0.45]]) {
+        const x0 = c[0] + ox * Rb, z0 = c[1] + oz * Rb, y0 = f.hAt(x0, z0) + 10;
+        let hit = false;
+        for (let i = 1; i <= 36 && !hit; i++) {
+          const sd = (i / 36) ** 1.5 * 4500;
+          if (f.hAt(x0 + Math.cos(yaw) * sd, z0 + Math.sin(yaw) * sd) > y0 + tp * sd + (sd * sd) / (2 * R0)) hit = true;
+        }
+        n++; if (!hit) lit++;
+      }
+      return lit / n;
+    };
+    // per golden hour (evening, then morning): the first sun height near the style's target that
+    // actually lights the town; fall back to the best-lit one
+    const pickTime = (from, to) => {
+      if (o.night) return { tod: this._timeFor(s, target, from, to), vis: 1 };
+      let bestT = null;
+      for (const dy of [0, 0.04, -0.03, 0.08, 0.13]) {
+        const tod = this._timeFor(s, target + dy, from, to);
+        const vis = sunVis();
+        if (!bestT || vis > bestT.vis + 0.01) bestT = { tod, vis };
+        if (vis >= 0.8) break;
+      }
+      return bestT;
+    };
+    const times = [pickTime(0.52, 0.92)];
+    if (!o.night && !s.style.eveningOnly) times.push(pickTime(0.06, 0.48));
+    // walls, gate pylons and landmark masses: the camera must not sit against them, and must not
+    // look through one in the foreground
+    const blockers = [];
+    const wpts = plan.wall?.pts;
+    if (wpts && wpts.length > 1) {
+      for (let i = 0; i < wpts.length; i++) {
+        const a = wpts[i], b = wpts[(i + 1) % wpts.length];
+        if (!a || !b) continue;
+        blockers.push({ seg: true, ax: a[0], az: a[1], bx: b[0], bz: b[1], r: 14, top: Math.max(f.hAt(a[0], a[1]), f.hAt(b[0], b[1])) + 34 });
+      }
+    }
+    for (const g of plan.gates || []) blockers.push({ x: g.x, z: g.z, r: (g.w || 10) / 2 + 14, top: f.hAt(g.x, g.z) + 34 });
+    for (const l of s.ctx.landmarkSpots) {
+      if (l.kind === 'island') continue;
+      blockers.push({ x: l.x, z: l.z, r: l.r ?? ({ citadel: 70, pagoda: 22, monolith: 24, tree: 40, colossus: 30 }[l.kind] ?? 30), top: l.h + 10 });
+    }
+    // planar distance from (x,z) to a blocker's footprint edge
+    const bDist = (bk, x, z) => {
+      if (!bk.seg) return Math.hypot(bk.x - x, bk.z - z) - bk.r;
+      const dx = bk.bx - bk.ax, dz = bk.bz - bk.az;
+      const t = Math.min(1, Math.max(0, ((x - bk.ax) * dx + (z - bk.az) * dz) / (dx * dx + dz * dz || 1)));
+      return Math.hypot(bk.ax + dx * t - x, bk.az + dz * t - z) - bk.r;
+    };
+    // first foreground blocker a screen ray passes through below its top (sphere-traced in plan)
+    const nearHit = (list, x0, z0, y0, yaw, pitch, maxS) => {
+      const cx = Math.cos(yaw), cz = Math.sin(yaw), tp = Math.tan(pitch);
+      for (let sd = 2; sd < maxS;) {
+        const px = x0 + cx * sd, pz = z0 + cz * sd;
+        let dm = Infinity;
+        for (const bk of list) {
+          const d = bDist(bk, px, pz);
+          if (d < 0 && y0 + tp * sd < bk.top) return sd;
+          if (d < dm) dm = d;
+        }
+        sd += Math.max(3, dm);
+      }
+      return 0;
+    };
     const lm = s.ctx.landmarkSpots.find((l) => ['island', 'elevator', 'pagoda', 'monolith', 'tree', 'citadel', 'colossus', 'arch'].includes(l.kind)) || s.ctx.landmarkSpots[0];
     const sh = s.style.shot || {};
     const ch = f.hAt(c[0], c[1]);
@@ -145,7 +217,7 @@ export default class Civilization {
     const lmTop = lm ? (lm.R ? lm.h + lm.R * 0.95 : lm.h) : 0;
     const lmBot = lm ? (lm.R ? lm.h - lm.R * 1.3 : f.hAt(lm.x, lm.z)) : 0;
     const fps = s.ctx.footprints || [];
-    const sunPref = sh.sunPref ?? 1.45; // sun ahead and to the side: rim light, long shadows toward the camera
+    const sunPref = sh.sunPref ?? 1.85; // sun ahead and to the side: rim light, long shadows toward the camera
     // first terrain hit along a ray (plan space, curvature-corrected); returns [dist, groundH] or null
     const march = (x0, z0, y0, yaw, pitch, maxS, steps) => {
       const cx = Math.cos(yaw), cz = Math.sin(yaw), tp = Math.tan(pitch);
@@ -158,7 +230,7 @@ export default class Civilization {
     };
     const elevOf = (x0, z0, y0, x, z, y) => { const d = Math.hypot(x - x0, z - z0); return Math.atan2(y - y0 - (d * d) / (2 * R), d); };
     let best = null;
-    for (const tod of times) {
+    for (const { tod, vis } of times) {
     w.setTimeOfDay(tod, s.site.dir);
     f.sunLocal(w.sunDir, sunL);
     sunA = Math.atan2(sunL.z, sunL.x);
@@ -178,6 +250,8 @@ export default class Civilization {
             const r = Math.max(L.w, L.d) * 0.6 + 6;
             if (Math.abs(L.x - x) < r && Math.abs(L.z - z) < r && camY < (L.base ?? gh) + fp.h + 6) { inside = true; break; }
           }
+          if (inside) continue;
+          for (const bk of blockers) if (bDist(bk, x, z) < 22 && camY < bk.top + 6) { inside = true; break; }
           if (inside) continue;
           const aC = Math.atan2(c[1] - z, c[0] - x);
           const dC = Math.hypot(c[0] - x, c[1] - z);
@@ -204,6 +278,19 @@ export default class Civilization {
             // landmark base must be visible over the terrain
             const toL = march(x, z, camY, aL, eBot + 0.004, dL * 0.97, 18);
             if (toL) sc -= 1.5;
+            // the landmark should cut against the sky, not against a mountainside behind it
+            let behind = 0;
+            for (const du of [-0.035, 0, 0.035]) {
+              for (const tv of [0.15, 0.5, 0.85]) {
+                const pv = eTop + (eBot - eTop) * tv;
+                const cxr = Math.cos(aL + du), czr = Math.sin(aL + du), tp = Math.tan(pv);
+                for (let i = 1; i <= 14; i++) {
+                  const sd = dL * (1.05 + 5 * (i / 14) ** 1.5);
+                  if (f.hAt(x + cxr * sd, z + czr * sd) > camY + tp * sd + (sd * sd) / (2 * R)) { behind++; break; }
+                }
+              }
+            }
+            sc -= (behind / 9) * (['island', 'elevator', 'colossus', 'monolith', 'pagoda'].includes(lm.kind) ? 3.5 : 1.6);
           } else {
             vfov = THREE.MathUtils.degToRad(42);
             yaw = aC;
@@ -228,14 +315,38 @@ export default class Civilization {
             }
           }
           sc -= wallC * 0.9;
+          // a dune or bank right in front of the lens swallowing the lower frame
+          let nearT = 0;
+          for (const u of [-0.85, -0.42, 0, 0.42, 0.85]) {
+            for (const v of [-0.35, 0.0]) {
+              const hit = march(x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 0.45, 10);
+              if (hit) nearT += v > -0.1 ? 1.4 : 1;
+            }
+          }
+          sc -= nearT * 0.7;
           const frac = block / 20;
           if (frac > 0.15) sc -= 8;
           sc -= frac * 14;
           const toC = march(x, z, camY, aC, eTown + 0.01, dC * 0.95, 16);
           if (toC) sc -= 2;
+          // walls, pylons or a landmark mass filling the foreground
+          const nearB = blockers.filter((bk) => bDist(bk, x, z) < dC * 0.4);
+          if (nearB.length) {
+            let nb = 0;
+            for (const u of [-0.8, -0.3, 0.3, 0.8]) {
+              for (const v of [-0.75, -0.35, 0.05]) {
+                const hd = nearHit(nearB, x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 0.35);
+                if (hd) nb += hd < dC * 0.15 ? 1.6 : 1;
+              }
+            }
+            sc -= nb * 0.9;
+          }
+          // sun-lit town (the time's measured visibility) and no sun disc/glare inside the frame
+          sc -= (1 - vis) * 7;
           // light: sun to the side and a little ahead
           const da = Math.abs(wrap(sunA - yaw));
           sc -= Math.abs(da - sunPref) * 2.0;
+          if (!o.night && da < hf * 0.5 + 0.12) sc -= 4;
           if (f.wet(x, z)) sc -= 0.4;
           sc += Math.min(1, Math.max(0, (gh - ch) / 60)) * 0.4; // a natural vantage on a rise
           sc -= Math.abs(fh - 0.75) * 0.6;
@@ -249,7 +360,8 @@ export default class Civilization {
       }
     }
     }
-    w.setTimeOfDay(best?.tod ?? times[0], s.site.dir);
+    w.setTimeOfDay(best?.tod ?? times[0].tod, s.site.dir);
+    if (this._dbg) { f.sunLocal(w.sunDir, sunL); console.warn('[civ-dbg] times', JSON.stringify(times), 'best', JSON.stringify(best), 'sunL', sunL.toArray().map((v) => v.toFixed(3)).join(','), 'sunA', Math.atan2(sunL.z, sunL.x).toFixed(2), 'tod', w.timeOfDay); }
     if (!best) { // fallback: high above the centre
       best = { x: c[0] + Rb, z: c[1], camY: ch + 120, yaw: Math.PI, pitch: -0.25, vfov: 0.8 };
     }

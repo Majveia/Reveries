@@ -49,7 +49,7 @@ export class Bike {
     this.overWater = false; this.groundH = 0;
     this.sleeping = false;
     // VFX
-    this.flame = new Flame({ radius: 0.15, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.28 });
+    this.flame = new Flame({ radius: 0.15, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.17 });
     this.flame.mesh.position.copy(model.nozzles[0].pos);
     this.body.add(this.flame.mesh);
     this.glow = new GroundGlow([0.3, 0.8, 1.0]);

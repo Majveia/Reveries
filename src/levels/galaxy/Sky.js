@@ -70,7 +70,7 @@ export class DeepSky {
   constructor(engine, g) {
     const q = engine.quality;
     const rng = new Random(seedFrom(g.seed, 'deepsky'));
-    const nStars = q.pick(2500, 4000, 6000, 8000), nGal = q.pick(200, 320, 480, 600);
+    const nStars = q.pick(5000, 9000, 14000, 18000), nGal = q.pick(260, 420, 640, 800);
     const n = nStars + nGal;
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 4), shp = new Float32Array(n * 4);
     const tmp = [0, 0, 0];
@@ -79,12 +79,12 @@ export class DeepSky {
       pos.set([x, y, z], i * 3);
       if (i < nStars) {
         bbColor(rng.range(3200, 11000), tmp);
-        const b = Math.min(0.15, 0.006 * Math.pow(1 - rng.float() * 0.995, -0.9));
+        const b = Math.min(0.25, 0.013 * Math.pow(1 - rng.float() * 0.995, -0.95));   // ~8 mag of range
         col.set([tmp[0], tmp[1], tmp[2], b], i * 4);
         shp.set([2.2, 1, 0, 0], i * 4);
       } else {
         const ell = rng.chance(0.35);
-        col.set([1, 1, 1, rng.range(0.012, 0.05)], i * 4);
+        col.set([1, 1, 1, rng.range(0.02, 0.08)], i * 4);
         shp.set([rng.range(3, 9) * (rng.chance(0.06) ? 2.2 : 1), rng.range(0.2, 1), rng.range(0, Math.PI), ell ? 2 : 1], i * 4);
       }
     }

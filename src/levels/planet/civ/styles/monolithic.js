@@ -340,7 +340,7 @@ function citadel(ctx, x, z, yaw) {
   glow(ctx, 0, 3, S / 2 + 2, pal.lamp, 2.2, 0.4);
   ctx.collider(0, y / 2, 0, S / 2, y / 2, S / 2, false);
   ctx.useTile(null);
-  ctx.landmarkSpots.push({ x, z, h: fp.min + y + 14, kind: 'citadel', title: 'The Citadel' });
+  ctx.landmarkSpots.push({ x, z, h: fp.min + y + 14, kind: 'citadel', title: 'The Citadel', r: S * 0.62 });
   ctx.poiAt(x, z, fp.min + 2, 90, 'landmark', 'The Citadel');
 }
 

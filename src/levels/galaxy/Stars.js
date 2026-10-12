@@ -32,16 +32,19 @@ export function bbColor(T, out = [0, 0, 0]) {
 const CLOUD_GLSL = /* glsl */ `
 uniform sampler3D uNoise; uniform float uInside;
 float cloudTau(vec3 a, vec3 b){
+  // EXACTLY the volume's near-dust field (GalaxyVolume, uInside path): giant molecular cloud
+  // complexes with clear lanes between them, so the stars vanish behind the same rifts
   float L = length(b - a), t = 0.0;
   for (int k = 0; k < 4; k++) {
     vec3 pm = mix(a, b, (float(k) + 0.5) / 4.0);
-    vec4 c1 = textureLod(uNoise, pm * vec3(1.6, 3.0, 1.6) + 0.37, 0.0);
-    vec4 c2 = textureLod(uNoise, pm * vec3(6.0, 9.0, 6.0) + c1.xyz * 0.3, 0.0);
-    float cl = smoothstep(0.57, 0.65, c1.g * 0.6 + c2.r * 0.4);
+    vec4 c0 = textureLod(uNoise, pm * vec3(0.14, 0.5, 0.14) + 0.71, 0.0);
+    vec4 c1 = textureLod(uNoise, pm * vec3(0.4, 1.2, 0.4) + 0.37 + c0.xyz * 0.2, 0.0);
+    vec4 c2 = textureLod(uNoise, pm * vec3(1.25, 2.6, 1.25) + c1.xyz * 0.3, 0.0);
+    float cl = smoothstep(0.42, 0.62, c0.g * 0.45 + c1.r * 0.35 + c2.b * 0.2);
     float pD = 0.5 / (uHDust * pow(cosh(clamp(pm.y / uHDust, -12.0, 12.0)), 2.0));
-    t += galMap(pm, 0.0).b * pD * (0.04 + cl * cl * 9.0) * (0.5 + c2.b);
+    t += (galMap(pm, 0.0).b + 0.14) * pD * (0.02 + cl * cl * 20.0) * (0.55 + c2.r);
   }
-  return t * L * 0.25 * uKappa;
+  return t * L / 4.0 * uKappa;
 }
 float starTau(vec3 a, vec3 b, int n, float lod){
   if (uInside <= 0.0) return galTau(a, b, n, lod);
@@ -73,7 +76,9 @@ void main(){
   flux *= mix(1.0, mix(smoothstep(24.0, 60.0, L) * 0.6 * (1.0 - 0.6 * uUnres), hotK, hot), uOldFade);
   flux = uSat * (1.0 - exp(-flux / uSat));
   float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
-  flux *= exp(-starTau(cameraPosition, position, int(uTauSteps), lod));
+  float sTau = starTau(cameraPosition, position, int(uTauSteps), lod);
+  flux *= exp(-sTau);
+  vec3 redden = exp(-min(sTau, 6.0) * vec3(-0.3, 0.0, 0.35));   // dust reddens what it does not hide
   // stars embedded in a lane are dimmed by the column around them (screen term, matches the volume)
   flux *= exp(-galMap(position, 1.0).b * 1.1);
   float px = clamp(1.0 + sqrt(flux) * uPxScale, uMinPx, uMaxPx);
@@ -81,7 +86,7 @@ void main(){
   vSharp = px;
   vRc = 0.45 + 0.07 * px;
   // energy: flux concentrated in a compact PSF core (~π·rc² pixels); the footprint holds spikes/halo
-  vColor = aCol.rgb * flux / max(1.0, 3.1416 * vRc * vRc) * uFade;
+  vColor = aCol.rgb * redden * flux / max(1.0, 3.1416 * vRc * vRc) * uFade;
   if (flux < 1e-4) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
 

@@ -116,9 +116,7 @@ function buildSpecies(spec) {
     let c = mixColor(belly, back, t);
     const nz = vnoise(p.x * 9, p.y * 9, p.z * 9);
     let pm = 0;
-    if (S.pattern === 'stripes') pm = smooth(0.55, 0.62, Math.sin(p.z * 22 + Math.sin(p.y * 8) * 1.5 + nz * 2) * 0.5 + 0.5) * smooth(0.3, 0.7, t);
-    else if (S.pattern === 'spots') pm = smooth(0.66, 0.72, vnoise(p.x * 7 + 3, p.y * 7, p.z * 7)) * t;
-    else if (S.pattern === 'flank') pm = smooth(0.05, 0.0, Math.abs(yy - 0.18 + Math.sin(p.z * 3) * 0.04)) * (1 - Math.abs(n.y)) * 0.9;
+    if (S.pattern === 'flank') pm = smooth(0.05, 0.0, Math.abs(yy - 0.18 + Math.sin(p.z * 3) * 0.04)) * (1 - Math.abs(n.y)) * 0.9;
     else if (S.pattern === 'mane') pm = smooth(0.6, 0.9, extra);
     else if (S.pattern === 'shag') pm = smooth(0.45, 0.8, nz) * 0.45;
     c = [lerp(c[0], pat.r, pm), lerp(c[1], pat.g, pm), lerp(c[2], pat.b, pm)];
@@ -126,22 +124,19 @@ function buildSpecies(spec) {
     const v = 0.85 + 0.3 * nz;
     return [c[0] * ao * v, c[1] * ao * v, c[2] * ao * v];
   };
-  const glowFn = S.glow ? (p, n) => {
-    if (S.pattern === 'stripes') return smooth(0.6, 0.66, Math.sin(p.z * 22 + Math.sin(p.y * 8) * 1.5 + vnoise(p.x * 9, p.y * 9, p.z * 9) * 2) * 0.5 + 0.5) * smooth(0.0, 0.6, n.y * 0.5 + 0.5) * S.glow;
-    return smooth(0.68, 0.72, vnoise(p.x * 7 + 3, p.y * 7, p.z * 7)) * S.glow;
-  } : null;
+  const glowFn = null; // coat glow is evaluated per pixel (surfaceGLSL)
   // body: deep chest, tucked waist, rounded rump (+hump)
   const body = blob(S.bodyW, S.bodyR, S.bodyLen, (z, x, y) => {
     let k = 1 + 0.12 * Math.exp(-((z - 0.45) ** 2) * 8) - 0.1 * Math.exp(-((z + 0.05) ** 2) * 10);
     if (y > 0 && S.hump) k *= 1 + S.hump * Math.exp(-((z - 0.5) ** 2) * 12) * y;
     if (y < 0) k *= 1 - 0.06 * Math.exp(-((z) ** 2) * 6);
     return k;
-  }, 20, 14);
+  }, 30, 18);
   body.translate(0, cy, 0);
   parts.push(paint(body, (p, n) => coat(p, n, Math.exp(-((p.z / S.bodyLen - 0.6) ** 2) * 10) * (n.y < 0 ? 1 : 0)), () => [0, 0, 0, 0], glowFn));
   // neck
   const neckTop = neckBase.clone().add(V(0, Math.sin(Math.atan(S.neckUp)) * S.neckLen, Math.cos(Math.atan(S.neckUp)) * S.neckLen));
-  const neck = limb(neckBase.clone().add(V(0, -S.bodyR * 0.25, -S.bodyLen * 0.12)), neckTop, S.bodyR * 0.5, S.headR * 0.85, 12, 6);
+  const neck = limb(neckBase.clone().add(V(0, -S.bodyR * 0.25, -S.bodyLen * 0.12)), neckTop, S.bodyR * 0.5, S.headR * 0.85, 14, 8);
   const nLen = neckTop.distanceTo(neckBase) + S.bodyLen * 0.12;
   const nDir = neckTop.clone().sub(neckBase).normalize();
   const neckW = (p) => clamp(p.clone().sub(neckBase).dot(nDir) / nLen + 0.15, 0, 1);
@@ -205,9 +200,9 @@ function buildSpecies(spec) {
   for (let i = 0; i < 4; i++) {
     const h = hips[i], k = knees[i];
     const foot = V(k.x, 0.05, k.z + (i < 2 ? -0.02 : 0.05) * S.legLen);
-    const up = limb(h.clone().add(V(0, S.bodyR * 0.2, 0)), k, S.legR * (i < 2 ? 1.9 : 2.4), S.legR * 1.05, 8, 3);
+    const up = limb(h.clone().add(V(0, S.bodyR * 0.2, 0)), k, S.legR * (i < 2 ? 1.9 : 2.4), S.legR * 1.05, 10, 4);
     parts.push(paint(up, (p, n) => coat(p, n, 0), () => [i + 1, 0, 0, 0], glowFn));
-    const lo = limb(k, foot, S.legR, S.legR * 0.7, 7, 2);
+    const lo = limb(k, foot, S.legR, S.legR * 0.7, 9, 3);
     parts.push(paint(lo, (p, n) => { const c = coat(p, n, 0); const d = smooth(0.35 * S.legLen, 0.1, p.y); return [lerp(c[0], c[0] * 0.5, d), lerp(c[1], c[1] * 0.5, d), lerp(c[2], c[2] * 0.5, d)]; }, () => [i + 1, 1, 0, 0]));
     const hf = blob(S.legR * 1.05, 0.05, S.legR * 1.3, null, 7, 4); hf.translate(foot.x, 0.04, foot.z + 0.01);
     parts.push(paint(hf, () => [hoof.r, hoof.g, hoof.b], () => [i + 1, 1, 0, 0]));
@@ -222,6 +217,35 @@ function buildSpecies(spec) {
   geo.computeBoundingSphere();
   return { geo, hips, knees, neckBase, tailBase };
 }
+
+/** Per-pixel coat pattern (antialiased, stable in rest-pose space) — drives albedo and the glow mask. */
+function surfaceGLSL(S) {
+  if (S.pattern !== 'stripes' && S.pattern !== 'spots') return '';
+  const pc = new THREE.Color(S.patternColor);
+  const v3 = `vec3(${pc.r.toFixed(3)}, ${pc.g.toFixed(3)}, ${pc.b.toFixed(3)})`;
+  const y0 = (S.legLen * 0.3).toFixed(3), G = (S.glow || 0).toFixed(3);
+  const body = S.pattern === 'stripes' ? `
+    // thin bioluminescent lines over a dark hide (direhorse / viperwolf), brightest along the back
+    float s = sin(p.z * 22.0 + sin(p.y * 8.0) * 1.5 + faNoise(p * 9.0) * 2.0);
+    float sfw = max(fwidth(s), 1e-4);
+    float ln = smoothstep(0.86 - sfw, 0.93 + sfw, s) * smoothstep(-0.2, 0.55, n.y) * step(0.2, faNoise(p * 3.0 + 1.7));
+    ln = max(ln, faLine(p.x * 14.0, 0.18) * smoothstep(0.6, 0.9, n.y)); // dorsal line
+    float dots = smoothstep(0.8, 0.86, faNoise(p * 26.0)) * smoothstep(0.1, 0.8, n.y) * 0.8;
+    float m = max(ln, dots);
+    col = mix(col, ${v3} * 0.35, m * 0.6);
+    glow = m * ${G};` : `
+    float sp = faNoise(p * 7.0 + 3.0); float fw = max(fwidth(sp), 1e-4);
+    float m = smoothstep(0.64 - fw, 0.64 + fw, sp) * smoothstep(-0.2, 0.6, n.y);
+    col = mix(col, ${v3}, m);
+    glow = m * ${G};`;
+  return `void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
+    if (glow > 0.01 || p.y < ${y0}) return; // eyes, crest and hooves keep their own look
+    ${body}
+  }`;
+}
+
+const SHADOW_VERT = /* glsl */ `varying vec2 vUv; void main() { vUv = uv * 2.0 - 1.0; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`;
+const SHADOW_FRAG = /* glsl */ `uniform float uDark; varying vec2 vUv; void main() { float r = dot(vUv, vUv); float a = clamp(exp(-r * 3.0) - 0.05, 0.0, 1.0); gl_FragColor = vec4(0.0, 0.0, 0.0, a * uDark); }`;
 
 // ---------------------------------------------------------------------------------
 const CELL = 900;
@@ -242,12 +266,19 @@ export class Herds {
         uHip: { value: built.hips }, uKnee: { value: built.knees }, uNeck: { value: built.neckBase }, uTail: { value: built.tailBase },
         uGait: { value: new THREE.Vector4(0.42, 0.9, 0.035 * spec.legLen, 0.07) },
       };
-      const mats = rigMaterial({ roughness: 0.82 }, RIG_GLSL, uni, 'herd-' + id);
+      const mats = rigMaterial({ roughness: 0.82 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35 });
       const max = fauna.q.pick(24, 48, 80, 120);
-      const { mesh, anim } = makeInstanced(built.geo, mats, max);
+      // no shadow-map casting (thin legs alias into dithered streaks at cascade
+      // resolution): each animal gets an analytic soft contact shadow instead
+      const { mesh, anim } = makeInstanced(built.geo, mats, max, { shadow: false });
+      mesh.receiveShadow = true;
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3).fill(1), 3);
       fauna.root.add(mesh);
-      return { id, spec, mesh, anim, uni, max, glowBase: new THREE.Color(spec.glow ? spec.patternColor : '#000000').multiplyScalar(spec.glow ? 3 : 0), weight: k === 0 ? 1 : 0.45 };
+      const sg = new THREE.PlaneGeometry(1, 1); sg.rotateX(-Math.PI / 2);
+      const shadow = new THREE.InstancedMesh(sg, new THREE.ShaderMaterial({ vertexShader: SHADOW_VERT, fragmentShader: SHADOW_FRAG, uniforms: { uDark: { value: 0.55 } }, transparent: true, depthWrite: false }), max);
+      shadow.instanceMatrix.setUsage(THREE.DynamicDrawUsage); shadow.frustumCulled = false; shadow.count = 0; shadow.renderOrder = 1;
+      fauna.root.add(shadow);
+      return { id, spec, mesh, anim, uni, max, shadow, glowBase: new THREE.Color(spec.glow ? spec.patternColor : '#000000').multiplyScalar(spec.glow ? 3 : 0), weight: k === 0 ? 1 : 0.45 };
     });
     this.herds = new Map(); // key → herd
     this.forced = [];
@@ -298,7 +329,7 @@ export class Herds {
   }
 
   /** Force a herd at a direction (screenshots). */
-  spawnAt(dir, count, faceDir = null) {
+  spawnAt(dir, count, faceDir = null, eye = null) {
     const rng = new Random(seedFrom(this.fauna.seed, 'forced', this.forced.length));
     this._spread = 3 + count * 0.8 * this.species[0].spec.bodyLen; this._forceFirst = true;
     const herd = this._makeHerd('forced' + this.forced.length, dir.clone().normalize(), rng, count);
@@ -307,9 +338,31 @@ export class Herds {
       const a = Math.atan2(faceDir.dot(herd.t2), faceDir.dot(herd.t1));
       for (const m of herd.members) m.head = a + rng.range(-1.2, 1.2);
     }
+    if (eye) this._heroPose(herd, eye, rng);
     this.forced.push(herd);
     this.herds.set(herd.key, herd);
     return herd;
+  }
+
+  /** Wildlife-photography staging: a diagonal line of action with depth, a sentinel looking at the lens, one walking in, a juvenile. */
+  _heroPose(herd, eye, rng) {
+    const R = this.world.radius, ms = herd.members, n = ms.length, S = herd.sp.spec;
+    _v.copy(eye).sub(_u.copy(herd.dir).multiplyScalar(R));
+    let ex = _v.dot(herd.t1), ez = _v.dot(herd.t2); const el = Math.hypot(ex, ez) || 1;
+    const tx = ex / el, tz = ez / el, lx = -tz, lz = tx; // toward the eye / lateral
+    const span = 3.2 + n * 1.1 * S.bodyLen;
+    for (let i = 0; i < n; i++) {
+      const m = ms[i], u = n > 1 ? i / (n - 1) - 0.5 : 0;
+      // diagonal: the near end sits left-and-close, the far end right-and-deep
+      const along = u * span * 1.5 + rng.range(-0.6, 0.6), depth = -u * span * 1.1 + rng.range(-1.2, 1.2) + (i % 3 === 1 ? -span * 0.25 : 0);
+      m.x = lx * along + tx * depth; m.z = lz * along + tz * depth; m.tx = m.x; m.tz = m.z;
+      this._sample(herd, m);
+      const toEye = Math.atan2(ez - m.z, ex - m.x);
+      if (i === 1 || i === Math.floor(n * 0.6)) { m.state = 'look'; m.graze = 0; m.timer = 60; m.head = toEye + rng.range(-0.5, 0.5); }
+      else if (i === 2) { m.state = 'walk'; m.timer = 60; m.head = toEye + 0.7; m.tx = m.x + Math.cos(m.head) * 30; m.tz = m.z + Math.sin(m.head) * 30; m.speed = 1.1; }
+      else { m.state = 'graze'; m.graze = 1; m.timer = 60; }
+      if (i === n - 1 && n > 4) m.scale = S.size[0] * 0.6;
+    }
   }
 
   clearForced() { for (const h of this.forced) this.herds.delete(h.key); this.forced.length = 0; }
@@ -445,18 +498,37 @@ export class Herds {
         _v.addScaledVector(_d, -0.04 - 0.25 * Math.hypot(m.gx, m.gz) * sp.spec.bodyLen * m.scale);
         const i = sp.count++;
         writeInstance(arr, i, _v, anchor, _f, _u, m.scale);
+        // contact shadow: ground-hugging soft ellipse, pushed away from the sun
+        const S = sp.spec, sc = m.scale;
+        _v.addScaledVector(_d, 0.1 + 0.04 + 0.25 * Math.hypot(m.gx, m.gz) * S.bodyLen * sc);
+        const sd = this.world.sunDir; const sk = clamp(1 - sd.dot(_d), 0, 0.9);
+        _n.copy(sd).addScaledVector(_d, -sd.dot(_d));
+        if (_n.lengthSq() > 1e-6) _v.addScaledVector(_n.normalize(), -S.legLen * sc * sk * 0.6);
+        writeDecal(sp.shadow.instanceMatrix.array, i, _v, anchor, _f, _u, S.bodyW * 3.4 * sc, (S.bodyLen * 2.6 + S.legLen * sk * 0.8) * sc);
         an[i * 4] = m.phase; an[i * 4 + 1] = m.gait; an[i * 4 + 2] = m.graze; an[i * 4 + 3] = clamp(m.speed / 1.1, 0, 1.15);
         col[i * 3] = m.tint * (1 + m.hue); col[i * 3 + 1] = m.tint; col[i * 3 + 2] = m.tint * (1 - m.hue);
       }
     }
     for (const sp of this.species) {
-      sp.mesh.count = sp.count;
+      sp.mesh.count = sp.count; sp.shadow.count = sp.count; sp.shadow.instanceMatrix.needsUpdate = true;
+      sp.shadow.material.uniforms.uDark.value = 0.55 * (1 - 0.6 * night);
       sp.mesh.instanceMatrix.needsUpdate = true; sp.anim.needsUpdate = true; sp.mesh.instanceColor.needsUpdate = true;
-      sp.uni.uGlowColor.value.copy(sp.glowBase).multiplyScalar(0.06 + night * 1.2);
+      sp.uni.uGlowColor.value.copy(sp.glowBase).multiplyScalar(0.03 + night * 0.5);
     }
   }
 
-  dispose() { for (const sp of this.species) { sp.mesh.removeFromParent(); sp.mesh.geometry.dispose(); sp.mesh.material.dispose(); sp.mesh.customDepthMaterial.dispose(); } }
+  dispose() { for (const sp of this.species) { sp.shadow.removeFromParent(); sp.shadow.geometry.dispose(); sp.shadow.material.dispose(); sp.mesh.removeFromParent(); sp.mesh.geometry.dispose(); sp.mesh.material.dispose(); sp.mesh.customDepthMaterial.dispose(); } }
+}
+
+const _dx = new THREE.Vector3(), _dz = new THREE.Vector3();
+function writeDecal(arr, i, pos, anchor, fwd, up, sx, sz) {
+  _dz.copy(fwd).addScaledVector(up, -fwd.dot(up)).normalize();
+  _dx.copy(up).cross(_dz);
+  const o = i * 16;
+  arr[o] = _dx.x * sx; arr[o + 1] = _dx.y * sx; arr[o + 2] = _dx.z * sx; arr[o + 3] = 0;
+  arr[o + 4] = up.x; arr[o + 5] = up.y; arr[o + 6] = up.z; arr[o + 7] = 0;
+  arr[o + 8] = _dz.x * sz; arr[o + 9] = _dz.y * sz; arr[o + 10] = _dz.z * sz; arr[o + 11] = 0;
+  arr[o + 12] = pos.x - anchor.x; arr[o + 13] = pos.y - anchor.y; arr[o + 14] = pos.z - anchor.z; arr[o + 15] = 1;
 }
 
 function lerpAngle(a, b, t) { const d = ((b - a + Math.PI) % TAU + TAU) % TAU - Math.PI; return a + d * t; }

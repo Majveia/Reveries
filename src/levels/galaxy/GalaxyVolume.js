@@ -47,10 +47,11 @@ float gaussLine(vec3 o, vec3 d, float s, float t0, float t1){
 float bulgeLine(vec3 o, vec3 d, float t0, float t1){
   float s = uBulgeScale;
   return gaussLine(o, d, s * 0.012, t0, t1) * uNucleus
-       + gaussLine(o, d, s * 0.05, t0, t1) * 2.6
-       + gaussLine(o, d, s * 0.16, t0, t1) * 1.1
+       + gaussLine(o, d, s * 0.05, t0, t1) * 1.7
+       + gaussLine(o, d, s * 0.16, t0, t1) * 0.85
        + gaussLine(o, d, s * 0.45, t0, t1) * 0.42
-       + gaussLine(o, d, s * 1.1, t0, t1) * 0.07;
+       + gaussLine(o, d, s * 1.1, t0, t1) * 0.1
+       + gaussLine(o, d, s * 2.6, t0, t1) * 0.012;   // faint extended halo (Sersic wing)
 }
 vec2 slab(vec3 o, vec3 d, float h){
   if (abs(d.y) < 1e-6) return abs(o.y) < h ? vec2(0.0, 1e9) : vec2(1.0, 0.0);
@@ -75,6 +76,7 @@ void main(){
   vec3 T = vec3(1.0);
   vec3 KRGB = mix(vec3(0.62, 1.0, 1.48), vec3(0.85, 1.0, 1.18), uInside);   // milder inside: rifts read dark brown, not glowing orange   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
+  float grazeK = mix(smoothstep(0.03, 0.3, abs(rd.y)), 1.0, uInside);
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
   if (t1 > t0) {
@@ -161,8 +163,12 @@ void main(){
       }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
       vec3 cY = mix(uColYoung, vec3(0.8, 0.88, 1.0), smoothstep(0.3, 1.6, m.r) * 0.6 * (1.0 - uInside));   // white-blue arm ridges
-      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
-      j += m.b * pD * uColDustGlow * uEmit;
+      // box/peanut bulge: the inner old light (bar) is vertically thickened (face-on brightness kept,
+      // since both profiles integrate to 1), so edge-on a luminous bulge stands above and below the lane
+      float pk = (1.0 - uInside) * 0.7 * exp(-pow(length(pm.xz) / (0.2 * uR), 2.0));
+      float pOk = mix(pO, galSeg(ya, yb, uHOld * 1.7), pk);
+      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pOk + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
+      j += m.b * pD * uColDustGlow * uEmit * grazeK;   // (no glow at grazing angles: the lane must absorb, not paint orange)
       float near = smoothstep(0.0, uNearFade, tm);
       vec3 tr = exp(-tau * KRGB);
       vec3 add = j * seg * near * (tau > 1e-4 ? (1.0 - tr) / (tau * KRGB) : vec3(1.0));
@@ -238,7 +244,7 @@ export class GalaxyVolume {
         uKappa: { value: 2.4 }, uMapTexel: { value: (2 * P.extent) / mapSize },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
-        uBulgeDim: { value: 1 }, uStretch: { value: 1.6 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
+        uBulgeDim: { value: 1 }, uStretch: { value: 2.6 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
         uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.95 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 9.0 },
         uColYoung: { value: new THREE.Color(0.33, 0.53, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.2, 0.24) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },

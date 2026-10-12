@@ -126,7 +126,7 @@ export class Backdrop {
           // unresolved star clouds: grainy, clumpy starlight rather than a smooth gradient
           float grainS = 0.75 + 0.5 * smoothstep(-0.2, 0.7, fbm(p * 14.0 + 5.0, 3));
           // brightness carried by star density: sub-pixel speckle of unresolved stars, clumped into star clouds
-          float speck = pow(0.5 + 0.5 * snoise(d * 950.0 + uSeed), 5.0) * 3.2 + pow(0.5 + 0.5 * snoise(d * 420.0 - uSeed), 3.0) * 1.2;
+          float speck = pow(0.5 + 0.5 * snoise(d * 950.0 + uSeed), 5.0) * 2.2 + pow(0.5 + 0.5 * snoise(d * 420.0 - uSeed), 3.0) * 1.2;
           grainS *= 0.45 + speck * smoothstep(-0.3, 0.5, fbm(p * 6.0 + 9.0, 3) + 0.2);
           float I = band * clouds * fine * grainS * (0.35 + 0.65 * near) + bulge * 0.9;
           // diffuse galactic light: a much wider, faint skirt around the band

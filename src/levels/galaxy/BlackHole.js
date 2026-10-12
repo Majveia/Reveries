@@ -80,8 +80,10 @@ vec3 background(vec3 dir){
   // the frame behind the hole contains the (unlensed) nucleus itself: mask it out so it is not
   // self-lensed into a hard graphic Einstein ring; its light is the broad lensed glow instead
   float toHole = acos(clamp(dot(dir, uHoleDir), -1.0, 1.0));
-  float mask = smoothstep(uHoleAng * 2.5, uHoleAng * 9.0, toHole);
-  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 2.0, 1e-4)) * 0.15;
+  // (wide, soft mask: a hard edge would itself be lensed into a ghost Einstein ring)
+  float mask = smoothstep(uHoleAng * 2.0, uHoleAng * 18.0, toHole);
+  mask *= mask;
+  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 5.0, 1e-4)) * 0.04;
   if (clip.w > 1e-5) {
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float inside = smoothstep(0.0, 0.04, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
@@ -106,7 +108,10 @@ vec4 plasma(float r, float a, float z){
 }
 vec4 diskSample(vec3 hit, vec3 v){
   float r = length(hit.xz);
-  if (r < uIn || r > uOut) return vec4(0.0);
+  // inside the ISCO the gas does not vanish: it plunges toward the horizon on near-geodesic
+  // spirals, still hot but heavily redshifted, so the disk image closes onto the shadow
+  if (r < 1.55 || r > uOut) return vec4(0.0);
+  float plunge = r < uIn ? smoothstep(1.55, uIn, r) : 1.0;
   float ang = atan(hit.z, hit.x);
   // Keplerian flow (Ω ∝ r^-3/2, toward −θ) advected with two crossfaded phases (flow-map style):
   // the texture rotates differentially forever without the shear winding it into combed hair
@@ -120,16 +125,17 @@ vec4 diskSample(vec3 hit, vec3 v){
   // re-expand the contrast lost by averaging
   pn = clamp((pn - 0.5) * 1.35 + 0.5, 0.0, 1.0);
   float n1 = pn.x, n2 = pn.y, n3 = pn.z, n4 = pn.w;
-  float x = (r - uIn) / (uOut - uIn);
+  float x = max(r - uIn, 0.0) / (uOut - uIn);
   float bands = 0.75 + 0.25 * sin(log(r) * 11.0 + n1 * 5.0) * sin(log(r) * 4.0 + 1.3 + n2 * 2.0);
   float inner = 1.0 - smoothstep(0.0, 0.45, x);
   float dens = (0.3 + 1.1 * n1) * (0.35 + 1.2 * n2 * n2) * (0.85 + 0.3 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
   dens *= 0.4 + 1.1 * smoothstep(0.3, 0.72, n4);                  // clumps and dark gaps
   dens *= 0.35 + 0.65 * smoothstep(0.28, 0.55, n1);               // a few dark spiral lanes
-  float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.5, 1.0, x));
+  float edge = (r < uIn ? 0.55 * plunge * plunge : max(smoothstep(0.0, 0.035, x), 0.55)) * (1.0 - smoothstep(0.5, 1.0, x));
   float alpha = clamp(pow(dens, 1.6) * edge * 2.0, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
-  float tp = pow(uIn / r, 0.75) * pow(max(1.0 - sqrt(uIn / r), 0.0), 0.25) / 0.488;
+  float tp = pow(uIn / max(r, uIn), 0.75) * pow(max(1.0 - sqrt(uIn / max(r, uIn)), 0.0), 0.25) / 0.488;
+  tp = max(tp, 0.62 * plunge * (1.0 - smoothstep(uIn, uIn * 1.35, r)));   // bridge the zero-torque edge
   // Doppler + gravitational shift: g = D·√(1−Rs/r); observed T ∝ g, observed intensity ∝ g⁴
   vec3 vdir = normalize(vec3(hit.z, 0.0, -hit.x));
   float beta = min(sqrt(0.5 / max(r - 1.0, 0.05)), 0.6);
@@ -180,7 +186,7 @@ vec3 trace(vec2 uv){
     v = bend(v, toBH, a);
   }
   float h2 = dot(cross(p, v), cross(p, v));
-  bool captured = false;
+  bool captured = false, escaped = false;
   float minR = 1e9;
   bool crit = abs(sqrt(h2) - 2.598) < 0.06;   // near-critical rays: wind around the photon sphere
   for (int i = 0; i < 500; i++) {
@@ -202,8 +208,11 @@ vec3 trace(vec2 uv){
     p = pn; v = vn;
     if (dot(p, p) < 1.0) { captured = true; break; }
     if (T < 0.01) break;
-    if (length(p) > uRint * 1.02 && dot(p, v) > 0.0) break;
+    if (length(p) > uRint * 1.02 && dot(p, v) > 0.0) { escaped = true; break; }
   }
+  // a ray that neither escaped nor fell in within the step budget is winding down onto the
+  // horizon from inside the photon sphere: it belongs to the shadow (pure black), never the sky
+  if (!escaped && minR < 1.7) captured = true;
   gW = 1.0;
   if (!captured && T > 0.01) {
     // remaining deflection on the way out to infinity

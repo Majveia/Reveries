@@ -570,7 +570,11 @@ CivS civSurface(){
     s.alb = mix(s.alb, base * 1.15, cap * (1.0 - far));
     float moss = smoothstep(0.6, 0.85, civF2(uv * 0.5 + seed * 2.0));
     s.alb = mix(s.alb, uCivMoss * 0.8, moss * 0.4);
-    s.rough = 0.55;
+    // fired glaze: the barrel crowns catch the sky (fresnel sky sheen) and the sun as a soft highlight,
+    // so the sweeping roofs read as lustrous ceramic instead of flat black caps
+    float glaze = mix(0.3 + 0.5 * prof * barrel, 0.45, far) * (1.0 - moss * 0.7);
+    s.rough = mix(0.62, 0.34, glaze);
+    s.glass = 0.55 * glaze;
   } else if (id == 5 || id == 27) {
     // painted metal panels (27 = rust)
     float pw = 1.4 + 1.4 * fract(seed * 5.0), ph = 1.0 + 1.0 * fract(seed * 11.0);
@@ -593,30 +597,42 @@ CivS civSurface(){
     }
     wallLike = true;
   } else if (id == 6) {
-    // board-formed concrete, sand-scoured
+    // colossal sand-scoured ashlar: staggered block courses, meandering strata, ledge staining
     float far = smoothstep(0.05, 0.2, fwm);
-    float fx = civLines(uv.x + 0.006, 2.4, 0.012, fw.x), fy = civLines(uv.y + 0.006, 1.2, 0.012, fw.y);
-    float seams = max(fx, fy) * 0.55;
-    vec2 tc = fract(vec2(uv.x / 0.6, uv.y / 0.6)) - 0.5;
-    float tie = (1.0 - smoothstep(0.03, 0.06, length(tc * 0.6))) * (1.0 - far);
+    float rowH = 2.6 + 0.6 * fract(seed * 3.7);
+    float row = floor(uv.y / rowH);
+    float bw = 4.0 + 3.0 * civH12(vec2(row, seed * 7.0));
+    float off = civH12(vec2(row * 1.7, seed * 3.1)) * bw;
+    float jx = civLines(uv.x + off, bw, 0.07, fw.x), jy = civLines(uv.y + 0.035, rowH, 0.07, fw.y);
+    float seams = max(jx, jy) * (0.75 - 0.4 * far);
+    float cellV = civH12(vec2(floor((uv.x + off) / bw), row) + seed * 5.0);
+    vec2 tc = fract(vec2(uv.x / 0.9, uv.y / 0.9)) - 0.5;
+    float tie = (1.0 - smoothstep(0.03, 0.06, length(tc * 0.6))) * (1.0 - far) * step(0.6, cellV);
     float big = civF2(uv * 0.06 + seed * 3.0);
-    float streak = civN2(vec2(uv.x * 0.21 + seed * 7.0, uv.y * 0.02)) * (0.7 + 0.3 * civN2(vec2(uv.x * 3.3, uv.y * 0.07)));
-    // wind-scoured horizontal strata: pale sand-blasted bands and darker sheltered lifts
-    // (sediment layers read horizontally; vertical run-off is kept faint so slabs never look like woodgrain)
-    float strata = civN2(vec2(uv.x * 0.015 + seed, uv.y * 0.32)) * 0.65 + civN2(vec2(uv.x * 0.04 - seed, uv.y * 1.1)) * 0.35;
+    // strata: ~4:1, domain-warped so lines meander like sediment instead of running like woodgrain
+    vec2 wq = uv * vec2(0.06, 0.25);
+    wq += (vec2(civN2(uv * 0.035 + seed * 4.0), civN2(uv * 0.035 - seed * 2.0 + 7.3)) - 0.5) * vec2(3.0, 1.6);
+    float strata = civN2(wq + seed) * 0.6 + civN2(wq * 2.7 - seed) * 0.4;
+    float streak = civN2(vec2(uv.x * 0.9 + seed * 7.0, uv.y * 0.09));
     float lift = civLines(uv.y + 0.03, 6.0, 0.06, fw.y);
-    // macro value variation over 20-40 m: colossal surfaces must not read as one flat tone
-    float macro = civF2(vec2(uv.x * 0.028, uv.y * 0.045) + seed * 5.0);
-    s.alb *= 0.62 + 0.5 * macro + 0.14 * big - 0.05 * smoothstep(0.55, 0.9, streak) + 0.22 * (strata - 0.5);
+    float macro = civF2(vec2(uv.x * 0.028, uv.y * 0.04) + seed * 5.0);
+    s.alb *= 0.7 + 0.34 * macro + 0.12 * big + 0.12 * (strata - 0.5) + 0.12 * (cellV - 0.5) * (1.0 - far * 0.5);
+    // dark run-off stains hanging under every ledge (lift line), fading over ~1.5 m with streaks
+    float dl = 6.0 * (1.0 - fract((uv.y + 0.03) / 6.0));
+    float stain = (1.0 - smoothstep(0.0, 1.0 + 1.6 * streak, dl)) * (0.55 + 0.45 * civN2(vec2(uv.x * 0.6, seed)));
+    s.alb *= 1.0 - 0.22 * stain;
     // wind-scoured, sun-bleached upper edges of every lift
-    s.alb *= 1.0 + 0.16 * (1.0 - smoothstep(0.0, 1.6, H - uv.y)) * step(uv.y, H);
-    s.alb *= 1.0 - 0.35 * lift;
-    s.alb = mix(s.alb, s.alb * 0.6, seams + tie * 0.5);
+    s.alb *= 1.0 + 0.14 * (1.0 - smoothstep(0.0, 1.6, H - uv.y)) * step(uv.y, H);
+    s.alb *= 1.0 - 0.3 * lift;
+    s.alb = mix(s.alb, s.alb * 0.55, seams + tie * 0.5);
+    // pale, smoother sand-blasted band near the ground and drifted sand at the foot
+    float scour = 1.0 - smoothstep(0.0, 6.0, uv.y);
+    s.alb *= 1.0 + 0.12 * scour;
     float sand = 1.0 - smoothstep(0.0, 2.0 + 3.0 * civN2(vec2(uv.x * 0.12, seed)), uv.y);
     s.alb = mix(s.alb, uCivSand, sand * 0.65);
     if (up > 0.6) s.alb = mix(s.alb, uCivSand, smoothstep(0.4, 0.8, civF2(uv * 0.2 + seed)) * 0.6);
-    s.h = ((1.0 - seams) * 0.004 - tie * 0.02) * (1.0 - far) + big * 0.01;
-    s.rough = 0.95;
+    s.h = ((1.0 - seams) * 0.012 + (cellV - 0.5) * 0.006 - tie * 0.02) * (1.0 - far) + big * 0.01;
+    s.rough = mix(0.95, 0.74, macro) - 0.08 * scour;
     wallLike = true;
   } else if (id == 7) {
     s.alb = vec3(0.04, 0.045, 0.05); s.rough = 0.07; s.glass = 1.0;

@@ -21,13 +21,14 @@ uniform float uDepth;  // spine circle centre depth below ground
 uniform float uBodyLen;
 uniform float uRad;
 float wormR(float s, float a) {
-  float segs = uBodyLen / 7.5;
+  float segs = uBodyLen / 11.0;
   float x = s * segs * 3.14159;
-  float ridge = smoothstep(0.35, 0.95, abs(sin(x)));
+  float hv = fract(sin(floor(s * segs) * 12.9898) * 43758.5453);
+  float ridge = smoothstep(0.2, 0.95, abs(sin(x)));
   float prof = smoothstep(0.0, 0.15, s) * 0.7 + 0.3;
   float maw = smoothstep(0.96, 1.0, s);
   float lobes = 0.5 + 0.5 * cos(a * 3.0);
-  return uRad * prof * (0.93 + 0.07 * ridge) * (1.0 + maw * (0.3 + 0.55 * lobes));
+  return uRad * prof * (0.86 + (0.08 + 0.08 * hv) * ridge) * (1.0 + 0.04 * (hv - 0.5)) * (1.0 + maw * (0.22 + 0.12 * lobes));
 }
 void rig(inout vec3 p, inout vec3 n) {
   float s = aRig.x;         // 0 tail .. 1 head
@@ -47,7 +48,7 @@ void rig(inout vec3 p, inout vec3 n) {
   float ds = 0.6 / uBodyLen;
   float dr = (wormR(s + ds, a) - wormR(s - ds, a)) / 1.2;
   vec3 off = cos(a) * B + sin(a) * N;
-  p = C + off * r + T * maw * lobes * uRad * 0.7;
+  p = C + off * r + T * maw * lobes * uRad * 0.25;
   n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.3 * maw);
 }
 `;
@@ -88,6 +89,24 @@ function buildWormGeo(rings, around) {
   return g;
 }
 
+const WORM_SURFACE = /* glsl */ `
+void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
+  float s = p.z, segs = 620.0 / 11.0;
+  float x = s * segs, ring = floor(x), f = fract(x);
+  float hv = faHash(vec3(ring, 1.7, 3.1));
+  float seam = 1.0 - smoothstep(0.0, 0.1 + 0.08 * hv, min(f, 1.0 - f));
+  float top = p.y * 0.5 + 0.5;
+  float nz = faNoise(vec3(s * 260.0, p.x * 5.0, p.y * 5.0)), nz2 = faNoise(vec3(s * 900.0, p.x * 14.0, p.y * 14.0));
+  float plate = faLine(sin(atan(p.y, p.x) * 9.0 + hv * 6.0), 0.05) * (1.0 - top);
+  vec3 hide = mix(vec3(0.075, 0.055, 0.042), vec3(0.17, 0.125, 0.085), hv) * (0.7 + 0.6 * nz2);
+  vec3 sand = vec3(0.52, 0.36, 0.2) * (0.8 + 0.4 * nz);
+  float crust = smoothstep(0.5, 0.9, top + (nz - 0.5) * 0.8 + (f - 0.5) * 0.3) * (1.0 - seam);
+  vec3 c = mix(hide, sand, crust);
+  c *= (1.0 - 0.8 * seam) * (1.0 - 0.45 * plate);
+  col = mix(c, col, smoothstep(0.972, 0.99, s));
+}
+`;
+
 // sand/dust plume billboards (GPU looping particles around two emitters)
 const DUST_VERT = /* glsl */ `
 attribute vec4 aSeed;
@@ -108,11 +127,23 @@ void main() {
     vec3 side = vec3(1.0, 0.0, 0.0);
     float spread = (aSeed.y - 0.5) * 2.0;
     c = E + side * spread * uScale * 1.6 + D * (aSeed.z - 0.4) * uScale * 1.2;
-    float up = uScale * (3.2 * age - 2.6 * age * age) * (0.5 + aSeed.z);
-    c.y += max(up, 0.0) + age * uScale * 0.5;
+    float up = uScale * (4.6 * age - 3.2 * age * age) * (0.5 + aSeed.z);
+    c.y += max(up, 0.0) + age * uScale * 0.6 + uScale * 0.7;
     c += side * spread * age * uScale * 1.5 + D * age * uScale;
-    size = uScale * (0.6 + age * 1.8) * (0.6 + aSeed.y * 0.6);
+    size = uScale * (0.35 + age * 1.2) * (0.6 + aSeed.y * 0.6);
     vA = smoothstep(0.0, 0.06, age) * (1.0 - smoothstep(0.4, 1.0, age)) * on;
+  } else if (aSeed.w < 0.72) {
+    // rolling dust skirt hugging the ground around the breach
+    float which = step(0.635, aSeed.w);
+    vec3 E = mix(uE0, uE1, which);
+    float on = mix(uOn0, uOn1, which);
+    float life = 10.0 + aSeed.z * 8.0;
+    float age = fract(uFTime / life + aSeed.x);
+    float ang = aSeed.y * 6.2831853;
+    float rad = uScale * (0.6 + 2.6 * sqrt(age) * (0.5 + aSeed.z));
+    c = E + vec3(cos(ang) * rad, uScale * (0.15 + 0.5 * age), sin(ang) * rad * 0.8);
+    size = uScale * (1.0 + 1.6 * age);
+    vA = smoothstep(0.0, 0.15, age) * (1.0 - smoothstep(0.5, 1.0, age)) * on * 0.8;
   } else {
     // sand cascading off the arching back
     float phi0 = acos(clamp(uDepth / uArcR, -1.0, 1.0));
@@ -127,8 +158,8 @@ void main() {
     c.x += side * age * uRad * 0.6;
     c.y -= 4.9 * age * age * life * life * 0.35;
     float above = c.y;
-    size = uScale * (0.1 + age * 0.35);
-    vA = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.6, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 10.0, above) * 0.5;
+    size = uScale * (0.15 + age * 0.5);
+    vA = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.6, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 10.0, above) * 0.75;
   }
   vH = clamp(c.y / (uScale * 3.0), 0.0, 1.0);
   vUv = position.xy;
@@ -140,13 +171,16 @@ void main() {
 const DUST_FRAG = /* glsl */ `
 uniform vec3 uKeyColor; uniform vec3 uSky; uniform vec3 uSand;
 varying vec2 vUv; varying float vA; varying float vH;
+float dh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float dn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(dh(i), dh(i + vec2(1, 0)), f.x), mix(dh(i + vec2(0, 1)), dh(i + vec2(1, 1)), f.x), f.y); }
 void main() {
   float r = length(vUv);
-  float d = smoothstep(1.0, 0.0, r);
-  d *= d;
-  float lit = 0.6 + 0.4 * (vUv.y * 0.5 + 0.5);
-  vec3 col = uSand * (uKeyColor * 0.05 * lit + uSky * 0.55);
-  gl_FragColor = vec4(col, d * vA * 0.32);
+  // billowing edge: a little noise eats the disc so puffs overlap into a curtain, not circles
+  float e = dn(vUv * 2.5 + vA * 7.0) * 0.45 + dn(vUv * 6.0 - vA * 3.0) * 0.2;
+  float d = smoothstep(1.0, 0.25, r + e * 0.6 - 0.15);
+  float lit = 0.55 + 0.45 * (vUv.y * 0.5 + 0.5);
+  vec3 col = uSand * (uKeyColor * 0.7 * lit + uSky * 0.45) * mix(0.7, 1.0, vH);
+  gl_FragColor = vec4(col, d * vA * 0.8);
 }
 `;
 
@@ -236,10 +270,10 @@ export class Giants {
     if (worm) {
       const geo = buildWormGeo(fauna.q.pick(160, 240, 320, 400), fauna.q.pick(18, 24, 32, 36));
       const uni = {
-        uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color('#ff6a2a').multiplyScalar(3) },
+        uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color('#ff6a2a').multiplyScalar(1.2) },
         uHead: { value: 0 }, uArcR: { value: 260 }, uDepth: { value: 95 }, uBodyLen: { value: 620 }, uRad: { value: 30 },
       };
-      const mats = rigMaterial({ roughness: 0.9, side: THREE.DoubleSide }, WORM_RIG, uni, 'worm');
+      const mats = rigMaterial({ roughness: 0.9, side: THREE.DoubleSide }, WORM_RIG, uni, 'worm', { surface: WORM_SURFACE, bounce: 0.5, aoMin: 0.55 });
       const mesh = new THREE.Mesh(geo, mats.mat);
       mesh.customDepthMaterial = mats.depth; mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
       const group = new THREE.Group(); group.add(mesh);
@@ -254,7 +288,7 @@ export class Giants {
       dg.instanceCount = n;
       const du = {
         uE0: { value: new THREE.Vector3() }, uE1: { value: new THREE.Vector3() }, uDir0: { value: new THREE.Vector3(0, 0, 1) }, uDir1: { value: new THREE.Vector3(0, 0, -1) },
-        uFTime: fauna.uniforms.uFTime, uScale: { value: 30 }, uOn0: { value: 1 }, uOn1: { value: 1 },
+        uFTime: fauna.uniforms.uFTime, uScale: { value: 38 }, uOn0: { value: 1 }, uOn1: { value: 1 },
         uKeyColor: { value: L?.keyColor || new THREE.Color(1, 1, 1) }, uSky: { value: L?.skyColor || new THREE.Color(0.4, 0.35, 0.3) }, uSand: { value: new THREE.Color('#b08a62') },
       };
       Object.assign(du, { uHead: uni.uHead, uArcR: uni.uArcR, uDepth: uni.uDepth, uBodyLen: uni.uBodyLen, uRad: uni.uRad });

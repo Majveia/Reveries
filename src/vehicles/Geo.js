@@ -137,6 +137,7 @@ function strip(g) {
  * Normalize a part: non-indexed, box-projected UVs (uvScale per meter), vertex
  * colors from `paint` (hex, THREE.Color or fn(x,y,z,nx,ny,nz) → Color).
  */
+let _part = 0;
 export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao = 0.3) {
   g = strip(g);
   const p = g.attributes.position, nrm = g.attributes.normal, um = g.attributes.uvm;
@@ -144,6 +145,9 @@ export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao 
   const uv = new Float32Array(N * 2), col = new Float32Array(N * 3);
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), fn = new THREE.Vector3();
   const fixed = typeof paint === 'function' ? null : (paint?.isColor ? paint.clone() : new THREE.Color(paint));
+  // per-part UV offset: neighbouring parts never show the same panel pattern in the same alignment
+  _part = (_part + 1) % 997;
+  const du = ((_part * 0.6180339) % 1) * 9.7, dw = ((_part * 0.3819661) % 1) * 9.7;
   for (let i = 0; i < N; i += 3) {
     a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); c.fromBufferAttribute(p, i + 2);
     fn.subVectors(c, b).cross(a.clone().sub(b)).normalize();
@@ -154,7 +158,7 @@ export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao 
       let u, w;
       if (um) { u = um.getX(v); w = um.getY(v); }
       else if (ax >= ay && ax >= az) { u = z; w = y; } else if (ay >= az) { u = x; w = z; } else { u = x; w = y; }
-      uv[v * 2] = u * uvScale; uv[v * 2 + 1] = w * uvScale;
+      uv[v * 2] = u * uvScale + du; uv[v * 2 + 1] = w * uvScale + dw;
       const C = fixed || paint(x, y, z, nrm.getX(v), nrm.getY(v), nrm.getZ(v), _c);
       // baked sky occlusion: undersides and inward faces darker (cheap cavity AO)
       const occ = 1 - ao * (0.5 - 0.5 * nrm.getY(v));

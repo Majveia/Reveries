@@ -321,7 +321,7 @@ export default class Fauna {
         const dir = gp.clone().sub(eye); const len = dir.length(); dir.divideScalar(len);
         const hit = w.raycast?.(eye, dir, len);
         if (hit && (hit.distance ?? len) < len - 6) continue;
-        this.herds.spawnAt(d, hero ? 9 : 9, right.clone().multiplyScalar((this.seed & 1) ? 1 : -1));
+        this.herds.spawnAt(d, hero ? 11 : 9, right.clone().multiplyScalar((this.seed & 1) ? 1 : -1), hero ? eye : null);
         this.showcase.herd = d;
         break;
       }
@@ -338,25 +338,59 @@ export default class Fauna {
       const heading = Math.atan2(hdir.dot(tangentBasis(fd)[1]), hdir.dot(tangentBasis(fd)[0]));
       if (A === 'wukong') this.birds.spawnAt(at(260, -40).normalize(), { kind: 'crane', count: 9, alt: alt + 25, heading });
       else { const kind = hero || !cfg.coast ? cfg.flock : cfg.coast; this.birds.spawnAt(fd, { kind, count: BIRD_COUNT(kind, hero), alt, heading, spread: hero ? 16 : 22, flock: true }); }
-      if (cfg.soar && cfg.soar !== 'crane') this.birds.spawnAt(at(hero ? 160 : 260, hero ? -60 : 80).normalize(), { kind: cfg.soar, count: 2, alt: alt + 40, radius: 50 });
+      if (cfg.soar && cfg.soar !== 'crane') {
+        if (hero) {
+          // a hero raptor wheeling close over the lens, silhouetted against open sky
+          const rp = this._frameAt(eye.clone().addScaledVector(fwd, 60), eye, up, right, -0.4, 0.62);
+          const rd = rp.clone().normalize(), rg = Math.max(w.heightAt(rd), w.hasOcean ? w.seaLevel : -1e9);
+          this.birds.spawnAt(rd, { kind: cfg.soar, count: 1, alt: Math.max(rp.length() - R - rg, 12), radius: 14 });
+        }
+        this.birds.spawnAt(at(hero ? 220 : 260, hero ? -90 : 80).normalize(), { kind: cfg.soar, count: 2, alt: alt + 40, radius: 50 });
+      }
     }
-    // --- whales among the clouds
+    // --- one leviathan among the clouds: far (aerial perspective sells the scale), big, and against open sky only
     if (this.floaters?.wMesh) {
-      const p = eye.clone().addScaledVector(fwd, hero ? 900 : 650).addScaledVector(right, hero ? 200 : -180).addScaledVector(up, hero ? 260 : 170);
-      this._frameAt(p, eye, up, right, hero ? 0.38 : -0.3, hero ? 0.52 : 0.45);
-      this.floaters.spawnWhale(p, right.clone().multiplyScalar(-1).addScaledVector(fwd, 0.3).normalize(), hero ? 130 : 120);
-      const p2 = p.clone().addScaledVector(fwd, 500).addScaledVector(right, 380).addScaledVector(up, 90);
-      this.floaters.spawnWhale(p2, right.clone().multiplyScalar(-1).addScaledVector(fwd, 0.2).normalize(), 70);
+      const cands = hero ? [[1700, 0.3, 0.52], [1900, -0.32, 0.55], [2100, 0.05, 0.64], [1500, 0.45, 0.7], [2400, -0.1, 0.74]] : [[2000, -0.3, 0.55], [2300, 0.35, 0.6], [1800, 0.0, 0.7]];
+      for (const [dist, nx, ny] of cands) {
+        const p = eye.clone().addScaledVector(fwd, dist).addScaledVector(up, dist * 0.25);
+        this._frameAt(p, eye, up, right, nx, ny);
+        const dir = p.clone().sub(eye); const len = dir.length(); dir.divideScalar(len);
+        if (w.raycast?.(eye, dir, len + 6000)) continue; // terrain behind it: it would read as a cut-out on the mountain
+        const pd = p.clone().normalize();
+        if (p.length() - R - Math.max(w.heightAt(pd), w.hasOcean ? w.seaLevel : -1e9) < 250) continue;
+        const hd = right.clone().multiplyScalar(nx > 0 ? -1 : 1).addScaledVector(fwd, 0.25).normalize();
+        this.floaters.spawnWhale(p, hd, hero ? 380 : 320);
+        // a calf trailing the mother, deeper in the haze
+        this.floaters.spawnWhale(p.clone().addScaledVector(hd, -420).addScaledVector(fwd, 350).addScaledVector(up, -40), hd, 150);
+        this.showcase.whale = p;
+        break;
+      }
     }
     // --- sky jellies drifting over the meadow
     if (this.floaters?.jMesh) {
       const c = eye.clone().addScaledVector(fwd, canopy ? 100 : hero ? 48 : 110).addScaledVector(up, canopy ? -4 : hero ? 10 : 24);
-      this.floaters.spawnJellies(c, Math.min(this.floaters.jMax, canopy ? 24 : hero ? 18 : 20), canopy ? 85 : hero ? 34 : 80, undefined, canopy ? 30 : 0);
+      this.floaters.spawnJellies(c, Math.min(this.floaters.jMax, canopy ? 24 : hero ? 22 : 20), canopy ? 85 : hero ? 46 : 80, undefined, canopy ? 30 : 0);
+      // hero framing: no bell nearer than ~26 m, none huge, none cut by the frame edge; a few heroes + a hazy swarm
+      this.floaters.jellies = this.floaters.jellies.filter((j) => {
+        const dd = j.base.distanceTo(eye);
+        if (dd < 26) return false;
+        j.size = Math.min(j.size, dd * 0.06);
+        _ndc.copy(j.base).project(cam);
+        const m = j.size / dd * 2.2;
+        return !(_ndc.z < 1 && (Math.abs(_ndc.x) > 1 - m * 0.6 && Math.abs(_ndc.x) < 1 + m || _ndc.y > 1 - m * 0.9 && _ndc.y < 1 + m));
+      });
       this.showcase.jellies = true;
     }
     // --- giants
     if (this.giants?.worm) {
-      const d = at(hero ? 780 : 1300, hero ? 160 : -200).normalize();
+      // the breach must read across open sand: pick the bearing whose sight line crosses the fewest trees
+      let d = null, bestF = 1e9;
+      for (const [dist, side] of hero ? [[900, 170], [900, -170], [1000, 0], [850, 300]] : [[1300, -200], [1300, 200]]) {
+        const c = at(dist, side).normalize();
+        let fsum = 0;
+        for (let k = 1; k <= 8; k++) fsum += this.forestAt(eye.clone().lerp(c.clone().multiplyScalar(R), k / 9).normalize()) * (k < 4 ? 3 : 1);
+        if (fsum < bestF - 1e-3) { bestF = fsum; d = c; }
+      }
       this.giants.placeWorm(d, right.clone().multiplyScalar(-1).addScaledVector(fwd, -0.25).normalize(), hero ? 0.25 : 0.1);
     }
     if (this.engine.shotMode && this.engine.params?.get?.('fdebug')) {

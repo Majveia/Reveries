@@ -270,10 +270,24 @@ export default class Vehicles {
 
     const camVeh = this.shotCam?.vehicle || driving;
     this._planetShine(camVeh);
+    this._heroLight();
     level.maxNear = camVeh && camVeh.type === 'ship' ? 0.5 : 0;
     if (driving && this.list.includes(driving) && !this.shotCam) this._drive(dt, driving);
     else if (!driving) { this.streaks.mesh.visible = false; }
     if (this.shotCam) this._updateShotCam();
+  }
+
+  /** Vehicle hero lighting (Materials.js onBeforeCompile): sun rim on silhouettes + sky fill. */
+  _heroLight() {
+    const L = this.mats.light, w = this.world, cam = this.level.camera, sun = this.level.sun;
+    if (!L || !cam) return;
+    const q = (this._hq || (this._hq = new THREE.Quaternion())).copy(cam.quaternion).invert();
+    L.vehRimDir.value.copy(w.sunDir).applyQuaternion(q).normalize();
+    const sI = sun ? sun.intensity : 3;
+    const day = clamp(w.daylight ?? 1, 0, 1);
+    if (sun) L.vehRimCol.value.copy(sun.color).multiplyScalar(sI * 0.55); else L.vehRimCol.value.setScalar(sI * 0.55);
+    // sky fill: cool in daylight, faint at night, a touch of warmth at dusk
+    L.vehFill.value.setRGB(0.42 + 0.25 * (1 - day), 0.5, 0.62).multiplyScalar(0.03 + 0.09 * day).multiplyScalar(Math.max(sI, 1));
   }
 
   _planetShine(v) {
@@ -498,16 +512,17 @@ export default class Vehicles {
       return true;
     }
     if (name === 'ship') {
-      const ship = this.hero;
-      w.setTimeOfDay(this.shotParams?.tod ?? 0.735, sdir);
+      const ship = this.hero, sp = this.shotParams || {};
+      // per-planet choreography: every world gets its own pass (heading, bank, camera, lens)
+      const R = new Random(seedFrom(this.level.planet?.seed ?? 1, 'shipShot'));
+      w.setTimeOfDay(sp.tod ?? R.range(0.69, 0.725), sdir);
       const sun = w.sunDir.clone();
       const sunT = sun.addScaledVector(sdir, -sun.dot(sdir)).normalize();
-      // fly away from the low sun: the camera rides ahead, looking back past the nose with the sun in frame (rim light)
-      const head = sunT.clone().negate().applyAxisAngle(sdir, this.shotParams?.head ?? 0.5);
+      // fly roughly across the low sun so the hull is side-lit (key + rim), not a backlit silhouette
+      const head = sunT.clone().applyAxisAngle(sdir, sp.head ?? (R.chance(0.5) ? 1 : -1) * R.range(1.2, 1.9));
       // prefer a run over open water (spray, reflections) if there is sea nearby
       let start = sdir.clone().addScaledVector(head, -1400 / w.radius).normalize();
       if (w.hasOcean) {
-        // open water at the start AND along the ~450 m run (spray, glitter, no trees in the lens)
         const wet = (d) => w.heightAt(d) < w.seaLevel - 4;
         search: for (const dist of [600, 1000, 1500, 2200, 3200, 4500]) {
           for (let k = 0; k < 24; k++) {
@@ -525,28 +540,41 @@ export default class Vehicles {
       this._boardForShot(ship);
       const hd = this._tangentTo(start, start.clone().addScaledVector(head, 0.01));
       ship.fly(pos, pos.clone().addScaledVector(hd, 100), 160, start);
-      this.autopilot = ship; this.apParams = { alt: this.shotParams?.alt ?? 16, throttle: 0.7, yaw: this.shotParams?.yaw ?? -0.22 };
-      this.forceVortex = 0;
+      const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
+      this.autopilot = ship; this.apParams = { alt: sp.alt ?? R.range(10, 18), throttle: 0.75, yaw: sp.yaw ?? turn };
+      this.forceVortex = 0.55;
       this._simulate(150);
+      // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
       const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
-      const lft = _v2.crossVectors(upS, fw).normalize();
-      // camera on the side the sun is on (seen from ahead) so the sun sits in the frame corner
-      const sideSign = this.shotParams?.side ?? (Math.sign(-lft.dot(w.sunDir)) || 1); // sun low in the frame behind the ship: rim light + glitter path
-      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(6.5 * sideSign, 0.2, 10.5), target: new THREE.Vector3(-1.2 * sideSign, 1.4, -2.5), fov: 50, minClear: 1.5, roll: -0.1 * sideSign };
+      fw.addScaledVector(upS, -fw.dot(upS)).normalize();
+      const lft = new THREE.Vector3().crossVectors(upS, fw).normalize();
+      let best = null, bs = -Infinity;
+      for (let k = 0; k < 18; k++) {
+        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(11, 17), h = R.range(0.6, 4);
+        const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
+        const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
+        const view = ship.position.clone().sub(cam).normalize();
+        const th = Math.acos(clamp(view.dot(w.sunDir), -1, 1)) * 180 / Math.PI;
+        const sc = -Math.abs(th - 122) / 20 - Math.abs(h - 1.8) * 0.15 + R.range(0, 0.6);
+        if (sc > bs) { bs = sc; best = o; }
+      }
+      const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
+      // aim slightly ahead of the ship along its path: the ship sits off-centre, leading the frame
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.12, 0.9, 3.5), fov: sp.fov ?? R.range(42, 54), minClear: 1.2, bankRoll: 0.25 };
       this._updateShotCam();
       return true;
     }
     if (name === 'orbit') {
       const ship = this.hero;
-      w.setTimeOfDay(this.shotParams?.tod ?? 0.62, sdir);
-      // high orbit (the 2.5 R spawn) above the afternoon side; nose toward the limb
+      w.setTimeOfDay(this.shotParams?.tod ?? 0.705, sdir);
+      // low orbit (the 2.5 R spawn) above the afternoon side; nose toward the limb
       const side = new THREE.Vector3(0, 1, 0).cross(sdir).normalize();
       const p = sdir.clone().addScaledVector(side, 0.35).normalize();
-      const rOrb = w.radius * (this.shotParams?.orbitR ?? 2.5);
+      const rOrb = w.radius * (this.shotParams?.orbitR ?? 1.32);
       const pos = p.clone().multiplyScalar(rOrb);
       const sunT = w.sunDir.clone().addScaledVector(p, -w.sunDir.dot(p)).normalize();
-      const T = sunT.clone().applyAxisAngle(p, this.shotParams?.orbitAz ?? 1.9);
-      const dep = Math.acos(w.radius / rOrb) - (this.shotParams?.dep ?? 0.12); // nose just above the limb
+      const T = sunT.clone().applyAxisAngle(p, this.shotParams?.orbitAz ?? 1.6);
+      const dep = Math.acos(w.radius / rOrb) - (this.shotParams?.dep ?? 0.05); // nose just above the limb
       const look = T.clone().multiplyScalar(Math.cos(dep)).addScaledVector(p, -Math.sin(dep)).normalize();
       this._boardForShot(ship);
       ship.fly(pos, pos.clone().add(look), 0, p);
@@ -556,7 +584,7 @@ export default class Vehicles {
       ship.space = 1;
       ship._holdForShot = true;
       // rear 3/4, ~30° off the tail axis: plume in profile, planet beyond the ship
-      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? -9, this.shotParams?.oy ?? 4.5, this.shotParams?.oz ?? -15), target: new THREE.Vector3(1.5, -6, 30), fov: 58 };
+      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? -6.5, this.shotParams?.oy ?? 2.6, this.shotParams?.oz ?? -13), target: new THREE.Vector3(-3.5, -2.2, 30), fov: this.shotParams?.fov ?? 45 };
       this._updateShotCam();
       return true;
     }

@@ -29,19 +29,38 @@ vec2 fa_rot(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x
  * rig function body. `rigGLSL` must define `void rig(inout vec3 p, inout vec3 n)`.
  * Extra uniforms are shared by reference.
  */
-export function rigMaterial(params, rigGLSL, uniforms, key) {
+export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...params });
   const head = GLSL_COMMON + (uniforms.__decl || '') + rigGLSL;
   const U = { ...uniforms }; delete U.__decl;
+  // Indirect light: creatures stand on (or fly far above) saturated ground. The
+  // lower-hemisphere bounce is desaturated and attenuated (more so with
+  // altitude), and an occlusion term from the rest-pose normal darkens bellies,
+  // armpits and the insides of limbs so animals keep their own colour and plant.
+  const bounce = (opts.bounce ?? 0.4).toFixed(3), aoMin = (opts.aoMin ?? 0.45).toFixed(3);
+  const surf = opts.surface || '';
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\n' + head)
-      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\nvec3 faPos = position;\nrig(faPos, objectNormal);\nvGlow = aGlow;')
-      .replace('#include <begin_vertex>', 'vec3 transformed = faPos;');
+      .replace('#include <common>', '#include <common>\n' + head + '\nvarying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;')
+      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\nvec3 faPos = position;\nvFaObj = position; vFaObjN = normal;\nvFaAO = mix(' + aoMin + ', 1.0, smoothstep(-0.85, 0.45, normal.y));\nrig(faPos, objectNormal);\nvGlow = aGlow;')
+      .replace('#include <begin_vertex>', 'vec3 transformed = faPos;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec4 faW = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nfaW = instanceMatrix * faW;\n#endif\nvFaUp = (modelMatrix * faW).xyz; }');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nvarying float vGlow;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uGlowColor * vGlow;');
+      .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nuniform float uFTime;\nvarying float vGlow; varying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;\n' + FRAG_NOISE + surf)
+      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat faGlow = vGlow;\n' + (surf ? 'faSurface(vFaObj, normalize(vFaObjN), diffuseColor.rgb, faGlow);\n' : ''))
+      .replace('#include <lights_fragment_end>', `{
+  vec3 faWN = inverseTransformDirection(geometryNormal, viewMatrix);
+  vec3 faUpN = normalize(vFaUp);
+  float faH = dot(faWN, faUpN) * 0.5 + 0.5;
+  float faK = mix(${bounce}, 1.0, smoothstep(0.2, 0.8, faH)) * vFaAO;
+  float faSat = mix(0.3, 1.0, smoothstep(0.35, 0.85, faH));
+  irradiance = mix(vec3(dot(irradiance, vec3(0.2126, 0.7152, 0.0722))), irradiance, faSat) * faK;
+  iblIrradiance = mix(vec3(dot(iblIrradiance, vec3(0.2126, 0.7152, 0.0722))), iblIrradiance, faSat) * faK;
+  radiance *= mix(0.6, 1.0, vFaAO);
+}
+#include <lights_fragment_end>`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uGlowColor * faGlow;');
   };
   mat.customProgramCacheKey = () => 'fauna-' + key;
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -54,6 +73,18 @@ export function rigMaterial(params, rigGLSL, uniforms, key) {
   depth.customProgramCacheKey = () => 'fauna-depth-' + key;
   return { mat, depth };
 }
+
+/** Fragment-stage value noise for per-pixel creature patterns (stable in rest-pose object space). */
+const FRAG_NOISE = /* glsl */ `
+float faHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float faNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(faHash(i), faHash(i + vec3(1, 0, 0)), f.x), mix(faHash(i + vec3(0, 1, 0)), faHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(faHash(i + vec3(0, 0, 1)), faHash(i + vec3(1, 0, 1)), f.x), mix(faHash(i + vec3(0, 1, 1)), faHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// antialiased band: 1 where |d| < w, filtered over the pixel footprint
+float faLine(float d, float w) { float fw = max(fwidth(d), 1e-4); return 1.0 - smoothstep(w - fw, w + fw, abs(d)); }
+`;
 
 // ---------------------------------------------------------------------------------
 // Geometry building. Each piece is a non-indexed-or-indexed BufferGeometry with

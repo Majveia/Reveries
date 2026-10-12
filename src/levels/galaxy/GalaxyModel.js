@@ -28,7 +28,7 @@ export function galaxyParams(g) {
     R, type: t, k, arms: g.arms, r0: R * 0.12, bar: g.bar, sf: g.starFormation, dust: g.dust,
     extent: R * 1.3,
     // vertical scale heights (kpc)
-    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.06, thick * 0.17),
+    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.08, thick * 0.3),   // ~1/3 of the old disk: edge-on lane reads as a black slit (NGC 891)
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
     bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12) * (1 - 0.45 * Math.min(1, g.bar || 0)) * (t === 1 ? 0.62 : 1),
@@ -230,9 +230,10 @@ void main(){
     float a = uR * uBar * 0.56, b = uR * 0.04;
     // boxy, smooth bar with a luminance gradient toward the nucleus (NGC 1300): a flat-topped
     // super-Gaussian body plus an exponential ridge along its axis
-    float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 2.4) + pow(p.y * p.y / (b * b), 1.3)));
-    float barRidge = exp(-abs(p.x) / (0.35 * a)) * exp(-0.5 * p.y * p.y / (b * b * 0.5));
-    old += bar * 4.2 + barRidge * 2.5;
+    float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 2.4) + pow(p.y * p.y / (b * b * 0.55), 1.5)));
+    float barRidge = exp(-abs(p.x) / (0.35 * a)) * exp(-0.5 * p.y * p.y / (b * b * 0.3));
+    // (moderate amplitude: the bar must keep its elongated shape through the tonemap, not clip to an oval)
+    old += bar * 2.3 + barRidge * 1.6;
     // ansae: brightened bar ends where the bar meets the arms
     old += 1.4 * exp(-0.5 * (pow((abs(p.x) - a * 0.92) / (0.12 * a), 2.0) + p.y * p.y / (b * b * 0.8)));
     young += bar * smoothstep(0.35, 0.9, abs(p.x) / a) * 0.5 * (0.4 + clumpBar(p));

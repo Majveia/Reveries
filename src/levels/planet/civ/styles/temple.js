@@ -15,7 +15,7 @@ export function palette(A, rng) {
   void rng;
   return {
     walls: ['#e8e2d4', '#ddd6c6', '#e4dccb', '#d6cfbf'].map(col),
-    roofs: ['#4a4f4e', '#42484c', '#50524c', '#3c4446', '#5a5048'].map(col),
+    roofs: ['#565d5b', '#4c5559', '#5c5f57', '#48545a', '#665b50', '#4e6258'].map(col),
     lacquer: col('#8e1f18'), lacquer2: col('#6e1a14'), gold: col('#c8963a'),
     stone: col('#8f8b80'), stoneDark: col('#6a675e'), wood: col('#4a3324'), woodDark: col('#2c1f16'), trim: col('#d9d2c2'), iron: col('#1c1c1e'),
     lamp: col(P.lights || '#ffb85a'), lantern: col('#ff4a2a'), accent: col(P.accent || '#c8282a'),

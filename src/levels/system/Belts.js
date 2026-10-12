@@ -74,7 +74,7 @@ void main(){
 
 const ROCK_FRAG = /* glsl */`
 ${NOISE_GLSL}
-uniform vec3 uCol; uniform vec3 uSun; uniform float uIce;
+uniform vec3 uCol; uniform vec3 uSun; uniform float uIce; uniform float uFade;
 varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale;
 void main(){
   vec3 Ng = normalize(vN);
@@ -124,7 +124,7 @@ void main(){
   float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
   c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 0.9 * (1.0 - tiny);
   c *= 1.0 - 0.75 * tiny;
-  gl_FragColor = vec4(c, 1.0);
+  gl_FragColor = vec4(c * uFade, 1.0);
 }`;
 
 export class Belt {
@@ -143,9 +143,9 @@ export class Belt {
       // a handful of large worldlets with full detail
       { detail: q.level >= 2 ? 5 : 4, variants: 2, frac: 0.005, size: [0.42, 0.9] },
     ];
-    const sun = starColor.clone().multiplyScalar(1.4);
+    const sun = starColor.clone().multiplyScalar(1.9);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.8).lerp(new THREE.Color(0.36, 0.3, 0.25), kuiper ? 0 : 0.3) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 } },
+      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.8).lerp(new THREE.Color(0.36, 0.3, 0.25), kuiper ? 0 : 0.3) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 }, uFade: { value: 1 } },
       vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG,
     });
     this.instances = []; // CPU copy (for shots / picking)
@@ -224,8 +224,8 @@ export class Belt {
           float dist = -mv.z;
           // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
           // backlit, the motes swell into a soft forward-scattering haze (energy spread over a larger sprite)
-          float sz = clamp(150.0 / dist, 2.5, 11.0) * (1.0 + 1.5 * fwd);
-          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.36 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
+          float sz = clamp(150.0 / dist, 2.0, 8.0) * (1.0 + 0.6 * fwd);
+          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.2 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
           gl_PointSize = sz * uDpr;
         }`,
       fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,

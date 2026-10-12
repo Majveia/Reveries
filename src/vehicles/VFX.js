@@ -69,8 +69,10 @@ export class Flame {
           // Mach diamonds: bright knots along the hot core, fading downstream
           float dia = 0.55 + 0.45*pow(max(0.0, sin(a*30.0 - uTime*3.0)), 6.0) * (1.0 - a);
           float n = vnoise(vec3(vL.xy*7.0, vL.z*4.0 - uTime*36.0 + uSeed));
-          float I = body * (sheath*0.35 + core*dia*1.6) * (0.6 + 0.6*n);
-          vec3 c = mix(uEdge, uCore, clamp(core*(1.3 - a), 0.0, 1.0));
+          // head-on the core stacks through every layer: damp it so it stays coloured, not a white disc
+          float edgeFade = pow(1.0 - facing*0.6, 1.0) * (0.35 + 0.65*pow(1.0 - a, 2.5));
+          float I = body * (sheath*0.35 + core*dia*0.9) * (0.6 + 0.6*n) * mix(1.0, edgeFade, 0.5);
+          vec3 c = mix(uEdge, uCore, clamp(core*(1.0 - a)*0.85, 0.0, 1.0));
           c = mix(c, uBoostCol + vec3(0.12)*core, uBoost*0.7);
           float e = 0.3 + uThrottle*2.6 + uBoost*3.0;
           gl_FragColor = vec4(c * I * e * 2.2 * uGain * smoothstep(0.0, 0.06, a + 0.01), 1.0);
@@ -408,8 +410,10 @@ export class GlowSprite {
           float r = length(vQ);
           float core = exp(-r*r*18.0);
           float halo = exp(-r*r*4.5) * 0.35;
-          vec3 c = mix(uColor, vec3(1.0), core*0.8);
-          gl_FragColor = vec4(c * (core*3.0 + halo) * uI * (0.35 + 0.65*vView), 1.0);
+          // tinted core + soft bloom halo: keeps a hue through tonemapping (no flat white discs)
+          float halo2 = exp(-r*r*2.2) * 0.12;
+          vec3 c = mix(uColor, uColor*0.45 + vec3(0.55, 0.5, 0.45), core*0.6);
+          gl_FragColor = vec4(c * (core*1.2 + halo + halo2) * uI * (0.35 + 0.65*vView), 1.0);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);

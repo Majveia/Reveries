@@ -347,7 +347,7 @@ export class Ship {
       if (i === 0) { f.uniforms.uCore.value.copy(this._coreA).lerp(this._coreS, sp); f.uniforms.uEdge.value.copy(this._edgeA).lerp(this._edgeS, sp); }
     });
     const cold = this.landed && !driven;
-    const hotI = cold ? 0.18 : 2.5 + thr * 9 + this.boost * 12;
+    const hotI = cold ? 0.18 : 1.3 + thr * 2.6 + this.boost * 2.2; // capped ~6: hot, but keeps its hue
     M.hotMat.color.setRGB(lerp(1, 0.7, sp), lerp(1, 0.85, sp), 1).multiplyScalar(hotI);
     this.glows.forEach((g, i) => {
       g.mesh.visible = !cold;
@@ -397,17 +397,17 @@ export class Ship {
     }
     if (!this.landed && clear < 28 && this.speed > 25) {
       const P = g.water ? sys.spray : sys.dust;
-      const rate = clamp(this.speed / 120, 0, 1.6) * (1 - clear / 28) * (g.water ? 160 : 70) * sys.fxScale * (1 + this.boost);
+      const rate = clamp(this.speed / 120, 0, 1.6) * (1 - clear / 28) * (g.water ? 240 : 70) * sys.fxScale * (1 + this.boost);
       this._sprayAcc += rate * dt;
       const fw = _v2.copy(this.velocity).addScaledVector(upN, -this.velocity.dot(upN)).normalize();
       const lf = _v3.crossVectors(upN, fw).normalize();
       const dc = sys.dustColor;
       while (this._sprayAcc >= 1) {
         this._sprayAcc -= 1;
-        const side = Math.random() < 0.5 ? -1 : 1, back = 4 + Math.random() * 8;
+        const side = Math.random() < 0.5 ? -1 : 1, back = 1 + Math.random() * 13; // downwash under the hull → rooster tail
         _p.copy(this.position).addScaledVector(upN, -clear + 0.2).addScaledVector(fw, -back).addScaledVector(lf, side * (0.3 + Math.random() * 1.2));
         const vel = _v.copy(fw).multiplyScalar(this.speed * (0.1 + Math.random() * 0.12)).addScaledVector(lf, side * (2 + Math.random() * 5)).addScaledVector(upN, g.water ? 6 + Math.random() * 9 : 1 + Math.random() * 3);
-        if (g.water) P.emit(_p, vel, 0.9 + Math.random() * 0.9, 0.5, 2.6 + Math.random() * 2, 0.9, 0.94, 0.98, 0.5, t, true);
+        if (g.water) P.emit(_p, vel, 0.9 + Math.random() * 1.1, 0.9, 5 + Math.random() * 4.5, 0.92, 0.95, 0.98, 0.62, t, true);
         else P.emit(_p, vel, 1.8 + Math.random() * 1.5, 1.0, 5 + Math.random() * 4, dc.r, dc.g, dc.b, 0.3, t, false);
       }
     }

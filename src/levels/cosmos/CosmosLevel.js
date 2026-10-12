@@ -302,6 +302,10 @@ export default class CosmosLevel {
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
     p.smooth = 3.2 * (1 + 1.3 * p.early); p.sharpA = 4 + 40 * p.early;
     p.dim = 1; p.lights = 1;
+    // seen whole, the box projects 200 Mpc of web per pixel: a lower gain keeps a tonal ladder
+    // (violet sheets → cyan filaments → gold nodes) instead of a saturated cyan ball
+    p.gain = 0.30 - 0.06 * (1 - inside);
+    p.a0 = 60 * (1 + 3.0 * (1 - inside));
     if (this._shotP) Object.assign(p, this._shotP);
     if (this._dbg) Object.assign(p, this._dbg);
     this.glow.center.copy(this.center);
@@ -473,7 +477,7 @@ export default class CosmosLevel {
       // the whole periodic volume as one luminous object at z≈0: the resolution scale is sub-pixel
       hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(1.65 * this.L, HERO.yaw, 0.38), 34, 0.0, 0.0); },
       // z≈5: the delicate proto-web, a dim ember lattice in which only the rarest peaks have ignited
-      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.0, gain: 0.55, galaxies: 0.12, lights: 0 }; this._pose(this.home, this._heroOffset(0.85 * this.L, HERO.yaw + 0.4, 0.3), 40, 0.0, 0); },
+      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.0, gain: 0.45, a0: 70, galaxies: 0.12, lights: 0 }; this._pose(this.home, this._heroOffset(0.85 * this.L, HERO.yaw + 0.4, 0.3), 40, 0.0, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;

@@ -301,8 +301,10 @@ export default class GalaxyLevel {
   }
 
   // ---- shots ----------------------------------------------------------------------
-  _pose(target, distance, yaw, pitch) {
+  _pose(target, distance, yaw, pitch, fov = 50) {
     const r = this.rig;
+    if (this.camera.fov !== fov) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+    if (this.engine.shotMode) this.engine.postfx?.setGrade?.({ exposure: this.grade.exposure }, 0);
     r._fly = null;
     r.target.copy(target); r._targetGoal.copy(target);
     r.distance = distance; r._logDistTarget = Math.log(distance);
@@ -319,8 +321,13 @@ export default class GalaxyLevel {
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.04, 0, -P.R * 0.02), P.R * 2.05, 0.55, 0.66); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.22, 1.1, 0.045); },
+      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.1, P.R * 0.02, -P.R * 0.06), P.R * 1.62, 0.55, 0.64); },
+      // long lens from outside the disk (no near-side disk "floor" under the camera): the disk spans
+      // the frame, a 1° tilt bends the black midplane lane across the luminous bulge
+      edge: async () => {
+        this._pose(new THREE.Vector3(0, P.R * 0.001, 0), P.R * 1.9, 1.1, 0.007, 24);
+        this.engine.postfx?.setGrade?.({ exposure: 1.4 }, 0);   // the edge-on disk is faint: expose up
+      },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];

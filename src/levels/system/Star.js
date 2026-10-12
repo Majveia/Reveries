@@ -94,10 +94,10 @@ export class Star {
           float edge = mix(g1.y - g1.x, (g2.y - g2.x) * 1.15, gmix);
           float f1 = mix(g1.x, g2.x, gmix), gz = mix(g1.z, g2.z, gmix);
           float lane = smoothstep(-0.02, 0.1 + 0.2 * gz, edge);             // thin, dark intergranular lanes
-          float dome = clamp(1.0 - f1 / 0.9, 0.0, 1.0);                         // hot upflow fading to the cell edges
+          float dome = pow(clamp(1.0 - f1 / 0.9, 0.0, 1.0), 1.3);                         // hot upflow fading to the cell edges
           float cellT = 0.86 + 0.24 * gz;                                       // per-granule temperature
           float sub = snoise(wq * 2.3 + uTime * 0.05);                          // exploding-granule texture
-          float gran = cellT * (0.38 + 0.62 * dome) * mix(0.45, 1.0, lane) * (0.94 + 0.06 * sub);
+          float gran = cellT * (0.3 + 0.7 * dome) * mix(0.32, 1.0, lane) * (0.94 + 0.06 * sub);
           gran += (1.0 - lane) * 0.1 * smoothstep(0.55, 0.9, snoise(wq * 6.0)); // magnetic bright points in the lanes
           // filter the pattern toward its mean where it gets sub-pixel or foreshortened at the limb
           float fsh = fwidth(wq.x) + fwidth(wq.y) + fwidth(wq.z);
@@ -125,7 +125,7 @@ export class Star {
             float az = atan(dot(o, t2), dot(o, t1));
             float fi = float(i) * 13.1;
             vec2 cs = vec2(cos(az), sin(az));
-            float r = dd * (1.0 + 0.38 * fbm(vec3(cs * 0.9, fi), 2) + 0.07 * snoise(vec2(az * 9.0, fi)) + 0.05 * snoise(q * uCell * 0.3));
+            float r = dd * (1.0 + 0.24 * fbm(vec3(cs * 0.8, fi), 2) + 0.04 * snoise(q * uCell * 0.3));
             float ru = dd * (1.0 + 0.4 * fbm(vec3(cs * 1.4, fi + 5.0), 3));
             float u = 1.0 - smoothstep(0.30, 0.40, ru);
             // fragmented umbra: 2-3 dark cores split by bright umbral dots/lanes
@@ -161,7 +161,7 @@ export class Star {
           limb *= 0.55 + 0.45 * smoothstep(0.0, 0.12, mu);
           // far view: true stellar colour; close-up: a warm white-light filter — yellow-white granule tops, amber lanes
           vec3 farTone = uColor * mix(vec3(1.0, 0.78, 0.6), vec3(1.0), clamp(I, 0.0, 1.0)) * I;
-          vec3 nearTone = ramp(I * mix(0.74, 0.95, uHot) * (0.72 + 0.28 * smoothstep(0.0, 0.7, mu)) + 0.03) * pow(max(I, 0.0), 2.0) * 0.78;
+          vec3 nearTone = ramp(I * mix(0.74, 0.95, uHot) * (0.72 + 0.28 * smoothstep(0.0, 0.7, mu)) + 0.03) * pow(max(I, 0.0), 2.0) * 0.62;
           vec3 c = mix(farTone, nearTone, uFilter) * limb * uI;
           gl_FragColor = vec4(c, 1.0);
         }`,

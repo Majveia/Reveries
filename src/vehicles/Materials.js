@@ -19,34 +19,28 @@ function hullCanvases(seed = 7) {
   const A = mk(), Rg = mk(), B = mk();
   const a = A.getContext('2d'), r = Rg.getContext('2d'), b = B.getContext('2d');
   const rng = new Random(seed);
-  a.fillStyle = 'rgb(214,214,214)'; a.fillRect(0, 0, N, N);
+  a.fillStyle = 'rgb(232,232,232)'; a.fillRect(0, 0, N, N);
   r.fillStyle = 'rgb(118,118,118)'; r.fillRect(0, 0, N, N);
   b.fillStyle = 'rgb(128,128,128)'; b.fillRect(0, 0, N, N);
 
   // ---- panels: recursive subdivision (tiles because it starts from the full square).
   // Scale: vehicles map ~2.4 m (ship) / ~1.1 m (bike) onto one tile, so panels are
   // 25 cm – 1.2 m and grooves (8 px) stay 1–2 cm wide: they read at chase distance.
-  const panels = [];
+  const panels = [], seams = [[0, 0, N, 0, 0], [0, 0, 0, N, 0]];
   const split = (x, y, w, h, d) => {
-    if (d > 4 || (d > 2 && rng.chance(0.3)) || w < 220 || h < 220) { panels.push([x, y, w, h]); return; }
-    if (w > h * (0.7 + rng.float() * 0.6)) { const s = Math.round(w * rng.range(0.32, 0.68) / 16) * 16; split(x, y, s, h, d + 1); split(x + s, y, w - s, h, d + 1); }
-    else { const s = Math.round(h * rng.range(0.32, 0.68) / 16) * 16; split(x, y, w, s, d + 1); split(x, y + s, w, h - s, d + 1); }
+    if (d > 4 || (d > 2 && rng.chance(0.3)) || w < 220 || h < 220) { panels.push([x, y, w, h, d]); return; }
+    if (w > h * (0.7 + rng.float() * 0.6)) { const s = Math.round(w * rng.range(0.32, 0.68) / 16) * 16; seams.push([x + s, y, x + s, y + h, d]); split(x, y, s, h, d + 1); split(x + s, y, w - s, h, d + 1); }
+    else { const s = Math.round(h * rng.range(0.32, 0.68) / 16) * 16; seams.push([x, y + s, x + w, y + s, d]); split(x, y, w, s, d + 1); split(x, y + s, w, h - s, d + 1); }
   };
   split(0, 0, N, N, 0);
   for (const [x, y, w, h] of panels) {
-    const t = 206 + rng.range(-22, 16);
+    // flat panels, near-uniform tone (no domes: they read as quilting at chase distance)
+    const t = 230 + rng.range(-6, 6);
     a.fillStyle = `rgb(${t},${t},${t})`; a.fillRect(x, y, w, h);
-    // subtle oil-canning: each panel slightly domed (lighter centre)
-    const gr = a.createRadialGradient(x + w / 2, y + h / 2, 0, x + w / 2, y + h / 2, Math.max(w, h) * 0.7);
-    gr.addColorStop(0, 'rgba(255,255,255,0.06)'); gr.addColorStop(1, 'rgba(0,0,0,0.07)');
-    a.fillStyle = gr; a.fillRect(x, y, w, h);
-    const ro = 64 + rng.range(-14, 30);
+    const ro = 64 + rng.range(-8, 16);
     r.fillStyle = `rgb(${ro},${ro},${ro})`; r.fillRect(x, y, w, h);
-    const bg = b.createRadialGradient(x + w / 2, y + h / 2, 0, x + w / 2, y + h / 2, Math.max(w, h) * 0.7);
-    bg.addColorStop(0, 'rgb(150,150,150)'); bg.addColorStop(1, 'rgb(128,128,128)');
-    b.fillStyle = bg; b.fillRect(x, y, w, h);
-    // inset hatch / access panel
-    if (w > 160 && h > 160 && rng.chance(0.4)) {
+    // sparse inset hatch / access panel
+    if (w > 200 && h > 200 && rng.chance(0.22)) {
       const iw = w * rng.range(0.3, 0.55), ih = h * rng.range(0.3, 0.55), ix = x + rng.range(20, w - iw - 20), iy = y + rng.range(20, h - ih - 20);
       a.strokeStyle = 'rgba(40,40,40,0.8)'; a.lineWidth = 4; a.strokeRect(ix, iy, iw, ih);
       b.strokeStyle = 'rgb(60,60,60)'; b.lineWidth = 5; b.strokeRect(ix, iy, iw, ih);
@@ -87,21 +81,23 @@ function hullCanvases(seed = 7) {
       }
     }
   }
-  // panel lines: dark 8 px groove with a soft occlusion halo + a light catching lip
-  for (const [x, y, w, h] of panels) {
-    a.strokeStyle = 'rgba(0,0,0,0.14)'; a.lineWidth = 16; a.strokeRect(x, y, w, h);
-    a.strokeStyle = 'rgb(88,88,88)'; a.lineWidth = 7; a.strokeRect(x, y, w, h);
-    a.strokeStyle = 'rgba(255,255,255,0.22)'; a.lineWidth = 2; a.strokeRect(x + 6, y + 6, w - 12, h - 12);
-    r.strokeStyle = 'rgb(220,220,220)'; r.lineWidth = 10; r.strokeRect(x, y, w, h);
+  // seam hierarchy: few deep structural seams (first splits), thin shallow panel joints below
+  const seamW = (d) => (d <= 1 ? 1 : d === 2 ? 0.55 : 0.32);
+  const line = (ctx, x0, y0, x1, y1) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };
+  for (const [x0, y0, x1, y1, d] of seams) {
+    const k = seamW(d);
+    a.strokeStyle = `rgba(0,0,0,${0.1 * k})`; a.lineWidth = 16 * k; line(a, x0, y0, x1, y1);
+    a.strokeStyle = `rgb(${Math.round(150 - 70 * k)},${Math.round(150 - 70 * k)},${Math.round(150 - 70 * k)})`; a.lineWidth = Math.max(2, 7 * k); line(a, x0, y0, x1, y1);
+    r.strokeStyle = 'rgb(210,210,210)'; r.lineWidth = Math.max(3, 9 * k); line(r, x0, y0, x1, y1);
   }
   b.filter = 'blur(2px)';
-  for (const [x, y, w, h] of panels) { b.strokeStyle = 'rgb(10,10,10)'; b.lineWidth = 10; b.strokeRect(x, y, w, h); }
+  for (const [x0, y0, x1, y1, d] of seams) { const k = seamW(d); b.strokeStyle = `rgb(${Math.round(128 - 118 * k)},${Math.round(128 - 118 * k)},${Math.round(128 - 118 * k)})`; b.lineWidth = Math.max(3, 10 * k); line(b, x0, y0, x1, y1); }
   b.filter = 'none';
   // grime streaks, wear and scratches (soft, wrap-safe because they are small)
-  for (let k = 0; k < 140; k++) {
+  for (let k = 0; k < 60; k++) {
     const x = rng.range(0, N), y = rng.range(0, N), rr = rng.range(10, 70);
     const g = a.createRadialGradient(x, y, 0, x, y, rr);
-    g.addColorStop(0, `rgba(40,34,28,${rng.range(0.05, 0.16)})`); g.addColorStop(1, 'rgba(40,34,28,0)');
+    g.addColorStop(0, `rgba(40,34,28,${rng.range(0.03, 0.09)})`); g.addColorStop(1, 'rgba(40,34,28,0)');
     a.fillStyle = g; a.fillRect(x - rr, y - rr, rr * 2, rr * 2);
     const gr = r.createRadialGradient(x, y, 0, x, y, rr);
     gr.addColorStop(0, `rgba(230,230,230,${rng.range(0.1, 0.3)})`); gr.addColorStop(1, 'rgba(230,230,230,0)');
@@ -142,22 +138,39 @@ export function vehicleMaterials(engine) {
   const map = tex(A, true, aniso), roughnessMap = tex(Rg, false, aniso), bumpMap = tex(B, false, aniso);
   // lacquered paint: roughness comes straight from the map (≈0.25 panels, 0.85 grooves) under a glossy clear coat
   const paint = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 2.2,
+    color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 0.5,
     metalness: 0.08, roughness: 1.0, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 0.9,
     sheen: 0.0, specularIntensity: 0.8,
   });
   const metal = new THREE.MeshStandardMaterial({
-    color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 1.6,
+    color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 0.4,
     metalness: 0.88, roughness: 1.15, envMapIntensity: 1.3,
   });
+  // vehicle hero lighting: sun rim along silhouettes (also when backlit) + soft sky fill
+  const light = { vehRimDir: { value: new THREE.Vector3(0, 1, 0) }, vehRimCol: { value: new THREE.Color(0, 0, 0) }, vehFill: { value: new THREE.Color(0, 0, 0) } };
+  const hero = (m) => {
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, light);
+      sh.fragmentShader = 'uniform vec3 vehRimDir; uniform vec3 vehRimCol; uniform vec3 vehFill;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          vec3 hN = normalize(normal); vec3 hV = normalize(vViewPosition);
+          float hF = pow(1.0 - clamp(dot(hN, hV), 0.0, 1.0), 4.0);
+          float hBack = 0.45 + 0.55 * clamp(dot(vehRimDir, -hV), 0.0, 1.0);
+          totalEmissiveRadiance += vehRimCol * hF * max(dot(hN, vehRimDir), 0.0) * hBack;
+          totalEmissiveRadiance += diffuseColor.rgb * vehFill * (0.75 + 0.25 * hN.y);
+        }`);
+    };
+    m.customProgramCacheKey = () => 'vehHero';
+  };
+  hero(paint); hero(metal);
   const glass = new THREE.MeshPhysicalMaterial({
     color: 0x0b1820, metalness: 0.0, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.03,
     envMapIntensity: 2.4, specularIntensity: 1.0, ior: 1.5,
   });
   // canopy: tinted, semi-transparent so the pilot reads through it; strong clear-coat reflections
   const canopy = new THREE.MeshPhysicalMaterial({
-    color: 0x16303c, metalness: 0.0, roughness: 0.04, clearcoat: 1.0, clearcoatRoughness: 0.02,
-    envMapIntensity: 2.6, transparent: true, opacity: 0.34, depthWrite: false, side: THREE.FrontSide,
+    color: 0x6b8a96, metalness: 0.0, roughness: 0.02, clearcoat: 1.0, clearcoatRoughness: 0.02,
+    envMapIntensity: 2.6, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.FrontSide,
   });
   // hot nozzle interiors: vertex-colour gradient × per-vehicle intensity (color)
   const hot = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, fog: false, side: THREE.DoubleSide });
@@ -167,6 +180,6 @@ export function vehicleMaterials(engine) {
     if (!glows.has(key)) glows.set(key, new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(k), fog: false }));
     return glows.get(key);
   };
-  _cache = { engine, paint, metal, glass, canopy, glow, hot, textures: [map, roughnessMap, bumpMap] };
+  _cache = { engine, paint, metal, glass, canopy, glow, hot, light, textures: [map, roughnessMap, bumpMap] };
   return _cache;
 }

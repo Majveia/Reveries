@@ -16,7 +16,7 @@ vec3 webPalette(float h){
   vec3 c2 = vec3(0.150, 0.070, 0.620);   // violet-blue sheet / thin filament
   vec3 c3 = vec3(0.100, 0.420, 1.000);   // cyan-blue filament
   vec3 c4 = vec3(0.200, 0.780, 1.200);   // electric cyan filament spine
-  vec3 c45 = vec3(0.900, 0.920, 1.050);  // hot white crossover (where filaments feed a node)
+  vec3 c45 = vec3(1.000, 0.900, 0.860);  // hot white crossover (where filaments feed a node)
   vec3 c5 = vec3(1.300, 0.640, 0.200);   // amber group
   vec3 c6 = vec3(1.600, 1.150, 0.560);   // white-gold cluster core
   h = clamp(h, 0.0, 1.2);
@@ -119,7 +119,9 @@ void main(){
   // and thins into a dim, fine-grained haze instead of giant discs.
   float rhoEff = pow(10.0, (heat - 0.2) / (0.31 * uContrastK));
   float spacing = sp0 * clamp(pow(rhoEff, -0.333), 0.05, 1.8) * uScale * pow(nS, -0.3333);
-  float sharp = sp0 * uSizeK * 0.09 * uScale;
+  // collapsed halos: the few member tracers of a virialised swarm are splatted wider (still mass-
+  // conserving) so the halo reads as a continuous cuspy glow, not a scatter of discs
+  float sharp = sp0 * uSizeK * 0.09 * uScale * (1.0 + 2.5 * hh);
   float px = max(sharp, spacing * uOverlap) * uProj / dist;
   float pxc = clamp(px, 1.0, uPxMax);
   gl_PointSize = pxc;
@@ -240,13 +242,13 @@ void main(){
   // so matter reads as a continuous luminous medium; well-sampled pixels keep the sharp kernel.
   // the kernel widens up to 3x where the local sample count is low (gaps between sparse sprites)
   float c0 = acc.b * 1000.0;
-  float rad = uSmooth * mix(3.0, 1.0, smoothstep(0.3, uSharpA, c0));
+  float rad = uSmooth * mix(3.5, 1.0, smoothstep(0.3, uSharpA, c0));
   vec4 bl = acc * 0.16; float ws = 0.16;
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 24; i++) {
     float fi = float(i) + 0.5;
-    float r = sqrt(fi / 20.0) * rad;
+    float r = sqrt(fi / 24.0) * rad;
     float an = fi * 2.3999632;
-    float w = exp(-2.0 * fi / 20.0);
+    float w = exp(-2.0 * fi / 24.0);
     bl += texture2D(tAccum, vUv + vec2(cos(an), sin(an)) * r * uTexel) * w; ws += w;
   }
   bl /= ws;
