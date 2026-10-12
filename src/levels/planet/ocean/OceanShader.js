@@ -113,6 +113,7 @@ varying vec2 vXZ;
 varying vec3 vUp;
 varying float vDepth;
 varying float vSpacing;
+varying float vLift;
 
 void main(){
   float s = position.x, phi = position.y;
@@ -150,7 +151,7 @@ void main(){
   vec3 t1 = normalize(uT1 - dir * dot(uT1, dir));
   vec3 t2 = cross(t1, dir);
   vec3 W = P + t1 * disp.x + t2 * disp.z + dir * disp.y;
-  vWorld = W; vXZ = xz; vUp = dir; vDepth = depth; vSpacing = spacing;
+  vWorld = W; vXZ = xz; vUp = dir; vDepth = depth; vSpacing = spacing; vLift = disp.y;
   gl_Position = projectionMatrix * viewMatrix * vec4(W, 1.0);
 }
 `;
@@ -182,6 +183,7 @@ varying vec2 vXZ;
 varying vec3 vUp;
 varying float vDepth;
 varying float vSpacing;
+varying float vLift;
 
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec2 hash22(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz) * p3.zy); }
@@ -258,7 +260,7 @@ void main(){
   for (int i = 0; i < NW; i++) {
     vec4 w = uWave[i];
     float lam = 6.2831853 / w.z;
-    float f = 1.0 - smoothstep(0.5, 1.4, foot * 2.0 / lam);
+    float f = 1.0 - smoothstep(0.07, 0.3, foot / lam);
     float ka = w.z * w.w * shoal * ((i - (i / 2) * 2) == 0 ? envA : envB);
     var += (1.0 - f * f) * 0.5 * ka * ka;
     if (f <= 0.0) continue;
@@ -286,19 +288,19 @@ void main(){
   float dk = uDetail.z * (0.8 + 0.2 * clamp(shoal, 0.0, 1.0)) * mix(0.5, 1.4, gk);
   // finest capillaries (1.2 m tile) keep the near water crisp
   vec2 uv0 = (mat2(0.6, -0.8, 0.8, 0.6) * pw) / 1.23 + vec2(uDetail.w * 0.31, -uDetail.w * 0.07);
-  vec2 d0 = dslope(uv0) * (1.0 - smoothstep(0.02, 0.09, foot));
+  vec2 d0 = dslope(uv0) * (1.0 - smoothstep(0.015, 0.07, foot));
   vec2 ds = (dslope(uv1) * 0.55 + dslope(uv2) * 0.4 + d0 * 0.3) * dk;
-  float dfade = smoothstep(0.6, 6.0, foot);
+  float dfade = smoothstep(0.12, 0.9, foot);
   var += dfade * 0.09 * dk * dk;
-  ds *= 1.0 - dfade * 0.85;
+  ds *= 1.0 - dfade;
   // mid-scale chop (17 m, 43 m) rotated off the wind, slower and broader: no
   // visible repetition once the capillary layers have faded
   vec2 uv3 = (mat2(0.94, 0.34, -0.34, 0.94) * pw) / 17.0 + vec2(uDetail.w * 0.041, uDetail.w * 0.006);
   vec2 uv4 = (mat2(0.82, -0.57, 0.57, 0.82) * pw) / 43.0 + vec2(uDetail.w * 0.024, -uDetail.w * 0.004);
   vec2 dm = (dslope(uv3) * 0.6 + dslope(uv4) * 0.45) * dk * 0.75;
-  float mfade = smoothstep(0.6, 3.5, foot);
+  float mfade = smoothstep(0.35, 1.8, foot);
   var += mfade * 0.06 * dk * dk;
-  ds += dm * (1.0 - mfade * 0.9);
+  ds += dm * (1.0 - mfade);
   ds = ds * rw; // back to anchor-plane axes
 
 #ifdef LAVA
@@ -444,7 +446,7 @@ void main(){
   vec3 nUp = below ? -n0 : n0;
   // filtered-spectrum roughness; from orbit the sea's mean-square slope settles
   // on the Cox–Munk value (α ≈ 0.12–0.16) so the sunglint stays a bright patch
-  float rough = clamp(sqrt(0.0014 + var * 1.6), 0.035, mix(0.55, 0.13 + 0.03 * uWaveScale, smoothstep(300.0, 4000.0, foot)));
+  float rough = clamp(sqrt(0.0014 + var * 1.6), 0.035, mix(0.55, 0.1 + 0.03 * uWaveScale, smoothstep(25.0, 400.0, foot)));
 
   vec3 L = uSunDir;
   vec3 Es = lightE(L, uSunE, n0) * sunVis(vWorld);
@@ -484,8 +486,8 @@ void main(){
   if (farG > 0.0) {
     // (Cox–Munk slope statistics are heavy-tailed: a wide, soft skirt
     // around the glint core that reaches well past it)
-    float aH = 0.42;
-    spec += Es * ggxD(max(dot(N, H), 0.0), aH) * visSmith(NL, NV, aH) * fresnel(dot(V, H), 0.02) * NL * 1.5 * farG;
+    float aH = 0.3;
+    spec += Es * ggxD(max(dot(N, H), 0.0), aH) * visSmith(NL, NV, aH) * fresnel(dot(V, H), 0.02) * NL * 2.0 * farG;
   }
   vec3 Hm = normalize(uMoonDir + V);
   float NLm = max(dot(N, uMoonDir), 0.0);
@@ -507,22 +509,27 @@ void main(){
   float sunUp = max(dot(n0, L), 0.0);
   vec3 Ein = Es * (0.25 + 0.75 * sunUp) + uSkyIrr + Em * 0.5;
   float cosT = sqrt(max(1.0 - (1.0 - NV * NV) / 1.777, 0.05));
-  float path = max(depth, 0.0) / cosT;
+  // water column under this fragment: the static depth plus the wave / surf /
+  // swash lift (thin sheets of swash running up over the sand)
+  float wcol = max(depth + vLift, 0.0);
+  float path = wcol / cosT;
   vec3 Tr = exp(-uAbsorb * path);
+  // what the seabed shows: light travels down to it AND back up to the eye
+  vec3 TrBed = exp(-uAbsorb * (path + wcol * 1.15));
   float Tl = dot(Tr, vec3(0.2126, 0.7152, 0.0722));
   float shallowMix = exp(-max(depth, 0.0) * 0.3);
   vec3 bodyAlb = mix(uDeep, uShallow, shallowMix);
   // seen from high up: continental shelves glow turquoise, deep basins go
   // navy, and slow plankton / current swirls mottle the open ocean
   float farW = smoothstep(2.0, 60.0, foot);
-  float shelf = exp(-max(depth, 0.0) / 20.0) * farW;
+  float shelf = exp(-max(depth, 0.0) / 9.0) * farW;
   float swirl = texture2D(tDetail, vXZ / 23000.0 + vec2(0.3, 0.1)).a * 0.6 + texture2D(tDetail, vXZ / 7100.0 + vec2(0.7, 0.2)).a * 0.4;
   bodyAlb *= mix(1.0, mix(0.6, 1.35, swirl) * (1.0 - 0.35 * smoothstep(60.0, 600.0, depth)), farW);
-  bodyAlb = mix(bodyAlb, uShallow * 1.4 + uSSS * 0.05, shelf * 0.75);
+  bodyAlb = mix(bodyAlb, uShallow * 1.3 + uSSS * 0.05, shelf * 0.6);
   // surf zone: churned, sediment-milky turquoise
   float turb = clamp(so.w * 0.55 + (1.0 - smoothstep(0.0, 1.5, depth)) * 0.2, 0.0, 1.0) * step(0.0, depth);
   bodyAlb = mix(bodyAlb, mix(uShallow * 1.5, uSSS * 0.22, 0.4), turb * 0.45);
-  vec3 body = bodyAlb * Ein / 3.14159 * (1.0 - Tr * 0.85);
+  vec3 body = bodyAlb * Ein / 3.14159 * (1.0 - TrBed * 0.85);
   // subsurface scattering through backlit wave crests
   vec3 Lh = L - n0 * dot(L, n0); vec3 Vh = -V + n0 * dot(V, n0);
   float back = pow(max(dot(normalize(Lh + 1e-5), normalize(Vh + 1e-5)), 0.0), 3.0);
@@ -573,13 +580,17 @@ void main(){
   shoreFoam += resid * clamp(veins, 0.0, 1.0) * smoothstep(0.25, 0.6, ft + 0.3 * ft2) * 0.55 * lacePatch;
   float foam = clamp(crestFoam + shoreFoam + streak + surfFoam, 0.0, 1.0);
   foam *= 1.0 - smoothstep(0.5, 3.0, foot) * 0.6;
-  vec3 foamCol = vec3(0.86) * (Es * max(dot(n0, L), 0.0) * (0.6 + 0.4 * max(dot(N, L), 0.0)) + Es * back * 0.18 + uSkyIrr * 1.1 + Em * 0.4) / 3.14159;
+  // foam is a volume of bubbles: its tall, rounded faces catch even a low sun
+  // (wrap lighting) and it glows when backlit (forward scattering) — at golden
+  // hour the surf lines read as warm white ribbons against the sky-mirror sea
+  float foamSun = 0.22 + 0.78 * smoothstep(-0.05, 0.6, dot(n0, L));
+  vec3 foamCol = vec3(0.88) * (Es * foamSun * (0.65 + 0.35 * max(dot(N, L), 0.0)) + Es * back * 0.55 + uSkyIrr * 1.1 + Em * 0.4) / 3.14159;
 
   vec3 col = (body + sss + bedLight) * (1.0 - F) + sky * F + spec;
   // what of the seabed reaches the eye, per channel (the multiply pre-pass
   // scales the framebuffer by it, so sand under a metre of water turns
   // turquoise instead of showing through grey)
-  vec3 Tv = (1.0 - F) * Tr;
+  vec3 Tv = (1.0 - F) * TrBed;
   col = mix(col, foamCol, foam);
   Tv *= 1.0 - foam;
   // bioluminescent plankton: agitated water flashes where waves break and
@@ -591,7 +602,7 @@ void main(){
     col += bio * (1.0 - smoothstep(30.0, 900.0, dist) * 0.7);
   }
   // shoreline fade (no hard edge where the mesh slides under the sand)
-  float fadeIn = smoothstep(-0.25, 0.25, depth + 0.35);
+  float fadeIn = smoothstep(0.0, 0.12, depth + vLift + 0.04);
 #ifdef MULPASS
   gl_FragColor = vec4(1.0 - fadeIn * (1.0 - Tv), 1.0);
 #if ODBG == 4
@@ -599,6 +610,12 @@ void main(){
 #endif
 #else
   gl_FragColor = vec4(col * fadeIn, 1.0);
+#if ODBG == 5
+  gl_FragColor = vec4(shoreFoam, surfFoam + so.w * 0.3, clamp(sd / 100.0, 0.0, 1.0), 1.0);
+  if (foot > 50.0) gl_FragColor = vec4(luma(spec) * 4.0, F * 5.0, 0.2, 1.0);
+#elif ODBG == 6
+  gl_FragColor = vec4(clamp(depth / 20.0, 0.0, 1.0), localMask(localUV(vXZ)), crestFoam, 1.0);
+#endif
 #if ODBG == 4
   gl_FragColor = vec4(luma(spec), luma(Es) * 0.05, F, 1.0);
 #endif

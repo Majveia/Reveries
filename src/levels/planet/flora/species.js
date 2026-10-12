@@ -61,7 +61,10 @@ function tube(B, pts, radii, sides, col, H, opts = {}) {
     const y = pts[k].y;
     // AO: dark at the root and at branch bases
     const ao = (opts.ao ?? 1) * (0.55 + 0.45 * Math.min(1, (y + 0.4) / (H * 0.25))) * (k === 0 && opts.child ? 0.7 : 1);
-    const circ = Math.max(1, Math.round(2 * Math.PI * Math.max(r, 0.05) / 0.5));
+    // bark uv in metres (uvK > 1 enlarges the furrows on colossal trunks so
+    // they read as deep twisting ridges, not fine pinstripes)
+    const uvK = opts.uvK || 1;
+    const circ = Math.max(1, Math.round(2 * Math.PI * Math.max(r, 0.05) / (0.5 * uvK)));
     for (let s = 0; s <= sides; s++) {
       const a = (s / sides) * Math.PI * 2;
       const ca = Math.cos(a), sa = Math.sin(a);
@@ -71,7 +74,7 @@ function tube(B, pts, radii, sides, col, H, opts = {}) {
       if (opts.flare && k === 0) rr *= 1.0 + opts.flare * (0.6 + 0.4 * Math.cos(a * 5));
       const p = new V(pts[k].x + nx * rr, pts[k].y + ny * rr, pts[k].z + nz * rr);
       c.copy(col).multiplyScalar(ao);
-      B.vert(p, new V(nx, ny, nz), c, (s / sides) * circ, vAcc, swayAt(p.y, H, opts.swayK ?? 1), 0, opts.glow || 0);
+      B.vert(p, new V(nx, ny, nz), c, (s / sides) * circ + (opts.twist || 0) * vAcc / uvK, vAcc / uvK, swayAt(p.y, H, opts.swayK ?? 1), 0, opts.glow || 0);
     }
   }
   for (let k = 0; k < n - 1; k++) for (let s = 0; s < sides; s++) {
@@ -189,7 +192,7 @@ function deciduous(P, rng) {
     const segs = depth === 0 ? 8 : depth === 1 ? 6 : depth === 2 ? 4 : 3;
     const pts = path(start, dir, len, segs, rng, P.wiggle * (depth === 0 ? 0.55 : 1.1), depth === 0 ? 0.03 : P.trop * (depth === 1 ? 1.6 : 1) - (P.droop || 0) * depth * 0.3);
     const radii = pts.map((_, k) => r * (1 - (k / segs) * (depth === 0 ? 0.5 : 0.72)));
-    tube(B, pts, radii, depth === 0 ? 10 : depth === 1 ? 7 : depth === 2 ? 5 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.5) : 0, child: depth > 0 });
+    tube(B, pts, radii, depth === 0 ? (P.trunkSides || 10) : depth === 1 ? (P.trunkSides ? 12 : 7) : depth === 2 ? 5 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.5) : 0, child: depth > 0, uvK: depth < 2 ? (P.barkUV || 1) : 1, twist: depth < 2 ? (P.barkTwist || 0) : 0 });
     if (depth >= P.depth) {
       for (let k = 1; k < pts.length; k++) if (rng.float() < P.leafDensity) { leafPts.push(pts[k]); leafLobe.push(lobe); }
       leafPts.push(pts[pts.length - 1]); leafLobe.push(lobe);
@@ -544,8 +547,10 @@ export function buildPlant(kind, rng, pal = {}, opts = {}) {
       const st = opts.style || 'broad';
       const base = { broad: 'broad', golden: 'golden', biolum: 'biolum', maple: 'maple' }[st] || 'broad';
       const P = {
-        H: opts.H || 60, trunkR: (opts.H || 60) * 0.06, depth: 3, kids: [9, 4, 3], angle: 0.85, lenK: 0.62, wiggle: 0.45, trop: base === 'golden' ? 0.14 : 0.05,
-        leafTile: base === 'maple' ? TILE.maple : TILE.broad, leafSize: (opts.H || 60) * 0.08, perPoint: 3, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2,
+        // colossal: a fourth twig order and leaves ~3 m across (not 7 m cards
+        // that read as flat paper pads and edge-on stripes up close)
+        H: opts.H || 60, trunkR: (opts.H || 60) * 0.06, depth: 4, kids: [9, 4, 3, 3], angle: 0.85, lenK: 0.66, wiggle: 0.5, trop: base === 'golden' ? 0.14 : 0.05,
+        leafTile: base === 'maple' ? TILE.maple : TILE.broad, leafSize: Math.min((opts.H || 60) * 0.034, 3.2 + (opts.H || 60) * 0.008), perPoint: 2, fill: 0.55, trunkSides: 22, barkUV: 3.2, barkTwist: 0.35, leafCol: pal.leaf || C('#4e8a3c'), leafCol2: pal.leaf2,
         barkCol: pal.bark || C('#5a4a3c'), leafDensity: 0.9, crownStart: 0.3, flare: 0.9, glow: pal.glowAmt || 0, trunkK: 0.5,
         strands: base === 'biolum' ? 90 : 0, strandLen: (opts.H || 60) * 0.3, strandCol: pal.glow, strandGlow: 2.2,
       };

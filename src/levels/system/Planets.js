@@ -11,6 +11,7 @@ const srgb = (hex, fb = '#888888') => { const c = new THREE.Color(); c.set(hex |
 const srgbArr = (hex, fb) => { const c = new THREE.Color(hex || fb); return [c.r, c.g, c.b].map((v) => v); };
 const linFromArr = (a) => new THREE.Color().setRGB(a[0], a[1], a[2], THREE.SRGBColorSpace);
 
+const DBG = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('sysdbg') : null;
 const CLOUDS = { terran: 0.55, ocean: 0.62, jungle: 0.68, desert: 0.06, ice: 0.32, lava: 0.18, toxic: 0.75, exotic: 0.4, barren: 0 };
 const CLOUD_TINT = { lava: [0.22, 0.2, 0.2], toxic: [0.85, 0.9, 0.55], exotic: [0.95, 0.85, 1.0], desert: [0.95, 0.85, 0.7] };
 
@@ -138,7 +139,7 @@ export class SystemPlanet {
           uAtmo: { value: atmoCol }, uLights: { value: srgb(P.lights, '#ffc27a') }, uCloudCol: { value: new THREE.Color(ct[0], ct[1], ct[2]) },
           uLava: { value: srgb(P.accent && planet.kind === 'lava' ? P.accent : '#ff5a1a') },
           uG0: { value: srgb(P.ground?.[0], '#8a8070') }, uG1: { value: srgb(P.ground?.[1], '#706a60') }, uG2: { value: srgb(P.ground?.[2], '#5a554e') }, uRock: { value: srgb(P.rock, '#6a6660') },
-          uCloudCover: { value: CLOUDS[planet.kind] ?? 0.3 }, uCiv: { value: planet.civ.level }, uAtmoDensity: { value: atmoDensity },
+          uCloudCover: { value: DBG === 'noclouds' ? 0 : (CLOUDS[planet.kind] ?? 0.3) }, uCiv: { value: planet.civ.level }, uAtmoDensity: { value: atmoDensity },
           uRelief: { value: this.R * 0.012 }, uOct: { value: q.pick(3, 4, 5, 6) },
           uSpin: { value: new THREE.Matrix3() },
           ...ringUniforms,

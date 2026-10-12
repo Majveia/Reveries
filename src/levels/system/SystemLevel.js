@@ -53,7 +53,10 @@ export default class SystemLevel {
 
     this.star = new Star(E, sys.star, L.starR);
     this.scene.add(this.star.group);
-    const starColor = this.star.color;
+    // Light that reaches the worlds, partially white-balanced (the eye adapts to its own star): a sun-like
+    // star lights clouds white and rings cream, while red dwarfs and blue giants keep a clear cast.
+    const sc = this.star.color, scm = Math.max(sc.r, sc.g, sc.b, 1e-6);
+    const starColor = new THREE.Color(sc.r / scm, sc.g / scm, sc.b / scm).lerp(new THREE.Color(1, 1, 1), 0.45).multiplyScalar(Math.max(0.6, (sc.r + sc.g + sc.b) / 3 / scm));
 
     // Surfaces baked from each world's real terrain (workers) so orbit and ground agree.
     let bake = new Map();
@@ -337,16 +340,29 @@ export default class SystemLevel {
         const P = sp.position, R = sp.R;
         const s = P.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(116);
-        const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.42).normalize();
-        const cam = P.clone().addScaledVector(dirC, R * 6.0);
-        // the ringed crescent low on the left third, the star and the inner worlds strung along their orbits
-        // upper right: look along an arc between the two
+        // search phase angle × elevation for a lit crescent with the rings opened toward the camera
+        let dirC = null, best = -Infinity;
+        for (let ph = 118; ph <= 142; ph += 4) for (let el = -0.6; el <= 0.8; el += 0.1) {
+          const a = THREE.MathUtils.degToRad(ph);
+          const d = s.clone().multiplyScalar(Math.cos(a)).addScaledVector(t, Math.sin(a)).addScaledVector(up, el).normalize();
+          const open = Math.abs(d.dot(sp.ringN));
+          const lit = d.dot(s);
+          const score = Math.min(open, 0.42) * 3 - Math.abs(el - 0.3) * 0.4 + Math.min(lit + 0.35, 0.2);
+          if (score > best) { best = score; dirC = d; }
+        }
+        const cam = P.clone().addScaledVector(dirC, R * 7.5);
+        // frame the star and the ringed crescent together: centre between them, widen the lens to fit both
         const toP = P.clone().sub(cam).normalize(), toS = cam.clone().multiplyScalar(-1).normalize();
+        const sep = toP.angleTo(toS);
+        const ringAng = Math.asin(Math.min(1, (sp.ringOut || R * 1.2) / cam.distanceTo(P)));
         const axis = new THREE.Vector3().crossVectors(toP, toS).normalize();
-        const lookDir = toP.clone().applyAxisAngle(axis, toP.angleTo(toS) * 0.44);
+        const lookDir = toP.clone().applyAxisAngle(axis, sep * 0.5 - ringAng * 0.15);
+        const hHalf = THREE.MathUtils.clamp(sep * 0.5 + ringAng * 0.85 + 0.06, 0.45, 0.75);
+        this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / this.camera.aspect));
+        this.camera.fov = THREE.MathUtils.clamp(this.camera.fov, 36, 70); this.camera.updateProjectionMatrix();
         const look = cam.clone().addScaledVector(lookDir, R * 9.0);
-        this._poseCam(cam, look);
+        this._keepFov = true;
+        this._poseCam(cam, look); this._keepFov = false;
       },
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
       star: async () => {
@@ -385,7 +401,7 @@ export default class SystemLevel {
         const S = best.s;
         const s = pos.clone().multiplyScalar(-1).normalize(), up = new THREE.Vector3(0, 1, 0);
         const t = new THREE.Vector3().crossVectors(up, s).normalize();
-        const ph = THREE.MathUtils.degToRad(102);
+        const ph = THREE.MathUtils.degToRad(90);
         const dirC = s.clone().multiplyScalar(Math.cos(ph)).addScaledVector(t, Math.sin(ph)).addScaledVector(up, 0.16).normalize();
         const cam = pos.clone().addScaledVector(dirC, S * 4.4);
         // wide lens: the star sits near the left edge of the frame, the half-lit boulder right of centre

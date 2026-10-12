@@ -101,7 +101,7 @@ float cloudField(vec3 d, int oct, bool detail){
   vec3 p = c * 1.9 + uSeed * 0.37;
   vec3 w = vec3(fbm(p * 1.1, 3), fbm(p * 1.1 + 5.2, 3), fbm(p * 1.1 + 9.7, 3));
   vec3 q = p + w * 0.95;
-  q.y *= 1.6;                                   // zonal stretching: fronts lie along latitude circles
+  q.y *= 2.1;                                   // zonal stretching: fronts lie along latitude circles
   float n1 = fbm(q * 1.2, oct);
   float clim = 0.14 * exp(-al * al / 0.006) - 0.2 * exp(-pow((al - 0.42) / 0.13, 2.0)) + 0.12 * exp(-pow((al - 0.8) / 0.14, 2.0));
   float base = n1 + clim + (uCloudCover - 0.55) * 0.6;
@@ -110,10 +110,11 @@ float cloudField(vec3 d, int oct, bool detail){
     float n2 = fbm(q * 4.2 + w * 1.4, 4);
     float n3 = fbm(q * 12.0 + w * 2.0, 3);
     // soft decks eroded at their margins into wisps; thin cirrus drawn out along the jets
-    float b2 = base + 0.1 * n2;
-    cov = smoothstep(-0.1, 0.32, b2);
-    cov *= smoothstep(-0.35, 0.35, n2 * 0.7 + n3 * 0.35 + cov * 0.6 - 0.15);
-    cov *= 0.75 + 0.25 * sat(0.5 + n3);
+    // density, not a coverage mask: broad soft ramps, billowed interiors, frayed margins
+    float b2 = base + 0.16 * n2 + 0.06 * n3;
+    float dens = sat((b2 + 0.12) / 0.62);
+    dens *= sat(0.5 + 0.85 * n2 + 0.45 * n3 + 0.35 * dens);
+    cov = dens * dens * (1.6 - 0.6 * dens);
     float fib = fbm(vec3(q.x * 5.0, q.y * 18.0, q.z * 5.0) + w, 3);
     cov = max(cov, smoothstep(0.1, 0.5, fib) * smoothstep(-0.2, 0.1, base) * 0.28);
   }
@@ -230,7 +231,7 @@ void main(){
 #endif
   } else {
     // snow on peaks & poles
-    float sm = smoothstep(0.35, 0.75, snow + detail * 0.3 + micro * 0.12);
+    float sm = smoothstep(0.3, 0.95, snow + detail * 0.45 + micro * 0.2 + fbm(sd * 40.0, 3) * 0.15) * 0.9;
     alb = mix(alb, vec3(0.82, 0.86, 0.92), sm);
     alb *= 0.86 + 0.24 * (micro * 0.5 + 0.5) + 0.1 * detail;
     col = alb * sunCol * ndl * cshadow;
@@ -240,8 +241,12 @@ void main(){
 #ifndef MOON
   if (cloud > 0.0) {
     float wrap = sat((ndlG + 0.04) / 1.04);
-    vec3 cloudLit = uCloudCol * sunCol * (wrap * 0.75 + 0.25 * sqrt(wrap)) * (0.7 + 0.45 * sqrt(cloud)) * 1.1;
-    col = mix(col, cloudLit, cloud * 0.95);
+    // thick decks are bright (albedo ~0.8 against ~0.15 land); thin veils let the ground show through
+    // clouds read white under their own star (the eye adapts); thick decks bright, thin veils translucent
+    vec3 sunW = mix(sunCol, vec3(dot(sunCol, vec3(0.3, 0.5, 0.2))), 0.65);
+    vec3 cloudLit = uCloudCol * sunW * (wrap * 0.8 + 0.2 * sqrt(wrap)) * (0.7 + 0.65 * sqrt(cloud)) * 1.5;
+    float alpha = 1.0 - exp(-cloud * 3.2);
+    col = mix(col, cloudLit, alpha);
   }
 #endif
 
@@ -258,7 +263,9 @@ void main(){
     float roads = smoothstep(0.02, 0.0, wc.y - wc.x) * smoothstep(0.7, 0.3, wc.x) * smoothstep(0.3, 0.7, snoise(sd * 260.0) * 0.5 + 0.5); // highways between cities
     vec2 wt = worley(sd * 260.0 + 7.0);
     float town = smoothstep(0.14, 0.0, wt.x) * smoothstep(0.2, 0.6, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
-    float lights = region * (cores * 2.2 + sprawl * 0.6 + roads * 0.45 + town * 0.7) * (0.45 + 0.55 * coast);
+    // sparkle: suburbs and towns resolve into grains of light, not a smooth glow
+    float grain = smoothstep(0.35, 0.95, snoise(sd * 900.0) * 0.5 + 0.5) * 1.6 + 0.15;
+    float lights = region * (cores * 2.2 + (sprawl * 0.7 + town * 0.9) * grain + roads * 0.5) * (0.45 + 0.55 * coast);
     lights *= (uCiv - 1.0) * 0.6;
     emis += uLights * lights * night * 3.4 * (1.0 - cloud * 0.8);
   }
@@ -323,8 +330,8 @@ void main(){
   float b2 = prof(y, 17.0, uSeed + 3.0);
   float b3 = prof(y, 48.0, uSeed + 7.0);
   float b4 = prof(y, 140.0, uSeed + 11.0);
-  vec3 c0 = mix(vec3(dot(uC0, vec3(0.3, 0.5, 0.2))), uC0, 0.55);
-  vec3 c1 = mix(vec3(dot(uC1, vec3(0.3, 0.5, 0.2))), uC1, 0.55);
+  vec3 c0 = mix(vec3(dot(uC0, vec3(0.3, 0.5, 0.2))), uC0, 0.8) * 1.12;
+  vec3 c1 = mix(vec3(dot(uC1, vec3(0.3, 0.5, 0.2))), uC1, 0.75) * 1.08;
   vec3 c2 = mix(vec3(dot(uC2, vec3(0.3, 0.5, 0.2))), uC2, 0.35);
   vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
   col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
@@ -429,7 +436,7 @@ void main(){
   // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer
   vec3 tint = mix(vec3(0.7, 0.62, 0.55), vec3(1.04, 0.98, 0.9), smoothstep(0.22, 0.34, x));
   tint = mix(tint, vec3(0.86, 0.85, 0.84), smoothstep(0.6, 0.68, x));
-  vec3 alb = uCol * tone * tint;
+  vec3 alb = uCol * tone * tint * vec3(1.1, 1.0, 0.84);   // icy particles under a sunlike star read warm cream
   // self-gravity wakes: faint azimuthal clumping that gives the A ring its grain up close
   float ang = atan(vLP.y, vLP.x);
   float wake = rNoise(ang * 900.0 + x * 400.0 + uSeed) * smoothstep(0.66, 0.75, x) * (1.0 - smoothstep(0.003, 0.02, fw));
