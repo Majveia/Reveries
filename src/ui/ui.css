@@ -276,9 +276,13 @@ body[data-mode="map"] .rvu-buttons { display: none; }
   .rvu-card { left: var(--rvu-l); right: var(--rvu-r); width: auto; }
   body:not([data-mode="map"]) .rvu-card { right: auto; width: min(250px, 64vw); bottom: calc(var(--rvu-b) + 196px); }
   body:not([data-mode="map"]) .rvu-card h2 { font-size: 18px; }
-  .rvu-arrival { top: 19vh; }
-  .rvu-arrival h3 { font-size: 22px; letter-spacing: .26em; margin-right: -.26em; }
-  .rvu-arrival p { font-size: 16px; max-width: 28em; }
+  /* phones: the reveal stays a quiet caption in the upper band, clear of the hero */
+  .rvu-arrival { top: calc(var(--rvu-t) + 112px); width: min(320px, calc(100vw - 64px)); }
+  .rvu-arrival::before { inset: -20px -8% -24px; }
+  .rvu-arr-kick { font-size: 7.5px; letter-spacing: .42em; margin-right: -.42em; }
+  .rvu-arrival h3 { margin-top: 8px; font-size: 17px; letter-spacing: .24em; margin-right: -.24em; }
+  .rvu-arr-line { width: 84px; margin-top: 10px; }
+  .rvu-arrival p { margin-top: 9px; max-width: 26em; font-size: 12.5px; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
   .rvu-compass { width: 132px; margin-left: -66px; top: calc(var(--rvu-t) + 30px); }
   .rvu-title h1 { letter-spacing: .32em; margin-right: -.32em; font-size: 40px; }
   .rvu-title-kick { letter-spacing: .44em; margin-right: -.44em; }

@@ -902,7 +902,7 @@ export function buildExplorerData(quality = 2) {
   const spec = skeletonSpec();
   const body = makeBody(spec);
   const P = makePieces(spec, body);
-  const hs = [1.6, 1.25, 1.0, 0.9][quality] ?? 1;
+  const hs = [1.6, 1.6, 1.0, 0.9][quality] ?? 1; // medium (phones) shares the low grid: ~100k tris, drawn twice (main + CharShadow)
 
   // Union field for ambient occlusion (bounding-sphere accelerated).
   const aoParts = [];

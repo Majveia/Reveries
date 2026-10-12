@@ -300,7 +300,7 @@ export class Grass {
 
   init() {
     const fl = this.flora, q = fl.engine.quality, w = this.world, P = this.P;
-    const qd = q.pick(0.28, 0.55, 1, 1.35);
+    const qd = q.pick(0.28, 0.46, 1, 1.35);
     this.dens0 = P.density * 62 * qd;              // blades per m² inside r0
     this.fdens0 = (this.F?.density || 0) * 9 * qd;  // flowers per m² inside r0 (in patches)
     this.r0 = q.pick(6, 8, 10, 13);                 // full density inside r0
@@ -325,7 +325,7 @@ export class Grass {
     this.geo = bladeGeometry(q.level >= 3 ? 4 : q.level >= 1 ? 3 : 2); // low: 2-segment blades everywhere
     this.mesh = this._mesh(this.geo, this.mat);
     // mid/far field: the same blades with 2 segments (a few px tall out there)
-    this.farFrom = this.r0 * q.pick(1.4, 1.5, 1.5, 2.2);
+    this.farFrom = this.r0 * q.pick(1.4, 1.2, 1.5, 2.2);
     this.midFrom = q.level >= 3 ? 4 : Infinity; // ultra: 4-segment blades in the cells around the camera, else 3
     if (this.midFrom < Infinity) { this.geoMid = bladeGeometry(3); this.meshMid = this._mesh(this.geoMid, this.mat); }
     this.geoFar = bladeGeometry(2);
