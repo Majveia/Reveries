@@ -82,113 +82,160 @@ export function floatingIsland(ctx, x, z, alt, R) {
   const rock = col(ctx.A?.palette?.rock || '#8a8478').multiplyScalar(0.95);
   const moss = col('#5f7a3a');
   // underside: a gnarled bowl of stratified rock, lobed and dripping roots
+  // (dense lathe: at hero scale the silhouette and the light must stay smooth, never faceted)
   B.mat(M.ROCK, 0.31, 0, 3).color(rock).ext(1, 0, F.NOWIN, 0);
   const prof = [];
   const depth = R * 1.25;
-  const N = 30;
+  const N = 72;
   for (let j = 0; j <= N; j++) {
     const t = j / N; // 0 bottom … 1 top
     const r = R * (t < 0.9 ? Math.pow(t / 0.9, 0.42) * 1.03 : 1.03 - (t - 0.9) * 0.3);
     prof.push([Math.max(0.5, r), -depth * Math.pow(1 - t, 1.15) - 3]);
   }
-  rockLathe(B, 0, 0, prof, { segs: 120, amp: 0.2, fq: 0.035, ampY: 6, seed: 11, yStretch: 0.3, detail: 0.35 });
-  for (let k = 0; k < 14; k++) {
-    const a = rng.range(0, TAU), rr = R * rng.range(0.3, 0.8);
-    const lx = Math.cos(a) * rr, lz = Math.sin(a) * rr, lr = R * rng.range(0.18, 0.3);
-    const ld = depth * rng.range(0.55, 0.95);
-    rockLathe(B, lx, lz, [[0.4, -ld], [lr * 0.3, -ld * 0.93], [lr * 0.55, -ld * 0.8], [lr * 0.8, -ld * 0.62], [lr, -ld * 0.45], [lr * 1.05, -ld * 0.25], [lr * 1.05, -10], [lr * 0.9, -2]], { segs: 28, amp: 0.3, fq: 0.07, seed: 20 + k, yStretch: 0.35, detail: 0.3 });
+  rockLathe(B, 0, 0, prof, { segs: 220, amp: 0.2, fq: 0.032, ampY: 6, seed: 11, yStretch: 0.3, detail: 0.22 });
+  // smooth a coarse profile into many rows (Catmull-Rom) so lobes read as rounded rock, not facets
+  const smoothProf = (P, per = 4) => {
+    const out = [];
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+      for (let k = 0; k < per; k++) {
+        const t = k / per, t2 = t * t, t3 = t2 * t;
+        const cr = (a0, a1, a2, a3) => 0.5 * (2 * a1 + (-a0 + a2) * t + (2 * a0 - 5 * a1 + 4 * a2 - a3) * t2 + (-a0 + 3 * a1 - 3 * a2 + a3) * t3);
+        out.push([Math.max(0.2, cr(p0[0], p1[0], p2[0], p3[0])), cr(p0[1], p1[1], p2[1], p3[1])]);
+      }
+    }
+    out.push(P[P.length - 1]);
+    return out;
+  };
+  for (let k = 0; k < 16; k++) {
+    const a = rng.range(0, TAU), rr = R * rng.range(0.3, 0.82);
+    const lx = Math.cos(a) * rr, lz = Math.sin(a) * rr, lr = R * rng.range(0.16, 0.3);
+    const ld = depth * rng.range(0.55, 0.98);
+    rockLathe(B, lx, lz, smoothProf([[0.3, -ld], [lr * 0.3, -ld * 0.93], [lr * 0.55, -ld * 0.8], [lr * 0.8, -ld * 0.62], [lr, -ld * 0.45], [lr * 1.05, -ld * 0.25], [lr * 1.05, -10], [lr * 0.9, -2]]), { segs: 48, amp: 0.28, fq: 0.06, seed: 20 + k, yStretch: 0.35, detail: 0.2 });
   }
   // grass rim
   const moss2 = moss.clone().multiplyScalar(1.1);
   B.mat(M.GRASS, 0.2, 0, 3).color(moss2).ext(1, 0, F.NOWIN, 0);
-  rockLathe(B, 0, 0, [[R * 1.0, -3.5], [R * 0.99, -0.8], [R * 0.9, 0.6], [R * 0.8, 1.2]], { segs: 44, amp: 0.05, fq: 0.05, seed: 11 });
-  // the castle: three concentric arcaded terraces stepping up to the tree
+  rockLathe(B, 0, 0, [[R * 1.0, -3.5], [R * 0.99, -0.8], [R * 0.9, 0.6], [R * 0.8, 1.2]], { segs: 96, amp: 0.05, fq: 0.05, seed: 11 });
+  // the castle: three concentric arcaded terraces stepping up to the tree, each ring lived in
   const stone = col('#c4bcaa');
   const terraces = [[0.8, 9], [0.6, 20], [0.4, 32]];
+  const walls = ctx.pal?.walls?.length ? ctx.pal.walls : [col('#ece4d2'), col('#f2ead8'), col('#e2d6be')];
+  const roofs = ctx.pal?.roofs?.length ? ctx.pal.roofs : [col('#a8442e'), col('#3e6a6a'), col('#b8583a')];
+  const M0 = ctx.M.clone(), MH = new THREE.Matrix4(), RY = new THREE.Matrix4();
   let prevTop = 1.2;
   for (let ti = 0; ti < terraces.length; ti++) {
     const [rk, top] = terraces[ti];
     const rr = R * rk;
     B.mat(M.MOSSSTONE, 0.4 + ti * 0.1, W.ARCADE, 4.2).color(stone.clone().multiplyScalar(1 - ti * 0.04)).ext(1, 0, 0, 0);
-    B.cylinder(0, 0, rr, rr * 0.985, prevTop - 4, top, { segs: 56, base: prevTop - 4 });
+    B.cylinder(0, 0, rr, rr * 0.985, prevTop - 4, top, { segs: 72, base: prevTop - 4 });
     // cornice + grass terrace on top
     B.mat(M.MOSSSTONE, 0.5, 0, 3).color(stone.clone().multiplyScalar(0.92)).ext(1, 0, F.NOWIN, 0);
-    B.cylinder(0, 0, rr + 0.6, rr + 0.6, top - 0.5, top + 0.4, { segs: 56, top: false });
+    B.cylinder(0, 0, rr + 0.6, rr + 0.6, top - 0.5, top + 0.4, { segs: 72, top: false });
     B.mat(M.GRASS, 0.3 + ti * 0.1, 0, 3).color(moss2).ext(1, 0, F.NOWIN, 0);
-    B.disc(0, top + 0.4, 0, rr + 0.6, 56, 1);
+    B.disc(0, top + 0.4, 0, rr + 0.6, 72, 1);
     // towers on the terrace edge
     const nt = [10, 7, 5][ti];
+    const towerA = [];
     for (let k = 0; k < nt; k++) {
       const a = (k / nt) * TAU + ti * 0.35;
+      towerA.push(a);
       const tx = Math.cos(a) * rr, tz = Math.sin(a) * rr;
       const th = top + rng.range(8, 16) - ti * 2;
       B.mat(M.MOSSSTONE, rng.float(), W.LANCET, 4).color(stone).ext(1, 0, 0, 0);
-      B.cylinder(tx, tz, 3.0, 2.7, prevTop - 4, th, { segs: 12, base: prevTop - 4 });
+      B.cylinder(tx, tz, 3.0, 2.7, prevTop - 4, th, { segs: 16, base: prevTop - 4 });
       B.mat(M.SLATE, rng.float(), 0, 3).color(col('#3e6a6a')).ext(1, 0, F.NOWIN, 0);
-      B.lathe(tx, tz, [[3.5, th], [2.4, th + 2.6], [0.05, th + 7.5]], { segs: 12 });
+      B.lathe(tx, tz, [[3.5, th], [2.4, th + 2.6], [0.05, th + 7.5]], { segs: 16 });
       glow(ctx, tx * 1.04, th - 3, tz * 1.04, pal.lamp, 0.9, rng.float());
+    }
+    // houses ringing the terrace (between this wall and the next one up): a village in the sky
+    const rIn = ti + 1 < terraces.length ? R * terraces[ti + 1][0] : R * 0.14;
+    const rMid = (rr + rIn) / 2, ring = rr - rIn;
+    const nh = Math.floor((TAU * rMid) / 11);
+    for (let k = 0; k < nh; k++) {
+      const a = (k / nh) * TAU + rng.range(-0.04, 0.04);
+      if (towerA.some((ta) => Math.abs(((a - ta + Math.PI * 3) % TAU) - Math.PI) < 0.06)) continue;
+      if (rng.chance(0.16)) continue;
+      const w = rng.range(5.5, 8.5), d = Math.min(ring - 5, rng.range(5, 7.5));
+      const floors = rng.chance(0.35) ? 2 : 1, fh = 3.0, H = floors * fh + 0.3;
+      const hx = Math.cos(a) * (rMid + rng.range(-1, 1)), hz = Math.sin(a) * (rMid + rng.range(-1, 1));
+      MH.copy(M0).multiply(RY.makeTranslation(hx, top + 0.4, hz)).multiply(RY.makeRotationY(Math.PI / 2 - a));
+      B.setMatrix(MH);
+      const seed = rng.float();
+      B.mat(M.PLASTER, seed, W.HOUSE, fh).color(rng.pick(walls).clone().multiplyScalar(rng.range(0.92, 1.03))).ext(1, 0, 0, 0);
+      B.box(-w / 2, 0, -d / 2, w / 2, H, d / 2, { top: false, base: 0, front: F.FRONT, right: 0, back: 0, left: 0 });
+      const rc = rng.pick(roofs).clone().multiplyScalar(rng.range(0.85, 1.05));
+      B.gableRoof(-w / 2, -d / 2, w / 2, d / 2, H, (d / 2) * rng.range(0.7, 0.95), { over: 0.5, overG: 0.35, roofMat: [rc.b > rc.r ? M.SLATE : M.TILE, rng.float(), 0, 3], roofColor: rc, trimMat: [M.WOOD, seed, 0, 3], trimColor: col('#5a4030'), base: 0, ridgeW: 0.24 });
+      B.setMatrix(M0);
+      if (rng.chance(0.45)) glow(ctx, Math.cos(a) * (rMid + d / 2 + 0.6), top + 2.6, Math.sin(a) * (rMid + d / 2 + 0.6), pal.lamp, 0.5, rng.float());
     }
     prevTop = top + 0.4;
   }
-  // the great tree crowning the castle
+  // the great tree crowning the castle: a broad cauliflower canopy of many leaf masses
   const trunk = col('#5a4a3a');
   const ty = prevTop;
   B.mat(M.WOOD, 0.33, 0, 3).color(trunk).ext(1, 0, F.NOWIN, 0);
   const th = R * 0.5;
-  rockLathe(B, 0, 0, [[R * 0.12, ty - 2], [R * 0.07, ty + R * 0.05], [R * 0.055, ty + th * 0.45], [R * 0.04, ty + th * 0.8], [R * 0.025, ty + th]], { segs: 18, amp: 0.25, fq: 0.12, seed: 31 });
+  rockLathe(B, 0, 0, smoothProf([[R * 0.13, ty - 2], [R * 0.075, ty + R * 0.05], [R * 0.058, ty + th * 0.45], [R * 0.045, ty + th * 0.8], [R * 0.03, ty + th]], 3), { segs: 24, amp: 0.25, fq: 0.12, seed: 31 });
   // roots pouring over the terraces
-  for (let k = 0; k < 12; k++) {
-    const a = (k / 12) * TAU + rng.range(-0.2, 0.2);
+  for (let k = 0; k < 14; k++) {
+    const a = (k / 14) * TAU + rng.range(-0.2, 0.2);
     const pts = [];
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8, r = R * (0.06 + t * 0.78);
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10, r = R * (0.06 + t * 0.78);
       const yy = r < R * 0.4 ? ty : r < R * 0.6 ? 20.4 : r < R * 0.8 ? 9.4 : 1.2;
       pts.push(new THREE.Vector3(Math.cos(a + t * 0.25) * r, yy + 1.0 + Math.sin(t * 7 + k) * 0.5, Math.sin(a + t * 0.25) * r));
     }
-    B.tube(pts, R * 0.018, 5);
+    const r0 = R * rng.range(0.016, 0.024);
+    B.tube(pts, (t) => r0 * (1.4 - t * 0.9), 6);
   }
-  const fol = [col('#3f7a34'), col('#4f8a3c'), col('#2f6a30'), col('#5a9a44')];
-  const crowns = [];
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * TAU + rng.range(-0.3, 0.3);
-    const y0 = ty + th * rng.range(0.4, 0.8), L = R * rng.range(0.28, 0.42);
-    const tip = new THREE.Vector3(Math.cos(a) * L, y0 + L * 0.35, Math.sin(a) * L);
+  const fol = [col('#3f7a34'), col('#4f8a3c'), col('#36702f'), col('#5a9a44'), col('#6aa64c')];
+  const cy = ty + th * 0.92, Rc = R * 0.52, Rv = R * 0.26;
+  const limbs = [];
+  for (let k = 0; k < 9; k++) {
+    const a = (k / 9) * TAU + rng.range(-0.3, 0.3);
+    const y0 = ty + th * rng.range(0.35, 0.75), L = Rc * rng.range(0.6, 0.85);
+    const tip = new THREE.Vector3(Math.cos(a) * L, cy + Rv * rng.range(-0.2, 0.3), Math.sin(a) * L);
     B.mat(M.WOOD, 0.33, 0, 3).color(trunk);
-    B.tube([new THREE.Vector3(0, y0, 0), new THREE.Vector3(Math.cos(a) * L * 0.5, y0 + L * 0.25, Math.sin(a) * L * 0.5), tip], R * 0.016, 6);
-    crowns.push(tip);
+    const mid = new THREE.Vector3(Math.cos(a) * L * 0.45, (y0 + tip.y) / 2 + L * 0.1, Math.sin(a) * L * 0.45);
+    const r0 = R * 0.022;
+    B.tube([new THREE.Vector3(0, y0, 0), mid, tip], (t) => r0 * (1 - t * 0.7), 7);
+    limbs.push(tip);
   }
-  crowns.push(new THREE.Vector3(0, ty + th + R * 0.04, 0));
-  for (let k = 0; k < crowns.length; k++) {
-    const p = crowns[k];
-    foliageBlob(B, p.x, p.y, p.z, R * rng.range(0.17, 0.24), rng.pick(fol), 40 + k, 14);
-    if (rng.chance(0.6)) foliageBlob(B, p.x * 0.7, p.y + R * 0.07, p.z * 0.7, R * rng.range(0.13, 0.18), rng.pick(fol), 60 + k, 12);
+  // outer shell of leaf masses (dome), a few big inner fills, then small tufts on the sunlit top
+  let fk = 0;
+  for (let k = 0; k < 46; k++) {
+    const u = rng.range(0, TAU), v = Math.acos(rng.range(-0.25, 1)); // upper-biased sphere
+    const sr = rng.range(0.78, 1.0);
+    const px = Math.cos(u) * Math.sin(v) * Rc * sr, pz = Math.sin(u) * Math.sin(v) * Rc * sr, py = cy + Math.cos(v) * Rv * sr;
+    foliageBlob(B, px, py, pz, R * rng.range(0.085, 0.14), rng.pick(fol), 40 + fk++, 12);
   }
-  // hanging roots below the island
+  for (const p of limbs) foliageBlob(B, p.x * 0.8, p.y, p.z * 0.8, R * rng.range(0.15, 0.2), rng.pick(fol), 40 + fk++, 14);
+  foliageBlob(B, 0, cy + Rv * 0.4, 0, R * 0.3, fol[0], 40 + fk++, 16);
+  for (let k = 0; k < 18; k++) {
+    const u = rng.range(0, TAU), v = rng.range(0, 0.9);
+    foliageBlob(B, Math.cos(u) * Math.sin(v) * Rc * 0.85, cy + Math.cos(v) * Rv * 1.05, Math.sin(u) * Math.sin(v) * Rc * 0.85, R * rng.range(0.05, 0.08), rng.pick(fol.slice(2)), 40 + fk++, 10);
+  }
+  // hanging roots below the island: tapered, branching, some very long
   B.mat(M.WOOD, 0.4, 0, 3).color(col('#4a3a2c'));
-  for (let k = 0; k < 30; k++) {
-    const a = rng.range(0, TAU), r0 = R * rng.range(0.1, 0.9);
+  for (let k = 0; k < 40; k++) {
+    const a = rng.range(0, TAU), r0 = R * Math.sqrt(rng.range(0.01, 0.8));
     const tProf = Math.pow(Math.min(1, r0 / (R * 1.03)), 1 / 0.42) * 0.9;
     const ytop = -depth * Math.pow(1 - tProf, 1.15) - 3 + 4;
-    const len = rng.range(25, 90);
+    const len = rng.range(20, 110) * (1.2 - r0 / R * 0.6);
     const pts = [];
-    for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 5 + k) * 2.5 * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 4 + k) * 2.5 * t)); }
-    B.tube(pts, rng.range(0.7, 1.9), 7);
-    if (rng.chance(0.6)) { const q = pts.slice(2).map((p, i) => p.clone().add(new THREE.Vector3(Math.sin(i + k) * 1.5, -i * 1.2, Math.cos(i * 1.3 + k) * 1.5))); B.tube(q, rng.range(0.35, 0.8), 5); }
-  }
-  // waterfall ribbons spilling from the rim
-  B.mat(M.WATERFALL, 0.2, 0, 3).color(col('#dfe8ea')).ext(1, 4, F.NOWIN, 0);
-  for (let k = 0; k < 3; k++) {
-    const a = rng.range(0, TAU), r0 = R * 1.0;
-    const len = rng.range(60, 110), w = rng.range(2.5, 5);
-    const tx = -Math.sin(a), tz = Math.cos(a);
-    for (const s of [1, -1]) {
-      const p0 = new THREE.Vector3(Math.cos(a) * (r0 + 0.5) - tx * w / 2, -1, Math.sin(a) * (r0 + 0.5) - tz * w / 2);
-      const p1 = new THREE.Vector3(Math.cos(a) * (r0 + 0.5) + tx * w / 2, -1, Math.sin(a) * (r0 + 0.5) + tz * w / 2);
-      const p2 = new THREE.Vector3(Math.cos(a) * (r0 + 6) + tx * w * 0.9, -len, Math.sin(a) * (r0 + 6) + tz * w * 0.9);
-      const p3 = new THREE.Vector3(Math.cos(a) * (r0 + 6) - tx * w * 0.9, -len, Math.sin(a) * (r0 + 6) - tz * w * 0.9);
-      if (s > 0) B.quadP(p0, p1, p2, p3, [0, len], [w, len], [w, 0], [0, 0]); else B.quadP(p1, p0, p3, p2, [w, len], [0, len], [0, 0], [w, 0]);
+    for (let i = 0; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 5 + k) * 3 * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 4 + k) * 3 * t)); }
+    const rad = rng.range(0.8, 2.2);
+    B.tube(pts, (t) => rad * Math.pow(1 - t, 0.7) + 0.06, 7);
+    if (rng.chance(0.65)) {
+      const s0 = rng.int(2, 5);
+      const q = pts.slice(s0).map((p, i) => p.clone().add(new THREE.Vector3(Math.sin(i * 0.7 + k) * (1 + i * 0.6), -i * 1.4, Math.cos(i * 0.9 + k) * (1 + i * 0.6))));
+      const rb = rad * 0.45;
+      B.tube(q, (t) => rb * Math.pow(1 - t, 0.8) + 0.04, 5);
     }
   }
+  // waterfalls: translucent animated ribbons that widen and dissolve into spray
+  ctx.group.add(waterfallMesh(ctx, R, rng));
   ctx.useTile(null);
   ctx.poiAt(x, z, alt + 20, R * 1.4, 'landmark', 'The Floating City');
   ctx.landmarkSpots.push({ x, z, h: alt, kind: 'island', R, title: 'The Floating City' });
@@ -317,4 +364,93 @@ export function lighthouse(ctx, x, z) {
   ctx.collider(0, H / 2, 0, 3.6, H / 2, 3.6, false);
   ctx.useTile(null);
   ctx.landmarkSpots.push({ x, z, h: fp.min + H, kind: 'lighthouse', title: 'The Lighthouse' });
+}
+
+// ---------------------------------------------------------------- island waterfalls
+const FALL_VERT = /* glsl */`
+attribute float aSeed; attribute float aVeil;
+varying vec2 vUv; varying float vSeed; varying float vVeil; varying float vDist;
+void main(){
+  vUv = uv; vSeed = aSeed; vVeil = aVeil;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vDist = -mv.z;
+  gl_Position = projectionMatrix * mv;
+}`;
+const FALL_FRAG = /* glsl */`
+uniform float uCivTime, uCivDay, uCivNight; uniform vec3 uCivSkyZ, uCivSkyH, uCivSunL;
+varying vec2 vUv; varying float vSeed; varying float vVeil; varying float vDist;
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float n2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+void main(){
+  float v = vUv.y, u = vUv.x;
+  // falling streaks: stretched noise scrolling down, accelerating with the fall
+  float sp = uCivTime * (0.18 + 0.05 * vSeed);
+  float s1 = n2(vec2(u * 14.0 + vSeed * 31.0, v * 3.0 - sp * 6.0));
+  float s2 = n2(vec2(u * 33.0 - vSeed * 17.0, v * 7.0 - sp * 11.0));
+  float streak = smoothstep(0.25, 0.85, s1 * 0.6 + s2 * 0.4);
+  float edge = pow(max(0.0, sin(3.14159 * u)), mix(0.6, 1.6, v));
+  float a;
+  if (vVeil < 0.5) {
+    // the sheet: dense at the lip, breaking into strands, gone by ~70% of the drop
+    a = mix(0.85, 0.35, smoothstep(0.0, 0.5, v)) * mix(0.55, 1.0, streak) * edge;
+    a *= 1.0 - smoothstep(0.35, 0.72, v + (s1 - 0.5) * 0.25);
+  } else {
+    // the spray veil: wide soft mist growing below the sheet, dissolving into air
+    float m = n2(vec2(u * 5.0 + vSeed * 9.0, v * 2.5 - sp * 2.0)) * 0.6 + n2(vec2(u * 11.0, v * 5.0 - sp * 3.5)) * 0.4;
+    a = 0.32 * smoothstep(0.1, 0.45, v) * (1.0 - smoothstep(0.55, 1.0, v)) * edge * (0.5 + 0.7 * m);
+  }
+  a *= smoothstep(0.0, 0.02, v);
+  float sun = max(0.0, uCivSunL.y);
+  vec3 lit = uCivSkyZ * 0.55 + uCivSkyH * 0.9 + vec3(1.0, 0.86, 0.68) * sun * 1.6 * uCivDay;
+  vec3 col = lit * mix(0.95, 1.15, streak) + vec3(0.02, 0.025, 0.03);
+  gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
+}`;
+
+function waterfallMesh(ctx, R, rng) {
+  const P = [], UV = [], S = [], V = [], I = [];
+  const rows = 28, cols = 6;
+  const nf = 3;
+  for (let f = 0; f < nf; f++) {
+    const a = rng.range(0, TAU), w0 = rng.range(3.5, 6.5), len = rng.range(140, 220), seed = rng.float();
+    const ox = Math.cos(a), oz = Math.sin(a), tx = -oz, tz = ox;
+    for (let veil = 0; veil < 2; veil++) {
+      const base = P.length / 3;
+      for (let j = 0; j <= rows; j++) {
+        const t = j / rows;
+        // the sheet arcs off the lip and drops, drifting a little outward
+        const out = R * 1.0 + 1.2 + 9 * Math.sqrt(t) + (veil ? 4 : 0);
+        const y = -1 - len * t * (veil ? 1.05 : 1.0) + (veil ? -len * 0.08 : 0);
+        const w = (veil ? w0 * 2.4 + 34 * t : w0) * (1 + t * 2.2);
+        for (let i = 0; i <= cols; i++) {
+          const u = i / cols, k = (u - 0.5) * w;
+          P.push(ox * out + tx * k, y, oz * out + tz * k);
+          UV.push(u, t); S.push(seed); V.push(veil);
+        }
+      }
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const q = base + j * (cols + 1) + i;
+        I.push(q, q + 1, q + cols + 2, q, q + cols + 2, q + cols + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2));
+  g.setAttribute('aSeed', new THREE.Float32BufferAttribute(S, 1));
+  g.setAttribute('aVeil', new THREE.Float32BufferAttribute(V, 1));
+  g.setIndex(I);
+  g.computeBoundingSphere();
+  const U = ctx.settlement.uniforms;
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: FALL_VERT, fragmentShader: FALL_FRAG,
+    uniforms: { uCivTime: U.uCivTime, uCivDay: U.uCivDay, uCivNight: U.uCivNight, uCivSkyZ: U.uCivSkyZ, uCivSkyH: U.uCivSkyH, uCivSunL: U.uCivSunL },
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.copy(ctx.M);
+  mesh.renderOrder = 2;
+  ctx.settlement.meshes.push(mesh);
+  return mesh;
 }

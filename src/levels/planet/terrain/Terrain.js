@@ -507,7 +507,13 @@ export default class Terrain {
     ss.reversed = rev;
     const texel = (2 * extent) / this._sunRT.width;
     const range = sc.far - sc.near;
-    this.uniforms.uSunVisParams.value.set(rev ? 1 : 0, (texel * 2.5 + 15) / range, texel * 1.2, 0);
+    // slope-scaled bias: at a low sun one coarse texel spans tens of metres of
+    // depth over flat ground → self-shadow acne reads as soft stripes across
+    // plains & dune fields. Scale bias / normal offset with tan(sun zenith).
+    const cl = center.length() || 1;
+    const se = (w.sunDir.x * center.x + w.sunDir.y * center.y + w.sunDir.z * center.z) / cl;
+    const tanZ = Math.min(8, Math.sqrt(Math.max(0, 1 - se * se)) / Math.max(0.12, se));
+    this.uniforms.uSunVisParams.value.set(rev ? 1 : 0, (texel * (2.5 + 1.2 * tanZ) + 15) / range, texel * (1.2 + 0.5 * tanZ), 0);
     this.uniforms.uSunVisOn.value = 1;
     ss.extent = extent;
   }

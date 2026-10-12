@@ -294,7 +294,8 @@ function conifer(P, rng) {
   const lc = new THREE.Color();
   const tierStart = P.clearTrunk ?? 0.22;
   for (let w = 0; w < whorls; w++) {
-    const t = tierStart + (1 - tierStart) * (w / whorls);
+    // irregular whorl spacing (no evenly stacked plates)
+    const t = Math.min(0.97, tierStart + (1 - tierStart) * ((w + (w ? (rng.float() - 0.5) * 0.7 : 0)) / whorls));
     const y = t * H;
     const reach = H * P.width * Math.pow(1 - t, P.shape ?? 0.95) * (0.85 + rng.float() * 0.3) + 0.4;
     const nb = Math.max(3, Math.round(P.perWhorl * (1 - t * 0.4)));
@@ -331,7 +332,7 @@ function conifer(P, rng) {
         const bd = pts[pIdx + 1].clone().sub(pts[pIdx]).normalize();
         const side = new V().crossVectors(bd, UP).normalize();
         const ay = bd.clone();
-        const ax = side.clone().applyAxisAngle(bd, (rng.float() - 0.5) * 0.5);
+        const ax = side.clone().applyAxisAngle(bd, (rng.float() - 0.5) * (pad ? 0.5 : 1.1));
         lc.copy(P.leafCol).offsetHSL((rng.float() - 0.5) * 0.02, 0, (rng.float() - 0.5) * 0.07);
         if (P.snow && rng.float() < P.snow) lc.lerp(new THREE.Color(0.85, 0.88, 0.92), 0.65);
         const s = P.leafSize * (1.05 - f * 0.35) * (pad ? 1.15 : 0.85);
@@ -343,7 +344,10 @@ function conifer(P, rng) {
           continue;
         }
         card(L, o, ax, ay, s * 1.0, s * 1.1, TILE.needle, lc, canopy, H, 0.5);
-        const roll = 1.0 + rng.float() * 0.3;
+        // drooping curtain spray: fills the vertical gaps between whorls so the
+        // side silhouette reads as a soft bough mass, not stacked flat plates
+        if (rng.float() < 0.45) card(L, o.clone().addScaledVector(UP, -0.28 * s), side, bd.clone().multiplyScalar(0.45).addScaledVector(UP, -0.9).normalize().negate(), s * 0.85, s * 0.9, TILE.needle, lc.clone().multiplyScalar(0.85), canopy, H, 0.5);
+        const roll = 0.75 + rng.float() * 0.6;
         card(L, o.clone().addScaledVector(UP, 0.06 * s), ax.clone().applyAxisAngle(bd, roll), ay, s * 0.8, s * 0.95, TILE.needle, lc, canopy, H, 0.5);
         if (pad || rng.float() < 0.6) card(L, o.clone().addScaledVector(UP, 0.03 * s), ax.clone().applyAxisAngle(bd, -roll), ay, s * 0.8, s * 0.95, TILE.needle, lc, canopy, H, 0.5);
       }

@@ -290,7 +290,7 @@ void main(){
       float rift = smoothstep(0.05, 0.35, lanes) * exp(-dg.y * dg.y / 0.0016);
       float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
       float mott = 0.8 + 0.4 * smoothstep(-0.5, 0.8, snoise(dc * 40.0));
-      float absorb = clamp(rift * 0.92 + patchy * (1.0 - rift), 0.0, 0.94);
+      float absorb = clamp(rift * 0.96 + patchy * 1.35 * (1.0 - rift), 0.0, 0.97);
       galD *= mix(1.0, (1.0 - absorb) * mott, bandM);
       // dust reddens what it does not block
       galD *= mix(vec3(1.0), vec3(1.04, 0.98, 0.92), absorb * bandM);
@@ -552,7 +552,9 @@ export default class Sky {
     const night = 1 - THREE.MathUtils.smoothstep(sunEl, -0.16, 0.04);
     const space = m.present ? THREE.MathUtils.smoothstep(alt, m.thickness * 0.8, m.thickness * 2.0) : 1;
     u.uStarVis.value = Math.max(night, space);
-    u.uGalaxyGain.value = this.galaxyGain ?? 0.48;
+    // the band is the centrepiece of a dark night (adapted eye); beside a sunlit planet it fades
+    const deepNight = night * (1 - THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2) * space);
+    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.48, 1.45, deepNight * (1 - space * 0.5));
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);

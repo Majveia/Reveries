@@ -423,22 +423,23 @@ const FRAG_SURFACE = /* glsl */`
     // ~12 cm wind ripples; a 1 m phase warp makes them bifurcate (Y-junctions)
     vec4 wf = octW( 1.0 / 8.0, pix ) > 0.0 ? nA( D.yzx + 7.0, 1.0 / 8.0 ) : vec4( 0.0 );
     vec4 wl4 = nA( D.zxy + 13.0, 1.0 / 32.0 );
-    float lam = 0.11 * ( 1.0 + 0.45 * wl4.w );   // 6–16 cm ripples, coarser in patches
+    float lam = 0.16 * ( 1.0 + 0.5 * wl4.w );   // 8–24 cm ripples, coarser in patches
     float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + dot( D, wb ) * 0.2;
     vec4 wq2 = nA( D.zxy + 5.0, 1.0 / 64.0 );
-    float ph2 = dot( D, wt ) / 1.6 + wq.w * 1.6 + wq2.w * 3.0 + dot( D, wb ) * 0.05;
+    float lam2 = 1.6 * ( 1.0 + 0.35 * wl4.w );
+    float ph2 = dot( D, wt ) / lam2 + wq.w * 2.6 + wq2.w * 4.5 + dot( D, wb ) * ( 0.05 + 0.12 * wq2.w );
     float f1 = fract( ph1 ), f2 = fract( ph2 );
     // asymmetric profile: long stoss slope, steep lee face
     float p1 = f1 < 0.75 ? f1 / 0.75 : ( 1.0 - f1 ) / 0.25;
     float d1 = f1 < 0.75 ? 1.0 / 0.75 : -1.0 / 0.25;
     float p2 = f2 < 0.7 ? f2 / 0.7 : ( 1.0 - f2 ) / 0.3;
-    float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3;
+    float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3; d2 /= lam2 / 1.6;
     // ripples die on slip faces and on the knife-edge brink (cav < 0.5 → convex)
     float crestF = smoothstep( 0.47, 0.4, cav );
-    float w1 = octW( 1.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) );
+    float w1 = octW( 3.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) );
     // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
-    float w2 = octW( 1.0 / 12.0, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( -0.1, 0.55, wq2.w + wq.w * 0.3 );
-    gSand += wt * ( d1 / lam ) * 0.0032 * w1 + wt * ( d2 / 1.6 ) * 0.03 * w2;
+    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.15, 0.7, wq2.w + wq.w * 0.35 ) * 0.7;
+    gSand += wt * ( d1 / lam ) * 0.0026 * w1 + wt * ( d2 / 1.6 ) * 0.02 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1;
     w = octW( 0.25, pix );
@@ -459,7 +460,7 @@ const FRAG_SURFACE = /* glsl */`
   rockCol *= 0.78 + 0.32 * ( macro * 0.5 + 0.5 ) + 0.18 * hRock;
   rockCol *= 1.0 - crack * 0.55;
   // wind-blown dust settles on flat rock in sandy worlds (desert pavement)
-  rockCol = mix( rockCol, uSand * ( 0.86 + 0.1 * meso ), ( 1.0 - smoothstep( 0.06, 0.3, slope ) ) * 0.7 * uStyleA.w * ( 1.0 - crack * 0.6 ) );
+  rockCol = mix( rockCol, uSand * ( 0.86 + 0.1 * meso ), ( 1.0 - smoothstep( 0.08, 0.34, slope ) ) * ( 0.7 + 0.2 * step( 0.99, uStyleA.w ) ) * uStyleA.w * ( 1.0 - crack * 0.6 ) );
   // dark streaks down the walls, pale dry crowns
   float streak = clamp( 0.5 - hRock * 0.9, 0.0, 1.0 ) * uStyleA.z * smoothstep( 0.3, 0.7, slope );
   rockCol *= 1.0 - streak * ( 0.25 + 0.3 * uStyleA.z );
@@ -526,6 +527,36 @@ const FRAG_SURFACE = /* glsl */`
     float gl = dot( grassCol, vec3( 0.2126, 0.7152, 0.0722 ) );
     grassCol *= clamp( 0.075 / max( gl, 1e-3 ), 1.0, 1.7 );
   }
+  // ---- near-field ground cover (0.1–1 m): the earth between the grass blades ----
+  // clumps of turf with dark soil gaps, leaf litter / dry thatch specks and
+  // small embedded stones, so sparse grass reads as ground, not paint.
+  float stoneN = 0.0;
+  {
+    float wc = octW( 1.0 / 4.0, pix );
+    if ( wc > 0.0 ) {
+      vec4 cl = nB( D.zxy + 31.0, 1.0 / 4.0 );           // ~0.5 m turf clumps
+      float gap = smoothstep( 0.1, 0.0, cl.y ) * ( 0.55 + 0.45 * smoothstep( 0.3, 0.7, cl.z ) );
+      vec3 dirt = mix( uSoil * 0.7, uSoil * vec3( 1.05, 0.95, 0.85 ), cl.w );
+      grassCol *= 1.0 + ( cl.z - 0.5 ) * 0.22 * wc;           // clump-to-clump value jitter
+      grassCol = mix( grassCol, grassCol * vec3( 1.12, 1.06, 0.8 ), smoothstep( 0.7, 0.95, cl.z ) * 0.5 * wc );
+      grassCol = mix( grassCol, dirt, gap * 0.75 * wc );
+      float wl = octW( 1.0 / 1.5, pix );
+      if ( wl > 0.0 ) {
+        vec4 lt = nB( D.yzx + 3.0, 1.0 / 1.5 );          // ~19 cm litter flakes
+        float leaf = smoothstep( 0.22, 0.1, lt.x ) * step( 0.72, lt.z ) * wl;
+        vec3 leafC = mix( uGround3 * vec3( 1.2, 0.95, 0.6 ), uSoil * vec3( 1.5, 1.1, 0.75 ), fract( lt.z * 7.3 ) );
+        grassCol = mix( grassCol, leafC, leaf * 0.7 );
+      }
+      float ws = octW( 1.0 / 2.0, pix );
+      if ( ws > 0.0 ) {
+        vec4 sn = nB( D + 17.0, 1.0 / 2.0 );             // ~25 cm cells, sparse pebbles
+        float st = smoothstep( 0.3, 0.18, sn.x ) * step( 0.86, sn.z ) * ws;
+        stoneN = st;
+        vec3 pebC = mix( uRockA, uRockB, fract( sn.z * 13.1 ) ) * ( 0.75 + 0.5 * smoothstep( 0.3, 0.0, sn.x ) );
+        grassCol = mix( grassCol, pebC, st );
+      }
+    }
+  }
   // aspect: equator-facing slopes sun-baked (warmer, drier), pole-facing lush & cool
   {
     vec3 tg = Ng - up * dot( Ng, up );
@@ -544,7 +575,7 @@ const FRAG_SURFACE = /* glsl */`
   vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.035 * rippleShade );
   // troughs: darker, redder (iron-stained, coarse lag); crests paler & finer
   float trough = smoothstep( 0.52, 0.62, cav );
-  sandCol = mix( sandCol, sandCol * vec3( 0.86, 0.74, 0.64 ), trough * 0.6 );
+  sandCol = mix( sandCol, sandCol * vec3( 0.92, 0.84, 0.77 ), trough * 0.45 );
   sandCol *= 1.0 + 0.06 * meso;
   // lee (slip) faces: finer, darker avalanche sand; crests catch light
   sandCol *= 1.0 - 0.09 * leeF;
@@ -557,6 +588,7 @@ const FRAG_SURFACE = /* glsl */`
   vec3 albedo = mix( grassCol, soilCol, wSoil );
   vec3 gN = gSoil * ( 1.0 + 0.6 * wSoil );
   float rough = mix( 0.92, 0.95, wSoil );
+  rough = mix( rough, 0.72, stoneN * ( 1.0 - wSoil ) );
   float wSand = sandW > 0.004 ? hblend( sandW, hSand * 0.2, hGrass * 0.2, 0.35 ) : 0.0;
   albedo = mix( albedo, sandCol, wSand );
   gN = mix( gN, gSand, wSand );

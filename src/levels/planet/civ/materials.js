@@ -402,7 +402,7 @@ void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, 
     float st = cluster * mix(0.55, 1.0, mix(drip, 0.5, far));
     float fromTop = clamp((H - uv.y) / max(H, 1.0), 0.0, 1.0);
     float streak = st * (1.0 - smoothstep(0.0, 0.85, fromTop) * 0.6) * step(uv.y, H);
-    float k = id == 6 ? 0.42 : (id == 17 ? 0.22 : 0.3);
+    float k = id == 6 ? 0.12 : (id == 17 ? 0.16 : 0.3);
     s.alb *= 1.0 - k * streak * mix(1.0, 0.6, far);
     s.rough = mix(s.rough, s.rough * 0.85, streak * 0.4);
     // ground-contact band: damp/moss in green worlds, sand drift in deserts
@@ -602,9 +602,14 @@ CivS civSurface(){
     float big = civF2(uv * 0.06 + seed * 3.0);
     float streak = civN2(vec2(uv.x * 0.21 + seed * 7.0, uv.y * 0.02)) * (0.7 + 0.3 * civN2(vec2(uv.x * 3.3, uv.y * 0.07)));
     // wind-scoured horizontal strata: pale sand-blasted bands and darker sheltered lifts
-    float strata = civN2(vec2(uv.x * 0.015 + seed, uv.y * 0.32));
+    // (sediment layers read horizontally; vertical run-off is kept faint so slabs never look like woodgrain)
+    float strata = civN2(vec2(uv.x * 0.015 + seed, uv.y * 0.32)) * 0.65 + civN2(vec2(uv.x * 0.04 - seed, uv.y * 1.1)) * 0.35;
     float lift = civLines(uv.y + 0.03, 6.0, 0.06, fw.y);
-    s.alb *= 0.8 + 0.3 * big - 0.16 * smoothstep(0.55, 0.9, streak) + 0.12 * (strata - 0.5);
+    // macro value variation over 20-40 m: colossal surfaces must not read as one flat tone
+    float macro = civF2(vec2(uv.x * 0.028, uv.y * 0.045) + seed * 5.0);
+    s.alb *= 0.62 + 0.5 * macro + 0.14 * big - 0.05 * smoothstep(0.55, 0.9, streak) + 0.22 * (strata - 0.5);
+    // wind-scoured, sun-bleached upper edges of every lift
+    s.alb *= 1.0 + 0.16 * (1.0 - smoothstep(0.0, 1.6, H - uv.y)) * step(uv.y, H);
     s.alb *= 1.0 - 0.35 * lift;
     s.alb = mix(s.alb, s.alb * 0.6, seams + tie * 0.5);
     float sand = 1.0 - smoothstep(0.0, 2.0 + 3.0 * civN2(vec2(uv.x * 0.12, seed)), uv.y);

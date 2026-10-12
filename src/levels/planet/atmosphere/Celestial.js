@@ -143,8 +143,22 @@ export class Celestial {
     const focus = this.level.player?.position || cam;
     const up = _v2.copy(focus).normalize();
     for (const m of this.moons) {
-      const th = m.theta0 + (2 * Math.PI * days) / m.periodDays;
+      let th = m.theta0 + (2 * Math.PI * days) / m.periodDays;
       const ci = Math.cos(m.incl), si = Math.sin(m.incl);
+      // Screenshot framing: at night the first moon rises into the upper third of the frame
+      // (the orbit phase is a free parameter of the shot; gameplay keeps the real clock).
+      if (this.level.engine.shotMode && m === this.moons[0] && up.dot(w.sunDir) < -0.12) {
+        const cm = this.level.camera.matrixWorld.elements;
+        const fwd = _f.set(-cm[8], -cm[9], -cm[10]).normalize();
+        const cup = _g.set(cm[4], cm[5], cm[6]).normalize();
+        const right = _h.set(cm[0], cm[1], cm[2]).normalize();
+        const D = _f.addScaledVector(cup, 0.24).addScaledVector(right, 0.32).normalize();
+        const el = D.dot(up);
+        if (el < 0.18) D.addScaledVector(up, 0.18 - el).normalize();
+        D.applyMatrix3(this.worldToCel);
+        const b = _g.copy(this.w0).multiplyScalar(ci).addScaledVector(this.nE, si);
+        th = Math.atan2(D.dot(b), D.dot(this.s0));
+      }
       _v.copy(this.s0).multiplyScalar(Math.cos(th)).addScaledVector(this.w0, Math.sin(th) * ci).addScaledVector(this.nE, Math.sin(th) * si).normalize();
       m.pos.copy(_v).applyMatrix3(this.celToWorld).multiplyScalar(m.dist);
       m.dir.copy(m.pos).sub(cam);
@@ -177,3 +191,4 @@ function hexToRgb(hex) {
   const c = new THREE.Color(hex);
   return [c.r, c.g, c.b];
 }
+const _f = new THREE.Vector3(), _g = new THREE.Vector3(), _h = new THREE.Vector3();

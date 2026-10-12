@@ -395,6 +395,7 @@ export class Settlement {
     const lod = camDist < detailR ? 'detail' : camDist < 90000 ? 'far' : 'none';
     this.setLOD(lod);
     if (!this.built || lod !== 'detail') return;
+    if (this.trees?.route && !this._treesRouted) this._treesRouted = this.trees.route(this.level);
     const sunL = this.frame.sunLocal(this.world.sunDir, this.uniforms.uCivSunL.value);
     this.shadow.update(sunL, this.level.engine.shotMode && !this._shotShadowDone);
     if (this.level.engine.shotMode) this._shotShadowDone = true;

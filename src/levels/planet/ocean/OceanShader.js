@@ -414,7 +414,7 @@ void main(){
   vec3 col = albedo * (Es * NL + uSkyIrr) / 3.14159;
   col += Es * ggxD(max(dot(N, H2), 0.0), rough) * visSmith(NL, NV, rough) * fresnel(dot(V, H2), 0.05) * NL;
   vec3 R = reflect(-V, N); R -= n0 * 2.0 * min(dot(R, n0), 0.0);
-  col += skyRadiance(R, n0) * fresnel(NV, 0.045) * mix(0.25, 0.8, glassy);
+  col += skyRadiance(R, n0) * fresnel(NV, 0.045) * mix(0.12, 0.6, glassy);
   // the glowing sea reflected in the glassy crust: at grazing angles the
   // obsidian mirrors the incandescent horizon
   float hor = exp(-max(dot(R, n0), 0.0) * 9.0);

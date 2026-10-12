@@ -223,11 +223,14 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
     float dm = mix(df, 1.0 - df, clamp(h * 4.0, 0.0, 1.0));
     // strong erosion: the coverage ramp is steep at the margins, so a weak threshold only
     // nibbles a thin rim; 0.8 lets the billows bite into the silhouette
-    c = cRemap(c, dm * 0.8, 1.0, 0.0, 1.0);
+    // Nubis dimensional profile: erode gently (wispy base 0.35 → billowy top 0.5) and mostly where
+    // the base shape is thin, so cores stay solid bodies instead of rims / crescent strokes
+    float ek = mix(0.35, 0.5, h) * mix(1.0, 0.45, smoothstep(0.45, 0.85, c));
+    c = cRemap(c, dm * ek, 1.0, 0.0, 1.0);
   }
   // crisp cauliflower edges: steepen the density ramp; denser, darker bases where it rains
   c = max(c, 0.0);
-  return min(c * 2.2, 1.0 + c) * (1.0 + wx.b * 0.8);
+  return min(c * 1.7, 1.0 + c) * (1.0 + wx.b * 0.8);
 }
 float cloudDensity(vec3 P, float lod){ return cloudDensityW(P, cloudWeather(P), lod); }
 // Projected layer (seen from orbit): the weather coverage eroded on the sphere

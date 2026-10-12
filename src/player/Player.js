@@ -778,7 +778,7 @@ export default class Player {
       this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);
       cam.view = 'first';
-      cam.snap(this.ctl.pos, up, siteDir, 0.05);
+      cam.snap(this.ctl.pos, up, siteDir, 0.1); // horizon low: settlement + sky dominate
     } else if (name === 'vista') {
       this.shotPose = { state: 'ground', speed: 0, look: [0.35, 0.08] };
       this.ctl.setFacing(turn(siteDir, 0.15));

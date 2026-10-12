@@ -289,7 +289,7 @@ void main(){
 // Weather presets → cloud field.
 export const CLOUD_PRESETS = {
   clear: { coverage: 0.34, type: 0.35, wet: 0.0, bands: 0.5, density: 0.035 },
-  cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.045 },
+  cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.032 },
   rain: { coverage: 0.72, type: 0.75, wet: 0.7, bands: 0.5, density: 0.06 },
   storm: { coverage: 0.8, type: 0.95, wet: 0.9, bands: 0.4, density: 0.07 },
   fog: { coverage: 0.38, type: 0.3, wet: 0.15, bands: 0.4, density: 0.04 },

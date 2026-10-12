@@ -73,7 +73,7 @@ void main(){
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
   vec3 T = vec3(1.0);
-  const vec3 KRGB = vec3(0.8, 1.0, 1.22);   // wavelength-dependent extinction: lane edges redden
+  const vec3 KRGB = vec3(0.62, 1.0, 1.45);   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
@@ -88,12 +88,22 @@ void main(){
     float tmin = 0.012;
     float span = t1 - t0;
     float G = inside ? log(1.0 + span / tmin) : 0.0;
+    // outside the slab: importance-sample the vertical structure (steps at equal increments of a
+    // sech² cumulative centred on the midplane, blended with uniform steps) so the bulge/lane
+    // crossing is resolved finely and no curtain striations appear
+    float hS = uHOld * 0.9;
+    float ca = galCum(ro.y + rd.y * t0, hS), cb = galCum(ro.y + rd.y * t1, hS);
+    float wImp = (!inside && abs(cb - ca) > 0.15 && abs(rd.y) > 1e-4) ? 0.72 : 0.0;
     float ta = t0;
     for (int i = 0; i < 160; i++) {
       if (float(i) >= N) break;
       float u = min((float(i) + 1.0 + (jit - 0.5) * 0.9) / N, 1.0);
       if (i == int(N) - 1) u = 1.0;
       float tb = inside ? t0 + tmin * (exp(G * u) - 1.0) : t0 + span * u;
+      if (wImp > 0.0) {
+        float yc = hS * atanh(clamp(2.0 * mix(ca, cb, u), -0.99999, 0.99999));
+        tb = mix(tb, clamp((yc - ro.y) / rd.y, t0, t1), wImp);
+      }
       tb = min(tb, t1);
       vec3 pa = ro + rd * ta, pb = ro + rd * tb;
       vec3 pm = 0.5 * (pa + pb);
@@ -119,6 +129,12 @@ void main(){
         dIn = mix(det * det * 1.3, (0.04 + cl * cl * 9.0) * (0.5 + c2.b), 1.0 - smoothstep(0.8, 2.0, tm));
       }
       float tau = m.b * pD * seg * uKappa * mix(det, dIn, uInside);
+      // extraplanar dust: sparse filaments and plumes rising off the plane (NGC 891 / Sombrero)
+      if (uInside < 0.5) {
+        float xn = texture(uNoise, pm * vec3(0.22, 0.6, 0.22) + 0.31).b;
+        float xn2 = texture(uNoise, pm * vec3(0.9, 1.8, 0.9) + 0.57).r;
+        tau += m.b * galSeg(pa.y, pb.y, uHDust * 4.0) * seg * uKappa * pow(xn, 5.0) * (0.4 + xn2) * 0.9;
+      }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
       vec3 j = (m.r * uColYoung * pY * uYoungGain + m.g * cOld * (pO + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 1.6 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit;
@@ -158,10 +174,19 @@ void main(){
     // direction-locked (no swimming) sparkle field modulates the diffuse light (mean ≈ 1)
     vec4 cp = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
     vec3 rd = normalize((uViewInv * vec4(normalize(cp.xyz / cp.w), 0.0)).xyz);
-    vec3 cell = floor(rd * uGrainK);
-    float h = h13(cell), h2 = h13(cell + 17.3);
-    float s = pow(h, 14.0) * 6.0 + pow(h2, 2.0) * 0.75;
-    v.rgb *= mix(1.0, 0.35 + s, uGrain);
+    // analytic point-spread stars (≥1.2 px Gaussian, lognormal-ish fluxes): no per-pixel hash
+    float s = 0.0;
+    for (int l = 0; l < 2; l++) {
+      float K = uGrainK * (l == 0 ? 0.3 : 0.17);
+      vec3 g = rd * K, cell = floor(g);
+      vec3 j = vec3(h13(cell), h13(cell + 5.1), h13(cell + 9.7));
+      vec3 sp = cell + 0.5 + (j - 0.5) * 0.6;
+      vec3 dd = g - sp; dd -= rd * dot(dd, rd);
+      float px = length(dd) / K * (uGrainK);                 // distance in pixels
+      float f = step(0.72, h13(cell + 6.1)) * exp(-5.0 * h13(cell + 2.3)) * (l == 0 ? 6.0 : 20.0);
+      s += f * exp(-px * px / (2.0 * 0.75 * 0.75));
+    }
+    v.rgb *= mix(1.0, 0.8 + s * 0.6, uGrain);
   }
   gl_FragColor = vec4(c * v.a + v.rgb, 1.0);
 }`;
@@ -174,7 +199,7 @@ export class GalaxyVolume {
     const q = engine.quality;
     this.scale = engine.shotMode ? 0.85 : q.pick(0.33, 0.4, 0.5, 0.6);
     this.baseScale = this.scale;
-    this.steps = engine.shotMode ? 110 : q.pick(32, 44, 60, 80);
+    this.steps = engine.shotMode ? 88 : q.pick(32, 44, 60, 80);
     const mapSize = mapRT.width;
     this.march = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: MARCH_FRAG, depthTest: false, depthWrite: false,
@@ -185,8 +210,8 @@ export class GalaxyVolume {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
         uBulgeDim: { value: 1 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.48 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
-        uColYoung: { value: new THREE.Color(0.42, 0.6, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.66 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 30.0 },
+        uColYoung: { value: new THREE.Color(0.33, 0.53, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.22, 0.38) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
         uColDustGlow: { value: new THREE.Color(0.007, 0.0045, 0.0038) },
       },

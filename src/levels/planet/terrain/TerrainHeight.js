@@ -353,10 +353,16 @@ export function createTerrain(p) {
           const wgt = (ax ? sx : 1 - sx) * (ay ? sy : 1 - sy) * (az ? sz : 1 - sz);
           if (wgt < 1e-4) continue;
           const ph0 = n.hashU(ix + ax, iy + ay, iz + az, 5 + i) * 6.2832;
-          gs += wgt * Math.cos(((fx - ax) * qx + (fy - ay) * qy + (fz - az) * qz) * 2.0 * Math.PI + ph0);
+          // per-cell strength → irregular drainage density (no uniform comb)
+          const amp = 0.35 + 0.65 * n.hashU(ix + ax, iy + ay, iz + az, 17 + i);
+          gs += wgt * amp * Math.cos(((fx - ax) * qx + (fy - ay) * qy + (fz - az) * qz) * 2.0 * Math.PI + ph0);
         }
         const steep = Math.min(1, Math.sqrt(g2) * 0.8);
-        o = lerp(v, -Math.abs(gs) * 0.9 + 0.35, gully * steep);
+        // V-shaped gullies (the |.| kink sits in the channel floor) between
+        // rounded interfluve spurs — the inverse would sharpen the spurs into
+        // a row of knife teeth along every ridge
+        const ag = Math.sqrt(gs * gs + 0.004);
+        o = lerp(v, ag * 1.1 - 0.55, gully * steep);
       }
       s += a * b * o / (1 + erosion * g2);
       norm += a; a *= gain; f *= lac; wl /= lac;
@@ -727,7 +733,7 @@ export function createTerrain(p) {
       // escarpment risers, the plateau rims and scattered outcrops
       const outcrop = smoothstep(0.7, 0.84, fbmM(nD, X, Y, Z, 160, 2, 2.0, 0.5, 2.2, -1.4, 0.3) * 0.5 + 0.5 + rr * 0.2);
       const rim = 1 - smoothstep(0.0, 0.25, up);
-      const rocky = exposed * clamp01(Math.max(riser * 1.5, outcrop, rim * 0.6));
+      const rocky = exposed * clamp01(Math.max(riser * 1.5, outcrop * 0.55, rim * 0.35));
       S.rock = rocky; S.sand = 1 - rocky;
     }
     // slip faces: soft sand, flagged for the material (cliff channel unused on sand)
@@ -761,7 +767,7 @@ export function createTerrain(p) {
       // a dissolution moat at the foot. All in a height field → no overhangs,
       // but the stepped silhouette reads as fractured bedded rock.
       const lobe = fbmM(nW, X, Y, Z, 150, 2, 2.0, 0.5, 3.3, -1.7, 0.6); // [-1,1]
-      const wobM = fbmM(nD, X, Y, Z, 34, 2, 2.0, 0.5, 0, 0, 0) * 2.6 + fbmM(nD, X, Y, Z, 11, 2, 2.0, 0.5, 1.7, 0, -2.1) * 0.7;
+      const wobM = fbmM(nD, X, Y, Z, 34, 2, 2.0, 0.5, 0, 0, 0) * 4.2 + fbmM(nD, X, Y, Z, 11, 2, 2.0, 0.5, 1.7, 0, -2.1) * 1.1;
       const crownN = fbmM(nD, X, Y, Z, 45, 2, 2.0, 0.5, -4.4, 2.2, 0);
       KT.t = 1; KT.tread = 0;
       const tower = (cellSz, rad, Ht, nT, sr, sk, ra2) => {
@@ -770,7 +776,7 @@ export function createTerrain(p) {
         const ln = lx * x + ly * y + lz * z; lx -= ln * x; ly -= ln * y; lz -= ln * z;
         const ll = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1, lean = rad * 0.28 * (0.3 + 0.7 * ra2) / ll;
         lx *= lean; ly *= lean; lz *= lean;
-        const warp = (lobe * 0.3 * rad + wobM / cellSz) ; // cells
+        const warp = (lobe * 0.5 * rad + wobM / cellSz) ; // cells (lobed, split outlines)
         const ws0 = LS * 1.6 / (rad * cellSz);
         let v = -1e9, tBest = 1, tread = 0, t0 = 1;
         for (let i = 0; i < nT; i++) {

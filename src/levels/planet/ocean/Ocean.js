@@ -447,10 +447,16 @@ export default class Ocean {
             const inland = H(p) - camD.h;
             p.copy(up).multiplyScalar(R).addScaledVector(seaH, 40).normalize();
             const seabed = camD.h - H(p);
+            p.copy(up).multiplyScalar(R).addScaledVector(seaH, 90).normalize();
+            const seabed90 = camD.h - H(p);
             const slope = Math.max(0, inland) / 40 + Math.max(0, seabed - 6) / 40;
+            // …but not a tidal flat either: the sea must deepen to a few metres
+            // within ~40–90 m so swell shoals and breaks in the middle distance
+            // (on a flat the water is a glassy film and no surf ever forms)
+            const flat = Math.max(0, 2.5 - seabed) / 2.5 + Math.max(0, 5 - seabed90) / 5;
             const t = goldenTime(up);
             const sunH = w.sunDir.clone().addScaledVector(up, -w.sunDir.dot(up)).normalize();
-            cands.push({ dir: up.clone(), h: camD.h, seaH, sunH, t, slope });
+            cands.push({ dir: up.clone(), h: camD.h, seaH, sunH, t, slope, flat: lava ? 0 : flat });
             break;
           }
           if (h < sea - 0.5) break;

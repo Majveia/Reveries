@@ -88,7 +88,9 @@ vec3 field(vec3 x){
     float above = -hg;
     gas *= smoothstep(0.0, 0.12, above);
     // photo-evaporating skin of ionized gas hugging the cliff surface
-    skin = e * smoothstep(-0.01, 0.015, above) * exp(-max(above, 0.0) / 0.045) * (0.5 + gasW);
+    // crisp ionization-front skin, broken into bright knots by the ridged detail
+    float kn = nz(RT * xw * 9.0 + SP * 0.7).b;
+    skin = e * smoothstep(-0.006, 0.006, above) * (exp(-max(above, 0.0) / 0.014) * 1.6 + exp(-max(above, 0.0) / 0.06) * 0.25) * (0.25 + 1.4 * kn * kn);
   } else if (uKind < 2.5) {
     vec3 sd = x - STAR; float rs = length(sd);
     float shd = (rs - 0.58 - (gasN - 0.5) * 0.4) / 0.07; float sh = exp(-shd * shd);
@@ -100,7 +102,7 @@ vec3 field(vec3 x){
     dust = dustF(x);
   }
   // hot, diffuse OIII-bright cavity carved by the cluster's winds and UV
-  if (uKind < 1.5) gas += e * e * smoothstep(0.85, 0.2, length(x - STAR)) * (0.1 + 1.2 * gasF * gasF) * smoothstep(0.0, 0.15, -cliffH(xw)) * 0.22;
+  if (uKind < 1.5) gas += e * e * smoothstep(0.95, 0.1, length(x - STAR)) * (0.15 + 1.3 * gasF * gasF) * smoothstep(0.0, 0.15, -cliffH(xw)) * 0.75;
   gas *= smoothstep(0.06, 0.3, length(x - STAR));   // ionized, cleared cavity right at the cluster
   return vec3(gas, dust, skin);
 }
@@ -135,9 +137,9 @@ void main(){
     vec3 toS = sd / max(rs, 1e-4);
     // short light march toward the cluster (dust only): shadows, rays, lit faces
     float occ = dustF(x + toS * 0.025) * 0.025 + dustF(x + toS * 0.07) * 0.045 + dustF(x + toS * 0.16) * 0.09 + dustF(x + toS * 0.32) * 0.16;
-    float tr = exp(-occ * 45.0);
+    float tr = exp(-occ * 68.0);
     float I = tr / (0.25 + rs * rs * 2.5);
-    float ion = smoothstep(0.75, 0.15, rs);
+    float ion = smoothstep(0.9, 0.15, rs);
     // Henyey-Greenstein forward scattering (g = 0.6)
     float cth = dot(rdl, -toS) * -1.0;
     float hg = 0.0509 * (1.0 - 0.36) / pow(1.0 + 0.36 - 1.2 * cth, 1.5) * 12.566;
@@ -147,8 +149,8 @@ void main(){
     e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.35) * 3.4;               // ionization front
     float sigD = dust * 55.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
-    e += sigD * I * vec3(1.0, 0.55, 0.3) * 0.15 * (0.35 + hg);
-    e += sigD * vec3(0.9, 0.42, 0.24) * 0.014 * (0.3 + ion);                      // diffuse nebular light on shadowed dust
+    e += sigD * I * vec3(1.0, 0.6, 0.3) * 0.15 * (0.35 + hg);
+    e += sigD * vec3(0.9, 0.3, 0.2) * 0.012 * (0.3 + ion);                       // Hα-reddened light on shadowed dust                      // diffuse nebular light on shadowed dust
     float sigma = sigD + gas * 0.35 + skin * 0.2;
     float a = exp(-sigma * stepU);
     col += T * e * (sigma > 1e-3 ? (1.0 - a) / sigma : stepU);

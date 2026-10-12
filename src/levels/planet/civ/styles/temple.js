@@ -33,7 +33,7 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.4;
+export const shotSun = 0.17; // golden hour through the mist
 export const lightsEarly = 0.34; // lanterns lit in the mist of the late afternoon
 export const shot = { dist: 0.56, height: 60, sunAngle: 1.7, lmLift: 0.3, sunPref: 1.8 };
 

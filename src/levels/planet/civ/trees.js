@@ -216,5 +216,42 @@ export function plantTrees(settlement, ctx) {
     settlement.meshes.push(mesh);
     meshes.push(mesh);
   }
-  return { meshes, dispose() { for (const m of meshes) { m.geometry.dispose(); m.parent?.remove(m); } } };
+  // Hand the trees to the flora module when it grows a matching species, so village trees share
+  // the world's real tree models (branching, leaf cards, wind, impostors) instead of blob crowns.
+  // Flora initialises in parallel, so this is retried from Settlement.update until flora is ready.
+  const byKind = {};
+  for (const m of meshes) byKind[m.name.slice(10)] = m;
+  let routed = false, tries = 0;
+  const route = (level) => {
+    if (routed) return true;
+    const fl = level.flora, sp = fl?.trees?.species;
+    if (!sp?.length) {
+      // no flora trees on this world (or flora failed): keep our own after a grace period
+      if (++tries > 600 || (fl && !fl.trees && fl.ready !== false && tries > 120)) routed = true;
+      return routed;
+    }
+    const have = (k) => sp.some((x) => x.kind === k);
+    for (const kind of kinds) {
+      const cands = FLORA_MAP[kind] || [];
+      const fk = cands.find(have);
+      if (!fk) continue;
+      const list = spots[kind], out = [];
+      const K = FLORA_SCALE[kind] ?? 0.65;
+      for (let i = 0; i < list.length; i++) {
+        const [x, z, sc] = list[i];
+        out.push({ position: frame.point(x, z, frame.hAt(x, z) - 0.15).applyMatrix4(frame.matrix), kind: fk, scale: sc * K, seed: settlement.seed * 0.001 + i * 1.618 + x * 0.013 });
+      }
+      const n = fl.plant(out);
+      if (n > 0 && byKind[kind]) { byKind[kind].count = 0; byKind[kind].visible = false; }
+    }
+    routed = true;
+    return true;
+  };
+  return { meshes, route, dispose() { for (const m of meshes) { m.geometry.dispose(); m.parent?.remove(m); } } };
 }
+
+const FLORA_MAP = {
+  round: ['broad'], orchard: ['broad'], cypress: ['conifer', 'pine'], pine: ['pine', 'conifer'],
+  maple_red: ['maple'], maple_orange: ['maple'], golden: ['golden'], palm: ['palm'],
+};
+const FLORA_SCALE = { round: 0.62, orchard: 0.4, cypress: 0.62, pine: 0.7, maple_red: 0.78, maple_orange: 0.72, golden: 0.66, palm: 0.95 };

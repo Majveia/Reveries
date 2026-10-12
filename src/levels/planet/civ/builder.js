@@ -462,10 +462,12 @@ export class MeshBuilder {
       n1.copy(Math.abs(t.y) > 0.9 ? _v.set(1, 0, 0) : up).cross(t).normalize();
       n2.copy(t).cross(n1).normalize();
       if (i > 0) len += pts[i].distanceTo(pts[i - 1]);
+      // r may be a function of t (0 root … 1 tip) for tapered tubes (roots, branches)
+      const ri = typeof r === 'function' ? r(i / (pts.length - 1)) : r;
       for (let k = 0; k <= segs; k++) {
         const a2 = (k / segs) * Math.PI * 2, c = Math.cos(a2), s = Math.sin(a2);
         const nx = n1.x * c + n2.x * s, ny = n1.y * c + n2.y * s, nz = n1.z * c + n2.z * s;
-        this.v(pts[i].x + nx * r, pts[i].y + ny * r, pts[i].z + nz * r, nx, ny, nz, (k / segs) * 6.283 * r, len);
+        this.v(pts[i].x + nx * ri, pts[i].y + ny * ri, pts[i].z + nz * ri, nx, ny, nz, (k / segs) * 6.283 * ri, len);
       }
     }
     for (let i = 0; i < pts.length - 1; i++) for (let k = 0; k < segs; k++) {

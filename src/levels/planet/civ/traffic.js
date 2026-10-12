@@ -136,10 +136,12 @@ export class Traffic {
       return it;
     };
     const n = settlement.main ? q.pick(2, 3, 5, 6) : q.pick(1, 1, 2, 3);
+    // big sky actors: a few hero silhouettes at believable distances, never a crowded sky
+    const nSky = settlement.main ? q.pick(1, 2, 3, 3) : 1;
     if (style === 'pastoral' || style === 'gothic' || style === 'neon') {
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < nSky; i++) {
         const a = airship(rng, pal);
-        add(a.geo, loopCurve(frame, plan, rng, Rb * 0.6, Rb * 1.8, rng.range(110, 230), 0.15), rng.range(6, 10), { bank: 0.12 });
+        add(a.geo, loopCurve(frame, plan, rng, Rb * 0.9, Rb * 2.4, rng.range(140, 260), 0.15), rng.range(6, 10), { bank: 0.12 });
       }
     } else if (style === 'monolithic') {
       for (let i = 0; i < n + 1; i++) {
@@ -154,7 +156,7 @@ export class Traffic {
         }
       }
     } else if (style === 'organic') {
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < nSky; i++) {
         const j = jellyship(rng, pal);
         add(j.geo, loopCurve(frame, plan, rng, Rb * 0.5, Rb * 1.6, rng.range(70, 160), 0.3, 8), rng.range(3, 6), { bank: 0.05 });
       }

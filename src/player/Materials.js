@@ -108,7 +108,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
     uTime: { value: 0 },
     uGlow: { value: 0 },
     uDust: { value: new THREE.Color('#8a7a62') },
-    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(3.2) },
+    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(2.2) },
     uGlyph: { value: new THREE.Color(PALETTE.glyph).multiplyScalar(3.0) },
     uVisorGlow: { value: 1 },
     uJet: { value: 0 },
@@ -329,6 +329,8 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       // soft folds baked into the albedo
       float tone = 0.86 + 0.14 * rvFbm(vec3(across * 3.0, along * 6.0, 0.0));
       diffuseColor.rgb *= tone;
+      // reverse side: a darker, less saturated lining — twists read as two-sided cloth
+      if (!gl_FrontFacing) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11))), 0.25) * 0.66;
       // rolled hem: the edges fold over (darker, raised), giving the ribbon visible thickness
       float hemE = smoothstep(0.0, 0.055, min(across, 1.0 - across));
       diffuseColor.rgb *= mix(0.5, 1.0, hemE);

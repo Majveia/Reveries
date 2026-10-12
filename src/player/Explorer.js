@@ -291,6 +291,30 @@ function makePieces(spec, body) {
       seam: (x, y, z) => (y > 1.2 ? (Math.abs(x) < 0.09 ? x : (Math.abs(x) - 0.135)) : FAR),
     });
   }
+  // ---- canvas mantle: an asymmetric shoulder cape over the RIGHT shoulder (the camera side
+  // of the over-shoulder rig), under the pauldron — a soft, folded silhouette breaker that
+  // makes the figure read as a travelled explorer. Authored for +X, mirrored via mx = −x.
+  {
+    const hem = (x, z) => 1.305 - (x - 0.04) * 0.36 + 0.011 * Math.sin(Math.atan2(x, z + 0.02) * 7.0 + 0.6);
+    const base = (x, y, z) => smin(sdEllipsoid(x, y, z, 0.0, 1.31, -0.014, 0.19, 0.165, 0.13),
+      sdEllipsoid(x, y, z, 0.165, 1.418, -0.026, 0.092, 0.072, 0.094), 0.06);
+    const f = (xr, y, z) => {
+      const x = -xr;
+      const a = Math.atan2(x, z + 0.02);
+      const fold = 0.0055 * Math.sin(a * 6.0 + y * 18.0) + 0.003 * Math.sin(a * 13.0 - 1.1);
+      const d = shell(base(x, y, z) - fold, 0.02, 0.016);
+      let region = hem(x, z) - y;
+      region = Math.max(region, -0.075 - x); // left side only (diagonal from the neck)
+      region = Math.max(region, x - 0.272);
+      region = Math.max(region, 0.104 - Math.hypot(x * 1.05, z + 0.014) - Math.max(0, 1.4 - y)); // neck opening
+      return smax(d, region, 0.008);
+    };
+    pieces.push({
+      name: 'mantle', bone: B.chest, f, bounds: [-0.3, 1.18, -0.2, 0.11, 1.53, 0.18], h: 0.0065,
+      color: (x, y, z) => (y - hem(-x, z) < 0.016 ? PALETTE.webbing : PALETTE.canvas),
+      mat: () => [0.9, 0], line: () => FAR, seam: () => FAR,
+    });
+  }
   // ---- back plate (under the pack) ------------------------------------------------------
   {
     const f = (x, y, z) => {
@@ -579,13 +603,29 @@ function makePieces(spec, body) {
     };
     pieces.push({
       name: 'helmet', bone: B.head, f, bounds: [-0.19, 1.5, -0.17, 0.19, 1.84, 0.19], h: 0.006,
-      color: (x, y, z) => (y < 1.598 && z > 0.07 ? graphite : ivory), mat: (x, y, z) => (y < 1.598 && z > 0.07 ? [0.42, 0.5] : [0.28, 0.0]),
+      // two-tone shell: ivory crown, graphite chin + rear neck guard, gunmetal side pods and a
+      // signal-orange crest stripe — breaks the 'white ball' read from the 3/4-rear camera
+      color: (x, y, z) => {
+        const ax = Math.abs(x);
+        if (y < 1.598 && z > 0.07) return graphite;
+        if (ax > 0.118) return gun;
+        if (ax < 0.0105 && y > 1.73) return PALETTE.signal;
+        if (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6) return graphite;
+        return ivory;
+      },
+      mat: (x, y, z) => {
+        const ax = Math.abs(x);
+        if ((y < 1.598 && z > 0.07) || (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6)) return [0.42, 0.5];
+        if (ax > 0.118) return [0.36, 0.65];
+        return [0.28, 0.0];
+      },
       split: (x, y, z) => {
         const ax = Math.abs(x);
         const pod = Math.min(ax - 0.118, 0.022 - Math.hypot(y - 1.662, z + 0.004));
         const crest = Math.min(0.0105 - ax, y - 1.73);
         const chin = 1.57 - y;
-        return -Math.max(pod, crest, chin);
+        const rear = Math.min(-0.02 - z, 1.632 - (z + 0.02) * 0.6 - y); // graphite neck guard
+        return -Math.max(pod, chin, rear) + 0 * crest;
       },
       line: (x, y, z) => {
         if (x > 0.14) return Math.min(Math.hypot(y - 1.646, z - 0.026) - 0.0045, Math.hypot(y - 1.683, z - 0.062) - 0.006); // status LED + lens
@@ -651,11 +691,24 @@ function makePieces(spec, body) {
     };
     pieces.push({
       name: 'jetpack', bone: B.chest, f, bounds: [-0.2, 1.02, -0.3, 0.2, 1.5, 0.13], h: 0.0068,
-      color: (x, y) => (Math.abs(x) > 0.1 && y > 1.205 && y < 1.228 ? PALETTE.signal : y < 1.122 && Math.abs(x) > 0.08 ? HEAT : ivory),
-      mat: (x, y) => (y < 1.122 && Math.abs(x) > 0.08 ? [0.28, 0.85] : [0.31, 0.0]),
+      // ivory housing, gunmetal thruster pods with a signal band, graphite spine fins
+      color: (x, y, z) => {
+        const ax = Math.abs(x);
+        if (y < 1.122 && ax > 0.08) return HEAT;
+        if (ax > 0.1 && y > 1.205 && y < 1.228) return PALETTE.signal;
+        if (ax > 0.1 && z < -0.17) return gun;
+        if (ax < 0.06 && z < -0.248) return graphite;
+        return ivory;
+      },
+      mat: (x, y, z) => {
+        const ax = Math.abs(x);
+        if (y < 1.122 && ax > 0.08) return [0.28, 0.85];
+        if (ax > 0.1 && z < -0.17) return [0.36, 0.6];
+        if (ax < 0.06 && z < -0.248) return [0.45, 0.4];
+        return [0.31, 0.0];
+      },
       split: (x, y, z) => -Math.max(z + 0.16, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.125 - y),
       line: (x, y, z) => {
-        if (Math.abs(x) < 0.032 && z < -0.26 && y > 1.18 && y < 1.42) return Math.abs(x) - 0.006; // spine light
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth
         return FAR;
       },

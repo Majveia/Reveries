@@ -51,6 +51,7 @@ uniform float uMarchSky;
 uniform float uGroundShadow;
 uniform float uFrameJit;
 uniform float uAureole;
+uniform vec3 uFogGlow;   // emissive light (bioluminescent forests) scattered by the low haze
 varying vec2 vUv;
 
 // The sharp forward lobe of aerosols (sun/moon aureole) that the low-res sky-view LUT cannot resolve.
@@ -59,7 +60,7 @@ vec3 atmoAureole(vec3 ro, vec3 rd, float r){
   float h = max(r - uRb, 0.0);
   float mu = dot(up, rd);
   float col = uProfile2.y * exp(-h * uProfile.y) / uProfile.y / max(mu + 0.09, 0.09);
-  vec3 tau = uBetaMs * col;
+  vec3 tau = uBetaMs * col + uHazeTint * uHazeL.x * uHazeL.z * exp(-max(h - uHazeL.w, 0.0) * uHazeL.y) / uHazeL.y / max(mu + 0.05, 0.05);
   vec3 a = vec3(0.0);
   if (uSunE.r + uSunE.g + uSunE.b > 0.0) {
     float c = dot(rd, uSunDir);
@@ -103,15 +104,25 @@ void main(){
 #ifdef ATMO_SUN_SHADOW
     // decorrelate the shaft sampling per pixel (no stair-stepped rings)
     // (inside the air only; reduced amplitude so the ign pattern never reads as hatching)
-    if (inside) gAtmoJitter = 0.5 + 0.55 * (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + uFrameJit) - 0.5);
+    if (inside && uFrameJit >= 0.0) gAtmoJitter = 0.5 + 0.55 * (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + uFrameJit) - 0.5);
 #endif
     atmoIntegrate(ro, rd, t0, t1, int(N), 0, L, T);
+  }
+  if (inside && uFogGlow.r + uFogGlow.g + uFogGlow.b > 0.0) {
+    // glowing mist: grows with the path through the shallow layer above the local ground
+    float tEnd = min(far ? t1 : dist, 7000.0);
+    float hC = r - uRb, hE = length(ro + rd * tEnd) - uRb;
+    float hRel = max(0.5 * (hC + hE) - uFog.z - 40.0, 0.0);
+    float g = 1.0 - exp(-tEnd / 520.0 * exp(-hRel / 140.0));
+    float n = 0.65 + 0.35 * snoise((ro + rd * min(tEnd, 600.0)) * (1.0 / 260.0) + uFogWind * 3.0);
+    L += uFogGlow * g * n;
   }
 #ifdef CLOUDS
   if (!far && uGroundShadow > 0.0) {
     vec3 P = ro + rd * dist;
     float s = cloudShadow(P, uSunDir);
-    col *= mix(1.0, s, uGroundShadow);
+    // shadowed ground keeps its sky fill: darken less in blue so cloud shadows read cool, not black
+    col *= mix(vec3(1.0), vec3(s) + (1.0 - s) * vec3(0.10, 0.16, 0.28), uGroundShadow);
   }
 #endif
   gl_FragColor = vec4(col * T + L, 1.0);
@@ -159,7 +170,7 @@ export default class Atmosphere {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uMaxSteps: { value: this.engine.quality.pick(16, 24, 40, 56) },
         uMarchSky: { value: 0 }, uGroundShadow: { value: 0 }, uShadowAmt: { value: 0 }, uFrameJit: { value: 0 },
-        uAureole: { value: 0.22 }, uFogWind: { value: new THREE.Vector3() },
+        uAureole: { value: 0.22 }, uFogWind: { value: new THREE.Vector3() }, uFogGlow: { value: new THREE.Vector3() },
       },
       defines: { ATMO_FOG_NOISE: 1 },
     });
@@ -192,14 +203,17 @@ export default class Atmosphere {
     u.tInput.value = input; u.tDepth.value = ctx.depthTexture;
     u.uNear.value = ctx.near; u.uFar.value = ctx.far; u.uRev.value = ctx.reversed;
     u.uProjInv.value.copy(ctx.projInv); u.uViewInv.value.copy(ctx.viewInv); u.uCam.value.copy(ctx.cameraPosition);
+    const Lt = this.level.lighting;
+    if (Lt && Lt._bio) u.uFogGlow.value.set(Lt._bio.r, Lt._bio.g, Lt._bio.b).multiplyScalar(0.06 * (Lt.night || 0));
+    else u.uFogGlow.value.set(0, 0, 0);
     const c = this.level.sys?.clouds;
     if (this._cloudsHooked && c) {
       const L = this.level.lighting;
       const sunKey = L ? !L.keyIsMoon : true;
       const cov = c.uniforms.uCloudCov.value;
-      u.uGroundShadow.value = sunKey ? 0.62 * Math.min(1, cov) * (L ? L.sunVisible : 1) : 0;
-      u.uShadowAmt.value = 0.7;
-      u.uFrameJit.value = this.engine.shotMode ? 0 : ((this._jf = ((this._jf || 0) + 1) % 64) * 0.618034) % 1;
+      u.uGroundShadow.value = sunKey ? 0.34 * Math.min(1, cov) * (L ? L.sunVisible : 1) : 0;
+      u.uShadowAmt.value = 0.5;
+      u.uFrameJit.value = this.engine.shotMode ? -1 : ((this._jf = ((this._jf || 0) + 1) % 64) * 0.618034) % 1;
       // march the sky (for crepuscular shafts) only when inside the air and the sun is low-ish
       const up = _v.copy(ctx.cameraPosition).normalize();
       const el = up.dot(this.world.sunDir);

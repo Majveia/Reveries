@@ -243,7 +243,7 @@ export default class Civilization {
           const townAng = 2 * Math.atan(Rb * 0.8 / Math.max(dC, 1));
           sc += Math.min(1, townAng / (vfov * aspect * 0.9)) * 3.0;
           // a lower, grazing view overlaps roofs in depth; a bird's-eye view flattens the town
-          sc -= Math.max(0, -eTown - 0.2) * 4;
+          sc -= Math.max(0, -eTown - 0.2) * 4 + Math.max(0, -eTown - 0.14) * 6; // keep it near eye level: roofs stack against the sky
           if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov, tod };
         }
       }

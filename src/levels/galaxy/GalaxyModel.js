@@ -28,11 +28,11 @@ export function galaxyParams(g) {
     R, type: t, k, arms: g.arms, r0: R * 0.12, bar: g.bar, sf: g.starFormation, dust: g.dust,
     extent: R * 1.3,
     // vertical scale heights (kpc)
-    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.09, thick * 0.32),
+    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.06, thick * 0.17),
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
-    bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12),
-    bulgeAmp: t === 2 ? 2.2 : 0.55 + g.bulge * 1.4,
+    bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12) * (1 - 0.45 * Math.min(1, g.bar || 0)),
+    bulgeAmp: t === 2 ? 2.2 : (0.55 + g.bulge * 1.4) * (1 - 0.3 * Math.min(1, g.bar || 0)),
     seed: (g.seed % 9973) * 0.137,
   };
 }
@@ -116,6 +116,8 @@ float knots(vec2 x, float thr, float seed){
   }
   return s;
 }
+float ridge2(vec2 p, int o);
+float clumpBar(vec2 p){ return smoothstep(0.5, 0.1, worley(p * 3.0 + uSeed).x); }
 float ridge2(vec2 p, int o){ float a = 0.5, s = 0.0; for (int i = 0; i < 6; i++){ if (i >= o) break; float n = 1.0 - abs(snoise(vec3(p, uSeed * 1.3 + float(i) * 3.3))); s += a * n * n; p = p * 2.1 + vec2(4.1, 2.7); a *= 0.5; } return s; }
 
 void main(){
@@ -150,9 +152,13 @@ void main(){
     float frag = smoothstep(-0.35, 0.45, fbm2(vec2(lr * 5.0, armId * 13.0 + across * 0.3), 4));
     float clump = 0.45 + 1.1 * max(0.0, fbm2(q * 0.9, 5) + 0.25);
     // hierarchical star-forming clumps: ridged noise (power 2.5) breaks the arm into knots and spurs
-    float clR = pow(ridge2(q * 1.7 + 13.0, 4), 2.5) * 2.4 + pow(ridge2(q * 5.5 + 3.0, 3), 3.0) * 1.2;
-    young = arm * (0.3 + 0.7 * frag) * clump * (0.3 + clR) * exp(-r / (0.5 * uR)) * inner * edge * 2.3;
-    young += 0.07 * disk * edge * (0.6 + 0.6 * fbm2(q * 0.6, 3));
+    float clR = pow(ridge2(q * 1.7 + 13.0, 4), 4.0) * 4.0 + pow(ridge2(q * 5.5 + 3.0, 3), 3.0) * 1.4;
+    // OB associations: light gathers into cells (Worley) strung along the arm, dark gaps between
+    vec2 wy = worley(qs * vec2(1.9, 2.4) + uSeed + 0.4 * vec2(fbm2(q * 1.3, 2), fbm2(q * 1.3 + 5.0, 2)));
+    vec2 wy2 = worley(q * 7.0 + uSeed * 1.7);
+    float cmask = smoothstep(0.62, 0.08, wy.x) * 1.5 + smoothstep(0.42, 0.05, wy2.x) * 0.9;
+    young = arm * (0.3 + 0.7 * frag) * clump * (0.12 + clR) * (0.22 + cmask) * exp(-r / (0.5 * uR)) * inner * edge * 2.6;
+    young += 0.035 * disk * edge * (0.5 + 0.8 * fbm2(q * 0.6, 3));
     // secondary branches / spurs and flocculent arm fragments between the main arms
     float ph2 = (tq - uK * 1.18 * lr + 1.1) * (uArms * 2.0) / TAU;
     float phi2 = (ph2 - floor(ph2 + 0.5)) * TAU / (uArms * 2.0);
@@ -169,11 +175,13 @@ void main(){
     float fil = ridge2(vec2(lr * 9.0, across * 3.5 + armId * 17.0), 5);
     float fil2 = ridge2(vec2(lr * 16.0 + 3.0, across * 6.0 + armId * 7.0), 4);
     float brk = smoothstep(-0.25, 0.35, fbm2(vec2(lr * 6.0, armId * 11.0 + 4.0), 3));   // gaps along the lane
-    float laneD = lane * (0.15 + 2.6 * smoothstep(0.3, 0.8, fil) * (0.5 + fil)) * (0.35 + 0.65 * brk)
-                + (s2 + s3 * 0.8) * smoothstep(0.35, 0.85, fil2) * 1.6 * (1.0 - 0.6 * brk);
+    float fil3 = ridge2(vec2(lr * 40.0 + 7.0, across * 14.0 + armId * 5.0), 3);         // hairline filaments
+    float laneD = lane * (0.06 + 3.0 * smoothstep(0.45, 0.8, fil) * (0.5 + fil)) * (0.1 + 0.9 * brk)
+                + (s2 + s3 * 0.8) * smoothstep(0.35, 0.85, fil2) * 1.9 * (1.0 - 0.5 * brk)
+                + exp(-pow(phi - dOff * 0.9 - wob * 2.0, 2.0) / (2.0 * pow(dSig * 2.2, 2.0))) * pow(fil3, 6.0) * 1.6;
     // feathers: thin dark streaks leaving the lane outward through the arm at a steep angle
     float sp = ridge2(vec2(lr * 22.0 + phi * 6.0, armId * 3.0 + across * 0.6), 3);
-    float feather = pow(sp, 5.0) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.26 * 0.26));
+    float feather = pow(sp, 3.5) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.4 * 0.4)) * 1.6;
     float floc = max(0.0, fbm2(q * 1.4 + 7.0, 5) + 0.15);
     dust = (laneD * 3.4 + feather * 2.2 + floc * 0.45 * arm) * exp(-r / (0.5 * uR)) * inner * edge;
     dust += 0.18 * floc * disk * edge;
@@ -220,8 +228,9 @@ void main(){
   // bar (along x, as in galaxySample) + straight dust lanes on its leading edges
   if (uBar > 0.0) {
     float a = uR * uBar * 0.5, b = uR * 0.075;
-    float bar = exp(-0.5 * (p.x * p.x / (a * a) + p.y * p.y / (b * b)));
-    old += bar * 3.0;
+    float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 1.6) + p.y * p.y / (b * b)));
+    old += bar * 2.3;
+    young += bar * smoothstep(0.35, 0.9, abs(p.x) / a) * 0.5 * (0.4 + clumpBar(p));
     // leading-edge bar lanes: offset, curved (S-shaped through the centre), wandering in width,
     // fragmented into filaments, swinging out into the inner arm lanes at the bar ends
     float sx = sign(p.x), ax = abs(p.x) / a;
@@ -232,7 +241,7 @@ void main(){
     ln += 0.5 * exp(-pow(p.y + lanePos * 1.35, 2.0) / (2.0 * pow(lw * 0.6, 2.0))) * smoothstep(0.3, 0.9, ax);  // secondary strand
     float along = smoothstep(0.015 * uR, 0.07 * uR, abs(p.x)) * (1.0 - smoothstep(1.3 * a, 2.3 * a, abs(p.x)));
     float bfil = ridge2(vec2(p.x * 2.5, p.y * 6.0) + 21.0, 4);
-    dust += ln * along * (0.25 + 1.8 * smoothstep(0.25, 0.75, bfil)) * 1.9;
+    dust += ln * along * (0.08 + 2.2 * smoothstep(0.45, 0.72, bfil)) * 1.9;
     // dust spurs feathering off the lanes across the bar
     dust += pow(ridge2(vec2(p.x * 9.0 + p.y * 3.0, p.y * 2.0), 3), 5.0) * bar * 0.9;
     // nuclear star-forming ring / mini spiral
@@ -295,42 +304,72 @@ export function buildMaps(renderer, P, size, nebulae) {
 }
 
 // ---------------------------------------------------------------------------------
-/** Periodic 3D noise texture (RGBA8): R,G = independent fbm, B = ridged, A = cellular-ish. */
+/** Periodic 3D noise texture (RGBA8), tiling gradient (Perlin) noise:
+ *  R, G = independent fbm, B = ridged multifractal (crisp creases → filaments, eroded edges),
+ *  A = cellular (inverted Worley F1, knobs/globules). Each channel is moment-matched to fixed
+ *  statistics (mean/std) so every shader's thresholds stay calibrated regardless of size. */
 export function makeNoise3D(size = 64, seed = 1) {
   const N = size, data = new Uint8Array(N * N * N * 4);
   const rng = new Random(seedFrom(seed, 'noise3d'));
-  const layers = [];
-  const lattice = (period) => { const a = new Float32Array(period * period * period); for (let i = 0; i < a.length; i++) a[i] = rng.float(); return a; };
-  const octs = [4, 8, 16, 32];
-  for (let c = 0; c < 4; c++) layers.push(octs.map((p) => ({ p, v: lattice(p) })));
-  const sm = (t) => t * t * (3 - 2 * t);
-  const sample = (L, x, y, z) => {
+  const G = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+  const octs = N >= 96 ? [4, 8, 16, 32, 48] : [4, 8, 16, 32];
+  const grads = (p) => { const a = new Uint8Array(p * p * p); for (let i = 0; i < a.length; i++) a[i] = Math.floor(rng.float() * 12) % 12; return a; };
+  const layers = [0, 1, 2].map(() => octs.map((p) => ({ p, g: grads(p) })));
+  const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+  const perlin = (L, x, y, z) => {
     const p = L.p, fx = x * p, fy = y * p, fz = z * p;
     const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
-    const tx = sm(fx - ix), ty = sm(fy - iy), tz = sm(fz - iz);
-    const v = L.v, g = (a, b, c) => v[((a % p) * p + (b % p)) * p + (c % p)];
-    const x0 = ix % p, y0 = iy % p, z0 = iz % p, x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
-    const a = g(x0, y0, z0) + (g(x1, y0, z0) - g(x0, y0, z0)) * tx;
-    const b = g(x0, y1, z0) + (g(x1, y1, z0) - g(x0, y1, z0)) * tx;
-    const c = g(x0, y0, z1) + (g(x1, y0, z1) - g(x0, y0, z1)) * tx;
-    const d = g(x0, y1, z1) + (g(x1, y1, z1) - g(x0, y1, z1)) * tx;
-    const e = a + (b - a) * ty, f = c + (d - c) * ty;
-    return e + (f - e) * tz;
-  };
-  let o = 0;
-  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const u = x / N, v = y / N, w = z / N;
-    for (let c = 0; c < 4; c++) {
-      const Ls = layers[c];
-      let s = 0, amp = 0.5, norm = 0;
-      for (let k = 0; k < Ls.length; k++) {
-        let n = sample(Ls[k], u, v, w);
-        if (c === 2) n = 1 - Math.abs(n * 2 - 1);
-        if (c === 3) n = n * n;
-        s += n * amp; norm += amp; amp *= 0.5;
-      }
-      data[o++] = Math.max(0, Math.min(255, Math.round((s / norm) * 255)));
+    const dx = fx - ix, dy = fy - iy, dz = fz - iz;
+    const u = fade(dx), v = fade(dy), w = fade(dz);
+    let r = 0;
+    for (let k = 0; k < 8; k++) {
+      const ox = k & 1, oy = (k >> 1) & 1, oz = (k >> 2) & 1;
+      const gi = L.g[(((ix + ox) % p) * p + ((iy + oy) % p)) * p + ((iz + oz) % p)];
+      const gv = G[gi];
+      const d = gv[0] * (dx - ox) + gv[1] * (dy - oy) + gv[2] * (dz - oz);
+      r += d * (ox ? u : 1 - u) * (oy ? v : 1 - v) * (oz ? w : 1 - w);
     }
+    return r;   // ≈ [-1, 1]
+  };
+  // tiled Worley feature points
+  const wp = [6, 13].map((p) => { const a = new Float32Array(p * p * p * 3); for (let i = 0; i < a.length; i++) a[i] = rng.float(); return { p, a }; });
+  const worley = (W, x, y, z) => {
+    const p = W.p, fx = x * p, fy = y * p, fz = z * p;
+    const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
+    let best = 9;
+    for (let k = -1; k <= 1; k++) for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      const cx = ix + i, cy = iy + j, cz = iz + k;
+      const o = ((((cx % p) + p) % p * p + (((cy % p) + p) % p)) * p + (((cz % p) + p) % p)) * 3;
+      const ddx = cx + W.a[o] - fx, ddy = cy + W.a[o + 1] - fy, ddz = cz + W.a[o + 2] - fz;
+      const d = ddx * ddx + ddy * ddy + ddz * ddz;
+      if (d < best) best = d;
+    }
+    return Math.sqrt(best);
+  };
+  const raw = [new Float32Array(N * N * N), new Float32Array(N * N * N), new Float32Array(N * N * N), new Float32Array(N * N * N)];
+  let o = 0;
+  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++, o++) {
+    const u = x / N, v = y / N, w = z / N;
+    for (let c = 0; c < 2; c++) {
+      let s = 0, amp = 1;
+      for (const L of layers[c]) { s += perlin(L, u, v, w) * amp; amp *= 0.5; }
+      raw[c][o] = s;
+    }
+    // ridged multifractal: each octave's crease weighted by the previous one (sharp filaments)
+    let s = 0, amp = 1, wt = 1;
+    for (const L of layers[2]) { let n = 1 - Math.abs(perlin(L, u, v, w) * 1.6); n = Math.max(0, n); n *= n; s += n * amp * wt; wt = Math.min(1, n * 1.6); amp *= 0.5; }
+    raw[2][o] = s;
+    raw[3][o] = (1 - worley(wp[0], u, v, w)) * 0.65 + (1 - worley(wp[1], u, v, w)) * 0.35;
+  }
+  const target = [[0.511, 0.11], [0.488, 0.13], [0.694, 0.14], [0.278, 0.121]];
+  const M = N * N * N;
+  for (let c = 0; c < 4; c++) {
+    const a = raw[c];
+    let m = 0, m2 = 0;
+    for (let i = 0; i < M; i++) { m += a[i]; m2 += a[i] * a[i]; }
+    m /= M; const sd = Math.sqrt(Math.max(1e-9, m2 / M - m * m));
+    const k = target[c][1] / sd, b0 = target[c][0];
+    for (let i = 0; i < M; i++) data[i * 4 + c] = Math.max(0, Math.min(255, Math.round(((a[i] - m) * k + b0) * 255)));
   }
   const tex = new THREE.Data3DTexture(data, N, N, N);
   tex.format = THREE.RGBAFormat; tex.type = THREE.UnsignedByteType;

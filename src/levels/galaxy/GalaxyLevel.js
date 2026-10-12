@@ -47,7 +47,7 @@ export default class GalaxyLevel {
     const mapSize = E.shotMode ? 2048 : q.pick(1024, 1536, 2048, 2048);
     this.mapRT = buildMaps(E.renderer, P, mapSize, this.nebulaList);
     progress?.(0.12, 'weaving dust');
-    this.noise3D = makeNoise3D(q.level <= 0 ? 48 : 64, g.seed);
+    this.noise3D = makeNoise3D(E.shotMode || q.level >= 3 ? 96 : q.level <= 0 ? 48 : 64, g.seed);
     const mapTexel = (2 * P.extent) / mapSize;
     // shared galaxy uniforms (same objects in every material)
     this.gu = {
@@ -228,7 +228,7 @@ export default class GalaxyLevel {
     this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 1.6, inside);
     const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
     // grazing views: the midplane lane must read as an opaque silhouette (NGC 891 / Sombrero)
-    this.gu.uKappa.value *= 1 + 0.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
+    this.gu.uKappa.value *= 1 + 0.25 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value);
 
@@ -274,7 +274,7 @@ export default class GalaxyLevel {
         this.hoverEl.style.opacity = this._placeLabel(this.hoverEl, s.pos) ? '1' : '0';
       } else this.hoverEl.style.opacity = '0';
       if (this.g.id === 0) {
-        const vis = this._placeLabel(this.homeEl, this.stars.systems[0].pos);
+        const vis = this._placeLabel(this.homeEl, this.stars.systems[0].pos, 26, -8);
         this.homeEl.style.opacity = vis ? (hi === 0 ? '1' : '0.7') : '0';
       }
     }
@@ -317,8 +317,8 @@ export default class GalaxyLevel {
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.95, 0.55, 0.82); },
-      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.011); },
+      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.12, 0, -P.R * 0.06), P.R * 1.72, 0.55, 0.66); },
+      edge: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.25, 1.1, 0.0035); },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
         const n = this.nebulaList[0];

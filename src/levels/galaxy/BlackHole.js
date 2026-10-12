@@ -70,7 +70,7 @@ vec3 background(vec3 dir){
   // self-lensed into a hard graphic Einstein ring; its light is the broad lensed glow instead
   float toHole = acos(clamp(dot(dir, uHoleDir), -1.0, 1.0));
   float mask = smoothstep(uHoleAng * 2.5, uHoleAng * 9.0, toHole);
-  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 6.0, 1e-4)) * 0.6;
+  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 2.0, 1e-4)) * 0.15;
   if (clip.w > 1e-5) {
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float inside = smoothstep(0.0, 0.04, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
@@ -88,14 +88,15 @@ vec4 diskSample(vec3 hit, vec3 v){
   float om = 0.7 * pow(r, -1.5);
   float a = ang + om * uTime * 6.0;
   float x = (r - uIn) / (uOut - uIn);
-  vec3 q = vec3(r * 0.11, a / TAU * 3.0, 0.37);
-  float n1 = texture(uNoise, q).r;
-  float n2 = texture(uNoise, vec3(r * 0.42, a / TAU * 7.0, 0.71) + n1 * 0.08).b;
-  float n3 = texture(uNoise, vec3(r * 1.3, a / TAU * 11.0, 0.13)).g;
-  // hot turbulent filaments on the inner edge (24-40 angular cells), sheared by the flow
-  float n4 = texture(uNoise, vec3(r * 3.7 + n2 * 0.3, a / TAU * 2.0 + r * 0.05, 0.53)).b;
+  // plasma texture: big sheared clumps, ~4:1 anisotropic filaments stretched along the flow,
+  // a fine turbulent octave and concentric density bands (MRI turbulence / spiral waves)
+  float n1 = texture(uNoise, vec3(r * 0.32, a / TAU * 4.0, 0.37)).r;
+  float n2 = texture(uNoise, vec3(r * 1.15 + n1 * 0.25, a / TAU * 9.0, 0.71)).b;
+  float n3 = texture(uNoise, vec3(r * 2.2 + n2 * 0.2, a / TAU * 12.0 + r * 0.07, 0.13)).g;
+  float n4 = texture(uNoise, vec3(r * 4.3 + n2 * 0.3, a / TAU * 5.0 + r * 0.05, 0.53)).b;
+  float bands = 0.75 + 0.25 * sin(r * 5.3 + n1 * 5.0) * sin(r * 1.7 + 1.3);
   float inner = 1.0 - smoothstep(0.0, 0.45, x);
-  float dens = (0.35 + 0.9 * n1) * (0.45 + 0.9 * n2) * (0.7 + 0.5 * n3) * mix(1.0, 0.35 + 1.4 * n4, inner);
+  float dens = (0.4 + 0.95 * n1) * (0.45 + 1.0 * n2 * n2) * (0.8 + 0.4 * n3) * bands * mix(1.0, 0.35 + 1.4 * n4, inner);
   float edge = smoothstep(0.0, 0.035, x) * (1.0 - smoothstep(0.55, 1.0, x));
   float alpha = clamp(dens * edge * 1.35, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
@@ -109,7 +110,9 @@ vec4 diskSample(vec3 hit, vec3 v){
   float g = D * sqrt(max(1.0 - 1.0 / r, 0.0));
   g = mix(1.0, g, uDoppler);
   float T = uTmax * tp * g;
-  vec3 c = blackbody(T) * pow(g, 4.0) * tp * tp * uGain * (0.6 + 0.8 * n2) * (0.7 + 0.6 * n4 * inner);
+  // emissivity: Novikov–Thorne flux ∝ T⁴ shape with a sharp ISCO peak; HDR so the inner edge blooms
+  float em = tp * tp * (0.35 + 0.65 * tp * tp) * (1.0 + 2.2 * exp(-x * 9.0));
+  vec3 c = blackbody(T) * pow(g, 4.0) * em * uGain * (0.55 + 0.8 * n2) * (0.8 + 0.4 * n3);
   return vec4(c * alpha, alpha);
 }
 
@@ -210,7 +213,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 300 : q.pick(160, 220, 300, 360) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.42 }, uTmax: { value: 4900 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.7 }, uTmax: { value: 7600 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

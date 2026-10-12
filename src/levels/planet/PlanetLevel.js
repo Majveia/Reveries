@@ -255,7 +255,7 @@ export default class PlanetLevel {
     const presets = {
       orbit: async () => {
         const dir = (w.sites[0]?.dir || new THREE.Vector3(0.3, 0.5, 0.8)).clone();
-        w.setTimeOfDay(0.62, dir);
+        w.setTimeOfDay(0.34, dir); // sun ~75° from the view: terminator + twilight band in frame
         const side = new THREE.Vector3(0, 1, 0).cross(dir).normalize();
         free(dir.clone().multiplyScalar(w.radius * 2.6).addScaledVector(side, w.radius * 0.9), new THREE.Vector3());
         await delegate('orbit', null);

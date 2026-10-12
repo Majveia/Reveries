@@ -26,7 +26,7 @@ export const TRANS_W = 256, TRANS_H = 64, MS_SIZE = 32, SKY_W = 192, SKY_H = 108
 export const AP_SLICES = 32, AP_RES = 32; // froxel volume: 32×32 screen tiles × 32 depth slices
 
 // Tunables (visual optical depths, vertical, at density 1).
-const TAU_R = 0.40; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
+const TAU_R = 0.34; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
 const TAU_O = 0.05; // ozone (green), scaled by the planet's life
 export const SUN_E0 = 4.6; // sun illuminance at the top of the atmosphere
 
@@ -56,6 +56,8 @@ uniform vec3 uMoonDir;
 uniform vec3 uMoonE;        // brightest moon (night key light), rgb
 uniform vec4 uFog;          // x: fog density at ground (1/m), y: 1/fog scale height, z: fog base radius offset, w: fog albedo
 uniform vec3 uFogColor;     // fog / dust scattering colour (albedo per channel)
+uniform vec4 uHazeL;        // ground haze layer: x extinction at its base (1/m), y 1/scale height, z albedo, w base height above uRb (local ground)
+uniform vec3 uHazeTint;     // haze scattering tint
 uniform sampler2D tTransmittance;
 uniform sampler2D tMultiScat;
 uniform sampler2D tIrradiance;  // mean sky radiance on an up-facing surface per unit light (Bruneton E(r, mu_s)/pi)
@@ -106,6 +108,12 @@ void atmoMedium(float r, out vec3 scatR, out vec3 scatM, out vec3 ext){
   scatR = uBetaR * dR;
   scatM = uBetaMs * dM;
   ext = scatR + uBetaMe * dM + uBetaO * dO;
+  // Low ground haze (aerial perspective): small planets have a horizon only a few km away,
+  // so a dense, shallow aerosol layer gives distant hills Earth-like depth and whitens the
+  // horizon while the vertical column (zenith, the view from orbit) stays clear.
+  float dH = uHazeL.x * exp(-max(h - uHazeL.w, 0.0) * uHazeL.y);
+  scatM += uHazeTint * dH * uHazeL.z;
+  ext += vec3(dH);
   // Weather fog / dust: an extra low, dense layer (lit like Mie with its own albedo).
   if (uFog.x > 0.0) {
     float dF = uFog.x * exp(-max(h - uFog.z, 0.0) * uFog.y);
@@ -441,6 +449,7 @@ export class AtmosphereModel {
       tTransmittance: { value: null }, tMultiScat: { value: null }, tIrradiance: { value: null },
       tSkyView: { value: null }, uSkyFrame: { value: new THREE.Matrix3() }, uSkyR: { value: this.Rb + 2 },
       uNightGlow: { value: new THREE.Vector3() },
+      uHazeL: { value: new THREE.Vector4() }, uHazeTint: { value: new THREE.Vector3(1, 1, 1) },
     };
     this._computeCoefficients();
 
@@ -456,7 +465,7 @@ export class AtmosphereModel {
   _computeCoefficients() {
     const A = this.params;
     const T = this.thickness;
-    const HR = 0.25 * T, HM = 0.085 * T;
+    const HR = 0.21 * T, HM = 0.085 * T;
     const topR = Math.exp(-T / HR), topM = Math.exp(-T / HM);
     const normR = 1 / (1 - topR), normM = 1 / (1 - topM);
     // Column integrals of the normalised density profiles.
@@ -469,7 +478,7 @@ export class AtmosphereModel {
     // mild spectral sharpening: the art weights are perceptual; λ^-4 scattering is more
     // selective than they read, so the zenith stays saturated (deep blue, deep ochre…)
     const rmx = Math.max(ray0[0], ray0[1], ray0[2], 1e-3);
-    const ray = ray0.map((v) => rmx * Math.pow(Math.max(v, 0) / rmx, 1.3));
+    const ray = ray0.map((v) => rmx * Math.pow(Math.max(v, 0) / rmx, 1.12));
     const u = this.uniforms;
     u.uBetaR.value.set(ray[0], ray[1], ray[2]).multiplyScalar(TAU_R * density / colR);
     // Mie: aerosols, haze. mieColor is the single-scattering albedo tint.
@@ -489,13 +498,22 @@ export class AtmosphereModel {
     u.uBetaO.value.set(0.65 / 1.881, 1.0, 0.085 / 1.881).multiplyScalar(TAU_O * density * (0.25 + 0.75 * life) / ow);
     u.uProfile.value.set(1 / HR, 1 / HM, topR, topM);
     u.uProfile2.value.set(normR, normM, oc, 1 / ow);
+    // Ground haze layer (see atmoMedium). Equivalent horizontal visibility ≈ 3/σ0.
+    const R = this.world.radius;
+    const sig0 = this.present ? density * (1.5 + 3.0 * haze) * 1e-4 * Math.sqrt(40000 / Math.max(R, 10000)) : 0;
+    const Hh = THREE.MathUtils.clamp(0.09 * T, 120, 700);
+    const ht = new THREE.Color(1, 1, 1).lerp(new THREE.Color(mc.r / mx, mc.g / mx, mc.b / mx), 0.45);
+    // the layer hugs the ground around the player (dry worlds have no sea level to sit on)
+    const hb = Math.max(0, (w.fogBase || 0) - 20);
+    u.uHazeL.value.set(sig0, 1 / Hh, 0.9, hb);
+    u.uHazeTint.value.set(ht.r, ht.g, ht.b);
     // Weather fog layer.
     u.uFog.value.set(w.fog, 1 / Math.max(10, w.fogHeight), w.fogBase, 0.92);
     u.uFogColor.value.set(w.fogColor.r, w.fogColor.g, w.fogColor.b);
     // CPU copies for the light colour.
     this._cpu = {
       betaR: u.uBetaR.value.clone(), betaMe: ms, betaO: u.uBetaO.value.clone(), oc, ow,
-      fog: w.fog, fogH: Math.max(10, w.fogHeight), fogBase: w.fogBase,
+      fog: w.fog, fogH: Math.max(10, w.fogHeight), fogBase: w.fogBase, haze: sig0, hazeH: Hh, hazeBase: hb,
     };
   }
 
@@ -503,7 +521,7 @@ export class AtmosphereModel {
   setWeather(state) {
     const w = this.weather;
     const changed = Math.abs((state.fog ?? 0) - w.fog) > w.fog * 0.04 + 1e-6 || Math.abs((state.dust ?? 0) - w.dust) > 0.01 || Math.abs((state.overcast ?? 0) - w.overcast) > 0.02
-      || Math.abs((state.fogHeight ?? w.fogHeight) - w.fogHeight) > 2 || (w.fog > 0 && Math.abs((state.fogBase ?? w.fogBase) - w.fogBase) > 25);
+      || Math.abs((state.fogHeight ?? w.fogHeight) - w.fogHeight) > 2 || Math.abs((state.fogBase ?? w.fogBase) - w.fogBase) > (w.fog > 0 ? 25 : 40);
     w.fog = state.fog ?? 0; w.dust = state.dust ?? 0; w.overcast = state.overcast ?? 0; w.fogHeight = state.fogHeight ?? w.fogHeight; w.fogBase = state.fogBase ?? w.fogBase;
     if (state.fogColor) w.fogColor.copy(state.fogColor);
     if (changed) { this._computeCoefficients(); this.lutDirty = true; }
@@ -593,7 +611,7 @@ export class AtmosphereModel {
     const dist = Math.max(0, -r * mu + Math.sqrt(Math.max(0, disc)));
     const dt = dist / steps;
     const pr = this._prof, cp = this._cpu;
-    let odR = 0, odM = 0, odO = 0, odF = 0;
+    let odR = 0, odM = 0, odO = 0, odF = 0, odH = 0;
     for (let i = 0; i < steps; i++) {
       const t = (i + 0.5) * dt;
       const rr = Math.sqrt(r * r + t * t + 2 * r * mu * t);
@@ -601,13 +619,14 @@ export class AtmosphereModel {
       odR += Math.max(0, (Math.exp(-h / pr.HR) - pr.topR) * pr.normR) * dt;
       odM += Math.max(0, (Math.exp(-h / pr.HM) - pr.topM) * pr.normM) * dt;
       odO += Math.max(0, 1 - Math.abs(h - cp.oc) / cp.ow) * dt;
+      odH += cp.haze * Math.exp(-Math.max(0, h - cp.hazeBase) / cp.hazeH) * dt;
       if (cp.fog > 0) odF += cp.fog * Math.exp(-Math.max(0, h - cp.fogBase) / cp.fogH) * dt;
     }
     const bR = cp.betaR, bO = cp.betaO;
     out.set(
-      Math.exp(-(bR.x * odR + cp.betaMe * odM + bO.x * odO + odF)),
-      Math.exp(-(bR.y * odR + cp.betaMe * odM + bO.y * odO + odF)),
-      Math.exp(-(bR.z * odR + cp.betaMe * odM + bO.z * odO + odF)),
+      Math.exp(-(bR.x * odR + cp.betaMe * odM + bO.x * odO + odF + odH)),
+      Math.exp(-(bR.y * odR + cp.betaMe * odM + bO.y * odO + odF + odH)),
+      Math.exp(-(bR.z * odR + cp.betaMe * odM + bO.z * odO + odF + odH)),
     ).multiplyScalar(vis);
     return out;
   }
