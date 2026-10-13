@@ -10,6 +10,9 @@
 //   aMatA     uint8×4    moisture, temperature, rock, snow
 //   aMatB     uint8×4    sand, wet/river, cavity (concavity → AO), cliff/strata
 //   aHgt      float32    height above base radius (m) — strata, shoreline, snow line
+//   aHorA/B   uint8×4 ×2 horizon elevation (sin, (s+0.25)/1.25) toward 8 azimuths in the
+//                        HOR_AXIS east/north frame → soft, LOD-consistent terrain sun
+//                        shadows + sky occlusion (see horizonFrame / TerrainMaterial)
 // Shared index buffer (same topology for every chunk): buildIndex(N).
 
 export const FACES = [
@@ -73,6 +76,23 @@ export function buildIndex(N) {
   }
   return new Uint16Array(idx);
 }
+
+// Horizon frame: east = normalize(HOR_AXIS × up), north = up × east. A skewed fixed
+// axis (no cube-face seams); the shader rebuilds exactly the same frame.
+export const HOR_AXIS = [0.2873478855663454, 0.9578262852211514, 0.0];
+export const HOR_K = 8;
+function horizonFrame(px, py, pz, out) {
+  const ax = HOR_AXIS[0], ay = HOR_AXIS[1], az = HOR_AXIS[2];
+  let ex = ay * pz - az * py, ey = az * px - ax * pz, ez = ax * py - ay * px;
+  let l = Math.sqrt(ex * ex + ey * ey + ez * ez);
+  if (l < 1e-6) { ex = 1; ey = 0; ez = 0; l = 1; }
+  ex /= l; ey /= l; ez /= l;
+  out[0] = ex; out[1] = ey; out[2] = ez;
+  out[3] = py * ez - pz * ey; out[4] = pz * ex - px * ez; out[5] = px * ey - py * ex;
+  return out;
+}
+const HOR_COS = [], HOR_SIN = [];
+for (let k = 0; k < 8; k++) { HOR_COS.push(Math.cos((k * Math.PI) / 4)); HOR_SIN.push(Math.sin((k * Math.PI) / 4)); }
 
 const q8 = (v) => { const x = Math.round(v * 127); return x < -127 ? -127 : x > 127 ? 127 : x; };
 const u8 = (v) => { const x = Math.round(v * 255); return x < 0 ? 0 : x > 255 ? 255 : x; };
@@ -140,6 +160,82 @@ export function buildChunk(T, job) {
       }
     }
   }
+  // ---- horizon (8 azimuths) ----
+  // far part: great-circle marches from a coarse grid of chunk points (true height
+  // field, band-limited with distance), bilinearly spread over the vertices; near
+  // part: per-vertex marches over this chunk's own bordered height grid.
+  const HK = HOR_K;
+  const horF = new Float32Array(V * V * HK).fill(-0.25);
+  {
+    const HG = spacing < 8 ? 5 : 9, gs = N / (HG - 1);
+    const dmax = Math.min(20000, R * 0.6);
+    const d0 = 2 * gs * spacing;
+    const C = new Float32Array(HG * HG * HK).fill(-0.25);
+    if (d0 < dmax * 0.7 && level >= 1) {
+      const S = 9, ratio = Math.pow(dmax / d0, 1 / (S - 1));
+      const fr = [0, 0, 0, 0, 0, 0];
+      for (let cj = 0; cj < HG; cj++) for (let ci = 0; ci < HG; ci++) {
+        const g = (Math.round(cj * gs) + 1) * G + (Math.round(ci * gs) + 1);
+        const px = DX[g], py = DY[g], pz = DZ[g], r0 = R + H[g];
+        horizonFrame(px, py, pz, fr);
+        const cb = (cj * HG + ci) * HK;
+        for (let k = 0; k < HK; k++) {
+          const tx = HOR_COS[k] * fr[0] + HOR_SIN[k] * fr[3], ty = HOR_COS[k] * fr[1] + HOR_SIN[k] * fr[4], tz = HOR_COS[k] * fr[2] + HOR_SIN[k] * fr[5];
+          let best = -0.25, d = d0;
+          for (let st = 0; st < S; st++, d *= ratio) {
+            const an = d / R, ca = Math.cos(an), sa = Math.sin(an);
+            const qx = px * ca + tx * sa, qy = py * ca + ty * sa, qz = pz * ca + tz * sa;
+            if (hasLod) T.setLod(Math.max(spacing, d * 0.06));
+            const rq = R + T.evaluate(qx, qy, qz, false).h;
+            const vx = qx * rq - px * r0, vy = qy * rq - py * r0, vz = qz * rq - pz * r0;
+            const e = (vx * px + vy * py + vz * pz) / (Math.sqrt(vx * vx + vy * vy + vz * vz) || 1);
+            if (e > best) best = e;
+          }
+          C[cb + k] = best;
+        }
+      }
+    }
+    // spread + near marches
+    const NS = [1, 2, 3, 5, 8, 12, 18, 26, 36];
+    const fr = [0, 0, 0, 0, 0, 0];
+    const inv2R = 1 / (2 * R);
+    for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+      const k0 = (j * V + i) * HK, g = (j + 1) * G + (i + 1);
+      // coarse bilinear
+      const fi = Math.min(HG - 1.0001, i / gs), fj = Math.min(HG - 1.0001, j / gs);
+      const ci = Math.floor(fi), cj = Math.floor(fj), ti = fi - ci, tj = fj - cj;
+      const c00 = (cj * HG + ci) * HK, c10 = c00 + HK, c01 = c00 + HG * HK, c11 = c01 + HK;
+      for (let k = 0; k < HK; k++) horF[k0 + k] = (C[c00 + k] * (1 - ti) + C[c10 + k] * ti) * (1 - tj) + (C[c01 + k] * (1 - ti) + C[c11 + k] * ti) * tj;
+      // local grid tangents (m per grid step) in the horizon frame
+      const px = DX[g], py = DY[g], pz = DZ[g];
+      horizonFrame(px, py, pz, fr);
+      const tix = (PX[g + 1] - PX[g - 1]) * 0.5, tiy = (PY[g + 1] - PY[g - 1]) * 0.5, tiz = (PZ[g + 1] - PZ[g - 1]) * 0.5;
+      const tjx = (PX[g + G] - PX[g - G]) * 0.5, tjy = (PY[g + G] - PY[g - G]) * 0.5, tjz = (PZ[g + G] - PZ[g - G]) * 0.5;
+      const ie = tix * fr[0] + tiy * fr[1] + tiz * fr[2], inn = tix * fr[3] + tiy * fr[4] + tiz * fr[5];
+      const je = tjx * fr[0] + tjy * fr[1] + tjz * fr[2], jn = tjx * fr[3] + tjy * fr[4] + tjz * fr[5];
+      const det = ie * jn - je * inn;
+      if (Math.abs(det) < 1e-9) continue;
+      const h0 = H[g];
+      for (let k = 0; k < HK; k++) {
+        // grid steps per metre along azimuth k
+        const a = (jn * HOR_COS[k] - je * HOR_SIN[k]) / det, b = (-inn * HOR_COS[k] + ie * HOR_SIN[k]) / det;
+        let best = horF[k0 + k];
+        for (let st = 0; st < NS.length; st++) {
+          const d = NS[st] * spacing;
+          const si = i + a * d, sj = j + b * d;
+          if (si < -1 || sj < -1 || si > N + 1 || sj > N + 1) break;
+          const ii = Math.min(N, Math.floor(si)), jj = Math.min(N, Math.floor(sj));
+          const fx = si - ii, fy = sj - jj;
+          const gg = (jj + 1) * G + (ii + 1);
+          const hs = (H[gg] * (1 - fx) + H[gg + 1] * fx) * (1 - fy) + (H[gg + G] * (1 - fx) + H[gg + G + 1] * fx) * fy;
+          const dh = hs - h0 - d * d * inv2R;
+          const e = dh / Math.sqrt(d * d + dh * dh);
+          if (e > best) best = e;
+        }
+        horF[k0 + k] = best;
+      }
+    }
+  }
   if (hasLod) T.setLod(0);
 
   // ---- origin: chunk center on the base sphere ----
@@ -153,6 +249,11 @@ export function buildChunk(T, job) {
   const morph = new Float32Array(VC * 3);
   const nrm = new Int8Array(VC * 4), nrm2 = new Int8Array(VC * 4);
   const hgt = new Float32Array(VC);
+  const horA = new Uint8Array(VC * 4), horB = new Uint8Array(VC * 4);
+  for (let k = 0; k < V * V; k++) for (let c = 0; c < 4; c++) {
+    horA[k * 4 + c] = u8((horF[k * HK + c] + 0.25) / 1.25);
+    horB[k * 4 + c] = u8((horF[k * HK + 4 + c] + 0.25) / 1.25);
+  }
   const lvl = q8(level / 127);
 
   // normals (central differences on the bordered grid)
@@ -213,7 +314,7 @@ export function buildChunk(T, job) {
     const g = (j + 1) * G + (i + 1);
     position[s * 3] = PX[g] - DX[g] * skirt - ox; position[s * 3 + 1] = PY[g] - DY[g] * skirt - oy; position[s * 3 + 2] = PZ[g] - DZ[g] * skirt - oz;
     morph[s * 3] = morph[k * 3]; morph[s * 3 + 1] = morph[k * 3 + 1]; morph[s * 3 + 2] = morph[k * 3 + 2];
-    for (let c = 0; c < 4; c++) { nrm[s * 4 + c] = nrm[k * 4 + c]; nrm2[s * 4 + c] = nrm2[k * 4 + c]; matA[s * 4 + c] = matA[k * 4 + c]; matB[s * 4 + c] = matB[k * 4 + c]; }
+    for (let c = 0; c < 4; c++) { nrm[s * 4 + c] = nrm[k * 4 + c]; nrm2[s * 4 + c] = nrm2[k * 4 + c]; matA[s * 4 + c] = matA[k * 4 + c]; matB[s * 4 + c] = matB[k * 4 + c]; horA[s * 4 + c] = horA[k * 4 + c]; horB[s * 4 + c] = horB[k * 4 + c]; }
     hgt[s] = hgt[k] - skirt;
   }
 
@@ -230,11 +331,11 @@ export function buildChunk(T, job) {
 
   return {
     origin: [ox, oy, oz], center: [cx, cy, cz], radius: rad, minH, maxH, maxDelta, skirt,
-    position, morph, nrm, nrm2, matA, matB, hgt,
+    position, morph, nrm, nrm2, matA, matB, hgt, horA, horB,
   };
 }
 
 /** Transferable list for postMessage. */
 export function transferables(c) {
-  return [c.position.buffer, c.morph.buffer, c.nrm.buffer, c.nrm2.buffer, c.matA.buffer, c.matB.buffer, c.hgt.buffer];
+  return [c.position.buffer, c.morph.buffer, c.nrm.buffer, c.nrm2.buffer, c.matA.buffer, c.matB.buffer, c.hgt.buffer, c.horA.buffer, c.horB.buffer];
 }

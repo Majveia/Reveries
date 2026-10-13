@@ -187,7 +187,7 @@ vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
   float alb = mix(1.0, 0.55, maria) * crater * fine + rim * 0.18;
   // highlands keep the moon's tint, maria go cool grey-blue (basalt), not brown
   vec3 grey = vec3(dot(tint, vec3(0.3333)));
-  vec3 col = mix(mix(tint, grey, 0.45) * 1.08, grey * vec3(0.8, 0.86, 0.98), maria) * alb;
+  vec3 col = mix(mix(tint, grey, 0.68) * 1.12, grey * vec3(0.8, 0.86, 0.98), maria) * alb;
   if (kind == 1) { // ice: bright with dark lineae
     float cracks = 1.0 - smoothstep(0.0, 0.06, abs(snoise(q * 2.5)) * (0.6 + 0.4 * snoise(q * 7.0)));
     col = mix(vec3(0.92, 0.95, 1.0), tint, 0.25) * (1.0 - cracks * 0.45) * (0.9 + 0.1 * crater);
@@ -275,35 +275,43 @@ void main(){
     // seen from inside the disk the band is mostly neutral starlight: warm only toward
     // the bulge, cool-white in the arms; contrast lives in the dust rifts, not the hue
     float gd = gl * uGalaxyGain * 0.7;
-    // blue-white star clouds in the faint arms, warm only in the luminous bulge
-    vec3 gtint = mix(vec3(0.86, 0.93, 1.1), vec3(1.1, 0.97, 0.84), smoothstep(0.08, 0.35, gd));
-    vec3 galD = mix(vec3(gl) * gtint, gal, 0.15) * uGalaxyGain * 0.7;
-    galD *= smoothstep(0.007, 0.05, gd) * clamp(gd / 0.04, 0.3, 1.25);
-    // soft shoulder on the bulge: the dark-adapted eye (and the auto-exposure) keep the arms,
-    // rifts and star clouds readable instead of one blown beige blob around the centre
-    galD *= 1.0 / (1.0 + 7.0 * max(gd - 0.04, 0.0));
-    // dust: coherent dark rifts hugging the mid-plane (Great-Rift-like) plus mottled
-    // star clouds; smooth fBm lanes, anisotropic along the plane (no crackle veins)
+    // cool white star clouds in the arms, warm only in the luminous bulge (never a beige wash)
+    vec3 gtint = mix(vec3(0.84, 0.92, 1.1), vec3(1.06, 0.98, 0.9), smoothstep(0.12, 0.5, gd));
+    vec3 galD = mix(vec3(gl) * gtint, gal, 0.1) * uGalaxyGain * 0.7;
+    // steep toe: the diffuse disk glow we sit inside goes to OLED black, only the
+    // band's core and the star clouds keep their light (a river, not a fog column)
+    galD *= smoothstep(0.011, 0.065, gd) * clamp(gd / 0.05, 0.25, 1.1);
+    // soft shoulder on the bulge (dark-adapted eye keeps the rifts readable)
+    galD *= 1.0 / (1.0 + 9.0 * max(gd - 0.04, 0.0));
     vec3 dg = uCelToGal * dc;
-    float bandM = exp(-dg.y * dg.y / 0.012);
+    float bandM = exp(-dg.y * dg.y / 0.02);
     if (bandM > 0.01) {
-      // filaments stretched along galactic longitude
-      vec3 fp = vec3(dg.x, dg.y * 3.2, dg.z);
-      float lanes = snoise(fp * 4.0 + 1.7) * 0.55 + snoise(fp * 11.0 + vec3(5.1, 2.3, 8.7)) * 0.3 + snoise(fp * 27.0 - 3.3) * 0.15;
-      float rift = smoothstep(0.05, 0.35, lanes) * exp(-dg.y * dg.y / 0.0016);
-      float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
-      float mott = 0.8 + 0.4 * smoothstep(-0.5, 0.8, snoise(dc * 40.0));
-      float absorb = clamp(rift * 0.96 + patchy * 1.35 * (1.0 - rift), 0.0, 0.97);
-      galD *= mix(1.0, (1.0 - absorb) * mott, bandM);
+      // the glow is made of unresolved stars: grainy clumps and star clouds, not a smooth smear
+      float grain = snoise(dc * 170.0) * 0.55 + snoise(dc * 390.0 + 2.7) * 0.45;
+      float clump = smoothstep(-0.65, 0.9, snoise(vec3(dg.x, dg.y * 2.5, dg.z) * 7.0) * 0.7 + snoise(dc * 26.0) * 0.3);
+      galD *= mix(1.0, (0.35 + 0.75 * clump) * (0.72 + 0.4 * grain), bandM);
+      // dust: domain-warped ridged filaments at low frequency, strongly stretched
+      // along galactic longitude (coherent lanes, never short dashes)
+      vec3 fp = vec3(dg.x, dg.y * 9.0, dg.z);
+      vec3 wq = fp * 1.4;
+      vec3 wp = fp * 2.6 + vec3(snoise(wq + 3.1), snoise(wq - 7.7), snoise(wq + 1.9)) * 0.55;
+      float r1 = 1.0 - abs(snoise(wp));
+      float r2 = 1.0 - abs(snoise(wp * 2.2 + 4.4));
+      float fil = pow(r1, 5.0) * 0.75 + pow(r2, 7.0) * 0.55 * r1;
+      // the Great Rift: one dominant lane just off the mid-plane, meandering and broken
+      float off = dg.y - 0.03 - 0.022 * snoise(vec3(dg.x, 0.0, dg.z) * 3.0 + 1.3);
+      float rift = exp(-off * off / 0.0004) * smoothstep(-0.35, 0.35, snoise(vec3(dg.x, 0.0, dg.z) * 2.2 + 5.0));
+      float absorb = clamp(rift * 0.93 + fil * 0.85 * exp(-dg.y * dg.y / 0.005) * (1.0 - rift), 0.0, 0.95);
+      galD *= mix(1.0, 1.0 - absorb, bandM);
       // dust reddens what it does not block
-      galD *= mix(vec3(1.0), vec3(1.04, 0.98, 0.92), absorb * bandM);
+      galD *= mix(vec3(1.0), vec3(1.05, 0.97, 0.9), absorb * bandM);
     }
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
     float dens = smoothstep(0.0, 1.0, gl * 90.0);
     stars += starLayer(dc, 70.0, 1.0, 0.3, 0.004, 9.0, uStarCut);                         // naked-eye stars, wide magnitude range
-    stars += starLayer(dc, 190.0, 7.0, 0.006 + 0.45 * dens, 0.0025, 0.12, uStarCut * 0.6);  // faint field, crowded into the band
-    if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.3 * dens * dens, 0.0014, 0.035, uStarCut * 0.4); // band grain (band only)
+    stars += starLayer(dc, 190.0, 7.0, 0.006 + 0.6 * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
+    if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.0018, 0.05, uStarCut * 0.4); // band grain: the river is made of stars
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
     float el = dot(rd, up);
@@ -557,7 +565,7 @@ export default class Sky {
     u.uStarVis.value = Math.max(night, space);
     // the band is the centrepiece of a dark night (adapted eye); beside a sunlit planet it fades
     const deepNight = night * (1 - THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2) * space);
-    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.48, 1.0, deepNight * (1 - space * 0.5)) // (dark-adapted, but the bulge must keep its dust lanes, not blow out);
+    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.36, 0.64, deepNight) * (1 + 0.25 * space) // (dark-adapted, but the bulge must keep its dust lanes, not blow out);
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);

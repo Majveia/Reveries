@@ -27,7 +27,7 @@ export const AP_SLICES = 32, AP_RES = 32; // froxel volume: 32×32 screen tiles 
 
 // Tunables (visual optical depths, vertical, at density 1).
 const TAU_R = 0.34; // Rayleigh, channel weight 1.0 (Earth's blue ≈ 0.27 — slightly hazier, richer sunsets)
-const TAU_O = 0.05; // ozone (green), scaled by the planet's life
+const TAU_O = 0.032; // ozone (green, ≈ Earth column), scaled by the planet's life — more read as a magenta/lavender cast
 export const SUN_E0 = 4.6; // sun illuminance at the top of the atmosphere
 
 // ---------------------------------------------------------------------------------

@@ -246,6 +246,8 @@ export default class Terrain {
     g.setAttribute('aMatA', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
     g.setAttribute('aMatB', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
     g.setAttribute('aHgt', new THREE.BufferAttribute(new Float32Array(VC), 1));
+    g.setAttribute('aHorA', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
+    g.setAttribute('aHorB', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
     g.setIndex(this.index);
     g.boundingSphere = new THREE.Sphere();
     g.boundingBox = new THREE.Box3();
@@ -269,6 +271,8 @@ export default class Terrain {
     A.aMatA.array.set(d.matA); A.aMatA.needsUpdate = true;
     A.aMatB.array.set(d.matB); A.aMatB.needsUpdate = true;
     A.aHgt.array.set(d.hgt); A.aHgt.needsUpdate = true;
+    A.aHorA.array.set(d.horA); A.aHorA.needsUpdate = true;
+    A.aHorB.array.set(d.horB); A.aHorB.needsUpdate = true;
     g.boundingSphere.center.set(d.center[0], d.center[1], d.center[2]);
     g.boundingSphere.radius = d.radius;
     m.position.set(d.origin[0], d.origin[1], d.origin[2]);
@@ -471,7 +475,11 @@ export default class Terrain {
   // ---------------------------------------------------------------- far sun shadow
   _setupSunShadow() {
     const q = this.engine.quality;
-    this.sunShadow = { enabled: q.level >= 1, texture: null, matrix: new THREE.Matrix4(), extent: 0 };
+    // The per-vertex horizon (ChunkBuilder) now carries every terrain-on-terrain sun
+    // shadow: soft, exact at every LOD, free on the GPU. The depth map (faceted at
+    // coarse LODs: sawtooth crests, diamond blocks from altitude) stays opt-in (?sunmap=1).
+    let opt = false; try { opt = /[?&]sunmap=1/.test(self.location?.search || ''); } catch { /* worker-less */ }
+    this.sunShadow = { enabled: q.level >= 1 && opt, texture: null, matrix: new THREE.Matrix4(), extent: 0 };
     if (!this.sunShadow.enabled) return;
     const size = q.pick(1024, 1024, 2048, 2048);
     const rt = new THREE.WebGLRenderTarget(size, size, { depthBuffer: true });

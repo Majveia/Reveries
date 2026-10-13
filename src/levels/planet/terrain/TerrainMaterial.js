@@ -16,6 +16,7 @@
 //   • far-terrain sun visibility (terrain shadow map owned by the terrain
 //     subsystem) folded into the directional light
 import * as THREE from 'three';
+import { HOR_AXIS } from './ChunkBuilder.js';
 
 // ---------------------------------------------------------------------------
 // Noise volumes (generated once per session; pure code, no assets)
@@ -151,6 +152,11 @@ attribute vec4 aNrm2;
 attribute vec4 aMatA;
 attribute vec4 aMatB;
 attribute float aHgt;
+attribute vec4 aHorA;
+attribute vec4 aHorB;
+uniform vec3 uHorSun;
+uniform vec3 uHorAxis;
+varying vec3 vHor;
 uniform vec3 uDetailOrigin;
 uniform float uLodK;
 uniform float uFaceSize;
@@ -182,6 +188,28 @@ vMatA = aMatA;
 vMatB = aMatB;
 vH = aHgt + dot( aMorph * tMorph, vUp );
 vDist = tDist;
+// horizon-based terrain sun shadow + sky occlusion (8 azimuths baked per vertex)
+{
+  vec3 hE = cross( uHorAxis, vUp );
+  hE = dot( hE, hE ) > 1e-12 ? normalize( hE ) : vec3( 1.0, 0.0, 0.0 );
+  vec3 hN = cross( vUp, hE );
+  float sz = dot( uHorSun, vUp );
+  float az = atan( dot( uHorSun, hN ), dot( uHorSun, hE ) ) * 1.2732395; // [-4, 4] in 45° bins
+  az = az < 0.0 ? az + 8.0 : az;
+  vec4 hA = aHorA * 1.25 - 0.25, hB = aHorB * 1.25 - 0.25;
+  vec4 iA = vec4( 0.0, 1.0, 2.0, 3.0 ), iB = iA + 4.0;
+  vec4 dA = abs( az - iA ), dB = abs( az - iB );
+  dA = min( dA, 8.0 - dA ); dB = min( dB, 8.0 - dB );
+  vec4 wA = max( 1.0 - dA, 0.0 ), wB = max( 1.0 - dB, 0.0 );
+  float hor = dot( wA, hA ) + dot( wB, hB );
+  // the shadow test runs per fragment on the interpolated horizon angle: interpolating
+  // a per-vertex visibility would print the triangle grid as a sawtooth terminator
+  vHor.x = hor;
+  vHor.z = sz;
+  // cosine-weighted sky visibility: 1 - mean(sin² h)
+  vec4 pA = max( hA, 0.0 ), pB = max( hB, 0.0 );
+  vHor.y = 1.0 - ( dot( pA, pA ) + dot( pB, pB ) ) * 0.125;
+}
 `;
 
 const FRAG_PARS = /* glsl */`
@@ -211,6 +239,7 @@ uniform sampler2D tSunVis;     // far terrain shadow (depth, sun ortho)
 uniform mat4 uSunVisMatrix;    // world (detail space) → sun shadow uv/depth
 uniform float uSunVisOn;
 uniform vec4 uSunVisParams;    // reversed, depth bias, normal offset (m)
+varying vec3 vHor;
 varying vec3 vD;
 varying vec3 vWN;
 varying vec3 vUp;
@@ -309,12 +338,15 @@ const FRAG_SURFACE = /* glsl */`
     float hold = 1.0 - smoothstep( 0.1 + 0.12 * gully, 0.3 + 0.16 * gully, slope + meso * 0.05 + m1.w * 0.03 );
     float cover = snowA * 1.35 - 0.12 + gully * 0.25 - ridge * 0.3 * smoothstep( 0.04, 0.16, slope );
     cover += ( m2.w * 0.22 + m1.w * 0.16 + m3.w * 0.12 ) * ( 1.0 - 0.5 * smoothstep( 0.9, 1.3, snowA * 1.35 ) );
-    snowW = smoothstep( 0.38, 0.62, cover ) * hold * step( 0.02, snowA );
+    float cfw = min( fwidth( cover ) * 1.5, 0.35 ); // footprint-widened edge: no salt-and-pepper specks at range
+    snowW = smoothstep( 0.38 - cfw, 0.62 + cfw, cover ) * hold * step( 0.02, snowA );
   }
 
   // ---- strata coordinate (radial height, gently warped) ----
   float strataH = uStyleA.x;
   float sCoord = ( h + m2.w * strataH * 0.45 + m3.w * strataH * 0.12 ) / strataH;
+  // irregular bed thickness (0.3x–1.7x, monotonic warp): real strata are never a ruled grid
+  sCoord += 0.3 * sin( sCoord * 1.3 ) + 0.12 * sin( sCoord * 2.9 + 1.7 );
   float sBand = floor( sCoord );
   float sFrac = fract( sCoord );
   float bandRnd = hash11( sBand * 1.618 + 0.37 );
@@ -433,13 +465,14 @@ const FRAG_SURFACE = /* glsl */`
     // ~12 cm wind ripples; a 1 m phase warp makes them bifurcate (Y-junctions)
     vec4 wf = octW( 1.0 / 8.0, pix ) > 0.0 ? nA( D.yzx + 7.0, 1.0 / 8.0 ) : vec4( 0.0 );
     vec4 wl4 = nA( D.zxy + 13.0, 1.0 / 32.0 );
-    float lam = 0.16 * ( 1.0 + 0.5 * wl4.w );   // 8–24 cm ripples, coarser in patches
+    float lam = 0.3 * ( 1.0 + 0.45 * wl4.w );   // 16–45 cm ripples, coarser in patches
     float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + dot( D, wb ) * 0.2;
     vec4 wq2 = nA( D.zxy + 5.0, 1.0 / 64.0 );
     float lam2 = 1.6 * ( 1.0 + 0.35 * wl4.w );
     float ph2 = dot( D, wt ) / lam2 + wq.w * 2.6 + wq2.w * 4.5 + dot( D, wb ) * ( 0.05 + 0.12 * wq2.w );
     float f1 = fract( ph1 ), f2 = fract( ph2 );
-    float bl1 = 1.0 - smoothstep( 0.12, 0.4, fwidth( ph1 ) ), bl2 = 1.0 - smoothstep( 0.12, 0.4, fwidth( ph2 ) );
+    // band-limit softly: ripples stay as shading bands well into the mid field
+    float bl1 = 1.0 - smoothstep( 0.25, 0.75, fwidth( ph1 ) ), bl2 = 1.0 - smoothstep( 0.25, 0.75, fwidth( ph2 ) );
     // asymmetric profile: long stoss slope, steep lee face
     float p1 = f1 < 0.75 ? f1 / 0.75 : ( 1.0 - f1 ) / 0.25;
     float d1 = f1 < 0.75 ? 1.0 / 0.75 : -1.0 / 0.25;
@@ -451,11 +484,11 @@ const FRAG_SURFACE = /* glsl */`
     // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
     float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7 * bl2;
     // crisp wind ripples catching the light; megaripples are rare, gentle patches
-    gSand += wt * ( d1 / lam ) * 0.005 * w1 + wt * ( d2 / 1.6 ) * 0.006 * w2;
+    gSand += wt * ( d1 / lam ) * 0.0095 * w1 + wt * ( d2 / 1.6 ) * 0.007 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1;
     w = octW( 0.25, pix );
-    if ( w > 0.0 ) { vec4 s1 = nA( D.yzx, 0.25 ); gSand += s1.xyz * 0.015 * w; }
+    if ( w > 0.0 ) { vec4 s1 = nA( D.yzx, 0.25 ); gSand += s1.xyz * 0.004 * w; } // faint: the old 0.015 read as orange-peel blotches
     // grain sparkle (1 cm-ish facets), very subtle
     w = octW( 4.0, pix );
     if ( w > 0.0 ) { vec4 s2 = nA( D.zxy + 3.3, 4.0 ); gSand += s2.xyz * 0.004 * w; }
@@ -507,8 +540,13 @@ const FRAG_SURFACE = /* glsl */`
     vec3 Dv = D - up * dot( D, up ) * 0.85;
     float gul = nA( Dv.zxy + 7.0, 1.0 / 48.0 ).w * 0.7 + nA( Dv.yzx + 2.0, 1.0 / 16.0 ).w * 0.3 * octW( 1.0 / 16.0, pix * 0.5 );
     float gw = smoothstep( 0.22, 0.55, slope ) * octW( 1.0 / 48.0, pix * 0.35 );
-    rockCol *= 1.0 - gw * smoothstep( 0.05, 0.6, gul ) * 0.38;
-    rockCol *= 1.0 + gw * smoothstep( -0.15, -0.6, gul ) * 0.16;
+    rockCol *= 1.0 - gw * smoothstep( 0.05, 0.6, gul ) * 0.48;
+    rockCol *= 1.0 + gw * smoothstep( -0.15, -0.6, gul ) * 0.2;
+    // coarse couloirs / scree chutes (~30 m wide): carry wall structure out to several km
+    float gulC = nA( Dv.yzx + 11.0, 1.0 / 256.0 ).w + nA( Dv.zxy + 4.0, 1.0 / 96.0 ).w * 0.4;
+    float gwC = smoothstep( 0.18, 0.5, slope ) * octW( 1.0 / 256.0, pix * 0.3 );
+    rockCol *= 1.0 - gwC * smoothstep( 0.1, 0.7, gulC ) * 0.42;
+    rockCol *= 1.0 + gwC * smoothstep( -0.2, -0.7, gulC ) * 0.18;
     rockCol *= mix( vec3( 1.0 ), vec3( 1.07, 1.0, 0.9 ), smoothstep( -0.3, 0.5, m1.w ) * 0.5 );
     rockCol *= mix( vec3( 1.0 ), vec3( 0.9, 0.95, 1.04 ), smoothstep( 0.0, -0.6, m0.w ) * 0.4 );
   }
@@ -567,7 +605,7 @@ const FRAG_SURFACE = /* glsl */`
   // physically plausible floor: meadows are never darker than ~0.07 linear
   {
     float gl = dot( grassCol, vec3( 0.2126, 0.7152, 0.0722 ) );
-    grassCol *= clamp( 0.075 / max( gl, 1e-3 ), 1.0, 1.7 );
+    grassCol *= clamp( 0.105 / max( gl, 1e-3 ), 1.0, 1.9 );
   }
   // ---- near-field ground cover (0.1–1 m): the earth between the grass blades ----
   // clumps of turf with dark soil gaps, leaf litter / dry thatch specks and
@@ -612,12 +650,12 @@ const FRAG_SURFACE = /* glsl */`
   }
   {
     float gl2 = dot( grassCol, vec3( 0.2126, 0.7152, 0.0722 ) );
-    grassCol *= clamp( 0.07 / max( gl2, 1e-3 ), 1.0, 1.5 );
+    grassCol *= clamp( 0.1 / max( gl2, 1e-3 ), 1.0, 1.7 );
   }
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );
   soilCol = mix( soilCol, uRockA * 0.9, 0.25 + peb * 0.4 );
-  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.07 * rippleShade );
+  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.14 * rippleShade );
   // troughs: darker, redder (iron-stained, coarse lag); crests paler & finer
   float trough = smoothstep( 0.52, 0.62, cav );
   sandCol = mix( sandCol, sandCol * vec3( 0.92, 0.84, 0.77 ), trough * 0.45 );
@@ -648,11 +686,11 @@ const FRAG_SURFACE = /* glsl */`
   // (shrub tufts → far: a broken green veil that gives cliffs scale, Guilin / Ghibli)
   {
     float ledgeV = 1.0 - smoothstep( 0.28, 0.6, slope + meso * 0.08 );
-    float bedTop = smoothstep( 0.72, 0.96, sFrac ) * smoothstep( 0.3, 0.7, slope ) * uStyleA.y;
+    float bedTop = smoothstep( 0.72, 0.96, sFrac ) * smoothstep( 0.3, 0.7, slope ) * ( 1.0 - smoothstep( 0.62, 0.86, slope + meso * 0.06 ) ) * uStyleA.y; // sheer walls stay bare limestone
     float clingK = clamp( ledgeV * 0.85 + bedTop * 0.8, 0.0, 1.0 ) * smoothstep( 0.32, 0.62, moist ) * uGrassK * ( 1.0 - snowW ) * ( 1.0 - sandA );
     if ( clingK * wRock > 0.01 ) {
       vec4 vt = nB( D.zxy + 3.0, 1.0 / 16.0 );       // ~2 m shrub tufts
-      float tuft = mix( smoothstep( 0.55, 0.2, vt.x ), 0.45 + 0.25 * meso, smoothstep( 0.4, 3.0, pix ) );
+      float tuft = mix( smoothstep( 0.55, 0.2, vt.x ), 0.3 + 0.45 * meso + 0.2 * m2.w, smoothstep( 0.4, 3.0, pix ) ); // far: broken patches, not a uniform veil
       float cw = smoothstep( 0.32, 0.62, clingK * ( 0.55 + 0.7 * tuft ) + meso * 0.12 + m3.w * 0.06 );
       vec3 shrub = grassCol * vec3( 0.62, 0.7, 0.6 ) * ( 0.8 + 0.4 * vt.z );
       albedo = mix( albedo, shrub, cw * wRock * 0.85 );
@@ -706,7 +744,10 @@ const FRAG_SURFACE = /* glsl */`
   ao *= 1.0 - crack * 0.6 * wRock;
   ao *= mix( 1.0, 0.75 + 0.25 * clamp( hRock + 0.5, 0.0, 1.0 ), wRock );
   ao *= mix( 0.9 + 0.1 * clamp( hGrass * 0.5 + 0.5, 0.0, 1.0 ), 1.0, max( wRock, wSand ) );
-  ao *= mix( clamp( groundAO, 0.62, 1.0 ), 1.0, max( max( wRock, wSand ), wSnow ) );
+  ao *= mix( clamp( groundAO, 0.8, 1.0 ), 1.0, max( max( wRock, wSand ), wSnow ) );
+  // large-scale sky occlusion from the baked horizon: valleys, gorges and
+  // cirques darken → readable landform hierarchy at every distance
+  ao *= mix( 1.0, clamp( vHor.y, 0.0, 1.0 ), 0.85 );
   tAO = ao;
 
   // ---- volcanic glow in deep cracks of hot basalt ----
@@ -721,7 +762,13 @@ const FRAG_SURFACE = /* glsl */`
   tN = normalize( Ng - gT );
   tRough = rough;
   diffuseColor.rgb = albedo;
-  tSunVisF = sunVisibility( D, Ng );
+  {
+    // soft terrain sun shadow from the baked horizon: penumbra ≈ sun disc + the
+    // horizon's own variation across the pixel (no aliasing where it changes fast)
+    float pw = 0.03 + min( fwidth( vHor.x ) * 1.5, 0.12 );
+    float hv = smoothstep( vHor.x - pw, vHor.x + pw * 0.6, vHor.z );
+    tSunVisF = min( sunVisibility( D, Ng ), hv );
+  }
 }
 `;
 
@@ -771,6 +818,8 @@ export function createTerrainMaterial(world, style) {
     uSunVisMatrix: { value: new THREE.Matrix4() },
     uSunVisOn: { value: 0 },
     uSunVisParams: { value: new THREE.Vector4(1, 0.001, 20, 0) },
+    uHorSun: world.uniforms.uSunDir,
+    uHorAxis: { value: new THREE.Vector3(...HOR_AXIS) },
   };
 
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
@@ -794,7 +843,7 @@ export function createTerrainMaterial(world, style) {
       .replace('#include <lights_fragment_begin>', lights)
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.15 );');
   };
-  material.customProgramCacheKey = () => 'reveries-terrain-v4';
+  material.customProgramCacheKey = () => 'reveries-terrain-v5';
 
   // Shadow-map caster. Shadows render back faces (three's default for FrontSide), which
   // on a heightfield are exactly the slopes facing away from the light — plus the chunk

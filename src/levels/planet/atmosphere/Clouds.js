@@ -38,6 +38,7 @@ uniform vec3 uCam;
 uniform vec3 uKeyDir, uKeyE;   // key light direction and TOA illuminance
 uniform vec3 uKey2Dir, uKey2E; // second key (moon at night; 0 by day), cheap light march
 uniform vec3 uNightAmb;        // starlight + airglow floor (radiance): unlit clouds read blue-grey, never holes
+uniform vec3 uFogGlowC;       // bioluminescent mist (the atmosphere's uFogGlow): it scatters in front of / under the clouds too
 uniform vec3 uCityGlow;       // settlement / bioluminescent glow lighting cloud bases from below (radiance)
 uniform vec3 uCloudAlbedo;
 uniform float uSteps, uLightSteps, uMaxDist, uFrame, uOrbitLod;
@@ -53,7 +54,7 @@ float hg(float c, float g){ float g2 = g * g; return 0.0795775 * (1.0 - g2) / po
 // the LUT for the sun and the moon at *this* position on the planet (so the
 // night hemisphere goes black and dusk clouds turn rose and amber).
 vec3 cloudSkyAmb(vec3 up, float r){
-  return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir)) + uNightAmb;
+  return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir));
 }
 
 // Orbit: a cheap "projected" layer instead of the full march, but integrated through
@@ -119,7 +120,7 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float fwd = hg(cosV, 0.65) * 0.5 * (1.0 - thick) * dayK;
   vec3 Ld = uKeyE * Tl * (refl + fwd);
   // ambient: zenith sky + a cool skylight floor in the self-shadowed flanks
-  vec3 Sa = cloudSkyAmb(n, r) * PI * (0.32 + 0.22 * hMean) * (0.7 + 0.3 * selfSh);
+  vec3 Sa = (cloudSkyAmb(n, r) + uNightAmb) * PI * (0.32 + 0.22 * hMean) * (0.7 + 0.3 * selfSh);
   vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.3 * wx.b);
   vec2 ta = raySphere(ro, rd, uRt);
   float a0 = max(ta.x, 0.0);
@@ -162,7 +163,9 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   float graze = 1.0;
   if (r0 > uCloudTop) { vec3 Pe = ro + rd * t0; graze = smoothstep(0.02, 0.25, -dot(rd, normalize(Pe))); }
   float dt = seg / N;
-  float jit = fract(ign(gl_FragCoord.xy) + uFrame * 0.618034);
+  // per-pixel white-noise start offset, re-seeded each frame (an interleaved-gradient
+  // pattern left diagonal moire stripes whenever the accumulation was short)
+  float jit = fract(sin(dot(gl_FragCoord.xy + uFrame * vec2(37.31, 17.77), vec2(12.9898, 78.233))) * 43758.5453);
   float cosK = dot(rd, uKeyDir);
   float phase = mix(hg(cosK, 0.8), hg(cosK, -0.3), 0.3);
   vec3 camUp = normalize(ro);
@@ -236,8 +239,10 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
       // moon: two shape-only light samples, same multiple-scattering octaves
       float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.04, lod) * 0.08 + cloudDensity(P + uKey2Dir * shellH * 0.16, 1.0) * 0.2 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
       float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.32) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.1) * 0.0795775;
-      // moonlit silver rims on the thin margins
-      ms2 += 0.2 * hg(cosK2, 0.9) * exp(-od2) * (1.0 - smoothstep(0.0, 0.3, d));
+      // Beer-powder: dense interiors facing away from the moon stay dark, lit flanks glow
+      ms2 *= mix(1.0, 1.0 - exp(-ext * 380.0), 0.35 + 0.4 * smoothstep(-0.2, 0.6, -cosK2));
+      // moonlit silver rims on the thin margins (strong forward lobe: rims glow around the moon)
+      ms2 += (0.35 + 0.9 * smoothstep(0.6, 0.97, cosK2)) * hg(cosK2, 0.9) * exp(-od2 * 0.7) * (1.0 - smoothstep(0.0, 0.32, d));
       Sk += uKey2E * transmittanceToLight(r, dot(upL, uKey2Dir)) * ms2 * 3.14159;
     }
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
@@ -248,10 +253,12 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     float muSun = dot(upL, uSunDir);
     vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA);
     // ground bounce reaches the bases desaturated (a green/ochre world must not tint the deck)
-    gndA = mix(vec3(dot(gndA, vec3(0.3333))), gndA, 0.35) + uCityGlow;
+    gndA = mix(vec3(dot(gndA, vec3(0.3333))), gndA, 0.35) + uCityGlow + uFogGlowC * 1.6;
     // tops see the whole (blue) sky dome, bases a cool blue-grey mix of sky and a little bounce
     vec3 Sa = (skyA * (0.5 + 0.7 * sqrt(hl)) + gndA * 0.35 * (1.0 - hl)) * (0.7 + 0.3 * ambOcc) * PI * 0.36
-      + skyA * PI * 0.05; // sky-coloured multiple-scattering floor: thick bases read blue-grey, never navy holes
+      + skyA * PI * 0.05
+      // starlight/airglow floor graded by height: dark bases (0.2x), faintly lit domes (1x)
+      + uNightAmb * PI * 0.36 * mix(0.2, 1.0, sqrt(hl)) * (0.55 + 0.45 * ambOcc); // sky-coloured multiple-scattering floor: thick bases read blue-grey, never navy holes
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -269,6 +276,13 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   vec3 Lair, Tair;
   atmoIntegrate(ro, rd, a0, max(dW, a0 + 1.0), 8, 0, Lair, Tair);
   vec3 col = L * Tair + Lair * alpha;
+  // glowing mist between the camera and a low deck (no black cut-outs in a bioluminescent night)
+  // (same shallow-layer path as the atmosphere's glowing mist, so a deck matches the sky behind it)
+  if (uFogGlowC.r + uFogGlowC.g + uFogGlowC.b > 0.0) {
+    float tE = min(dW, 7000.0);
+    float hRel = max(0.5 * (length(ro) + length(ro + rd * tE)) - uRb - uFog.z - 40.0, 0.0);
+    col += uFogGlowC * (1.0 - exp(-tE / 1700.0 * exp(-hRel / 80.0))) * alpha;
+  }
   dOut = dW;
   return vec4(col, T);
 }
@@ -399,7 +413,7 @@ export default class Clouds {
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uKeyE: { value: new THREE.Vector3() },
         uKey2Dir: { value: new THREE.Vector3(0, 1, 0) }, uKey2E: { value: new THREE.Vector3() }, uNightAmb: { value: new THREE.Vector3() },
-        uCityGlow: { value: new THREE.Vector3() },
+        uCityGlow: { value: new THREE.Vector3() }, uFogGlowC: { value: new THREE.Vector3() },
         uCloudAlbedo: { value: new THREE.Vector3(1, 1, 1) },
         uSteps: { value: 64 }, uLightSteps: { value: 6 }, uMaxDist: { value: 90000 }, uFrame: { value: 0 }, uOrbitLod: { value: 0 },
         tHistory: { value: null }, uPrevViewProj: { value: new THREE.Matrix4() }, uHistoryBlend: { value: 0 },
@@ -472,14 +486,16 @@ export default class Clouds {
     const k2 = sunUp > 0 && moonUp > 1e-6 ? 1 - THREE.MathUtils.smoothstep(sunEl, -0.25, 0.05) : 0;
     mu.uKey2Dir.value.copy(m.moonDir);
     // scotopic tint: moonlit cloud tops read cool silver, never cream
-    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 3.6);
+    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 10.0);
     const nightK = light ? light.night : 0;
     // starlight + airglow + scattered moonlight: unlit clouds read as dark blue-grey shapes over the stars
-    mu.uNightAmb.value.set(1.4e-3, 1.9e-3, 2.9e-3).multiplyScalar(nightK); // starlit/airglow decks read slate-blue against the band, not black paper
+    mu.uNightAmb.value.set(0.75e-3, 1.05e-3, 1.7e-3).multiplyScalar(nightK); // starlit/airglow decks read slate-blue against the band, not black paper
     // curvature compression fades out with altitude (from high up the true terminator shows)
     const altK = ctx.cameraPosition.length() - m.Rb;
     mu.uCurveK.value = 0.65 * (1 - THREE.MathUtils.smoothstep(altK, this.topH, this.topH * 2.4));
     mu.uCityGlow.value.set(0, 0, 0);
+    if (light && light._bio) mu.uFogGlowC.value.set(light._bio.r, light._bio.g, light._bio.b).multiplyScalar(0.06 * (light.night || 0));
+    else mu.uFogGlowC.value.set(0, 0, 0);
     if (light && light.night > 0.05) {
       // night: settlements within a few km light the cloud bases from below
       if (this._cityGlow === undefined || (this._cgFrame = (this._cgFrame || 0) + 1) % 30 === 0) {
@@ -523,7 +539,11 @@ export default class Clouds {
     const jump = this._lastCamPos.distanceTo(cam.position) > 25 || 2 * Math.acos(Math.min(1, Math.abs(this._lastCamQ.dot(cam.quaternion)))) > 0.035;
     this._lastCamPos.copy(cam.position); this._lastCamQ.copy(cam.quaternion);
     if (jump) this._historyValid = false;
-    mu.uHistoryBlend.value = !this._historyValid || orbit ? 0 : (this.engine.shotMode ? 0.6 : 0.86);
+    // shots: a running mean over the converging frames (each frame weighs the same → the
+    // march noise integrates away instead of decaying into stripes); live play: EMA
+    if (!this._historyValid || orbit) this._accN = 0;
+    this._accN = (this._accN || 0) + 1;
+    mu.uHistoryBlend.value = !this._historyValid || orbit ? 0 : (this.engine.shotMode ? Math.min(0.92, 1 - 1 / this._accN) : 0.86);
     ctx.fullscreen(this.marchMat, this.rt);
     this._historyValid = true;
     mu.uPrevViewProj.value.multiplyMatrices(ctx.camera.projectionMatrix, ctx.camera.matrixWorldInverse);

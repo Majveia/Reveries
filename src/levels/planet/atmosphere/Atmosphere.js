@@ -115,8 +115,11 @@ void main(){
     float tEnd = min(far ? t1 : dist, 7000.0);
     float hC = r - uRb, hE = length(ro + rd * tEnd) - uRb;
     float hRel = max(0.5 * (hC + hE) - uFog.z - 40.0, 0.0);
-    float g = 1.0 - exp(-tEnd / 520.0 * exp(-hRel / 140.0));
-    float n = 0.65 + 0.35 * snoise((ro + rd * min(tEnd, 600.0)) * (1.0 / 260.0) + uFogWind * 3.0);
+    // slow build-up with distance + a shallow scale height: silhouettes stack in depth
+    // (near ridges dark, far valleys glowing) instead of one flat teal veil
+    float g = 1.0 - exp(-tEnd / 1700.0 * exp(-hRel / 80.0));
+    vec3 Pn = ro + rd * min(tEnd, 900.0);
+    float n = 0.35 + 0.65 * smoothstep(-0.45, 0.75, snoise(Pn * (1.0 / 420.0) + uFogWind * 3.0) * 0.7 + snoise(Pn * (1.0 / 140.0) - uFogWind * 2.0) * 0.3);
     L += uFogGlow * g * n;
   }
 #ifdef CLOUDS
@@ -208,7 +211,7 @@ export default class Atmosphere {
     u.uNear.value = ctx.near; u.uFar.value = ctx.far; u.uRev.value = ctx.reversed;
     u.uProjInv.value.copy(ctx.projInv); u.uViewInv.value.copy(ctx.viewInv); u.uCam.value.copy(ctx.cameraPosition);
     const Lt = this.level.lighting;
-    if (Lt && Lt._bio) u.uFogGlow.value.set(Lt._bio.r, Lt._bio.g, Lt._bio.b).multiplyScalar(0.06 * (Lt.night || 0));
+    if (Lt && Lt._bio) u.uFogGlow.value.set(Lt._bio.r, Lt._bio.g, Lt._bio.b).multiplyScalar(0.075 * (Lt.night || 0));
     else u.uFogGlow.value.set(0, 0, 0);
     const c = this.level.sys?.clouds;
     if (this._cloudsHooked && c) {
