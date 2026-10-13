@@ -21,12 +21,12 @@ function rockGeometry(seed, detail) {
   const sx = rng.range(0.55, 1.0), sy = rng.range(0.4, 0.85), sz = 1.0;
   // impact craters (power-law sizes) and fracture planes: rubble piles are faceted, not blobs
   const craters = [];
-  const nc = 4 + detail * 3;
+  const nc = Math.min(34, 4 + detail * 3);
   for (let i = 0; i < nc; i++) { const [x, y, z] = rng.unitVector(); const rad = 0.12 + 0.5 * Math.pow(rng.float(), 2.2); craters.push([new THREE.Vector3(x, y, z), rad, rad * rng.range(0.25, 0.45)]); }
   const planes = [];
   // big bodies are shattered fragments: more, deeper fracture planes with near-knife edges
   const np = detail >= 4 ? rng.int(4, 7) : rng.int(1, 4);
-  const soft = detail >= 4 ? 0.03 : 0.12;
+  const soft = detail >= 10 ? 0.008 : detail >= 4 ? 0.03 : 0.12;
   for (let i = 0; i < np; i++) { const [x, y, z] = rng.unitVector(); planes.push([new THREE.Vector3(x, y, z), detail >= 4 ? rng.range(0.55, 0.8) : rng.range(0.62, 0.86)]); }
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i).normalize();
@@ -38,6 +38,10 @@ function rockGeometry(seed, detail) {
       const steps = 7, tq = tn * steps, terr = (Math.floor(tq) + Math.pow(tq - Math.floor(tq), 4)) / steps;
       r += (terr - tn) * 0.09;
       r -= 0.035 * (1 - Math.abs(n.fbm3(v.x * 5.5 - 3, v.y * 5.5, v.z * 5.5, 3))) ** 6;
+    }
+    if (detail >= 10) {
+      // high-res worldlets: boulder-scale ridges and fine regolith relief the dense mesh can now carry
+      r += 0.012 * n.ridged3(v.x * 26 + 7, v.y * 26, v.z * 26, 3) + 0.005 * n.fbm3(v.x * 60, v.y * 60, v.z * 60, 2);
     }
     for (const [c, rad, depth] of craters) {
       const d = v.distanceTo(c) / rad;
@@ -58,8 +62,8 @@ const ROCK_VERT = /* glsl */`
 attribute vec4 aOrbit;   // r, theta0, y, omega (rad/day)
 attribute vec4 aRock;    // scale, spin (rad/s), seed, tint
 attribute vec3 aAxis;
-uniform float uDays, uTime;
-varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale;
+uniform float uDays, uTime, uPxScale;
+varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale; varying float vPx;
 vec3 rotAxis(vec3 v, vec3 k, float a){ float c = cos(a), s = sin(a); return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
 void main(){
   float th = aOrbit.y + aOrbit.w * uDays;
@@ -69,13 +73,18 @@ void main(){
   vN = rotAxis(normal, aAxis, sa);
   vLP = position; vSeed = aRock.z; vTint = aRock.w; vScale = aRock.x;
   vWP = c + lp;
+  // screen-size LOD: a rock whose disc would be under ~1.3 px is not drawn at all (its light lives in
+  // the dust torus); 1.3-4 px rocks fade in, so a distant belt reads as a soft band, never as salt
+  float dist = max(distance(cameraPosition, c), 1e-4);
+  vPx = 2.0 * aRock.x * uPxScale / dist;
+  if (vPx < 1.3) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   gl_Position = projectionMatrix * viewMatrix * vec4(vWP, 1.0);
 }`;
 
 const ROCK_FRAG = /* glsl */`
 ${NOISE_GLSL}
-uniform vec3 uCol; uniform vec3 uSun; uniform float uIce; uniform float uFade;
-varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale;
+uniform vec3 uCol; uniform vec3 uSun; uniform float uIce; uniform float uFade; uniform float uGain;
+varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varying float vTint; varying float vScale; varying float vPx;
 void main(){
   vec3 Ng = normalize(vN);
   vec3 lp = vLP + vSeed * 17.0;
@@ -112,7 +121,7 @@ void main(){
   float ls = 2.0 * ndl / (ndl + ndvL + 0.05);
   float lit = mix(ndl, ls * ndl * 1.6, 0.45);
   vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce) * ndl;
+  float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce + 0.25 * fresh) * ndl;
   // fill: starlight scattered by the belt's own dust + the galactic band (cool, from the shadow side)
   float fillW = 0.55 + 0.45 * max(dot(N, -L), 0.0);
   vec3 c = alb * uSun * (lit * opp) + uSun * spec + alb * uSun * vec3(0.1, 0.105, 0.13) * fillW;
@@ -124,6 +133,7 @@ void main(){
   float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
   c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 0.9 * (1.0 - tiny);
   c *= 1.0 - 0.75 * tiny;
+  c *= smoothstep(1.3, 4.0, vPx) * uGain;
   gl_FragColor = vec4(c * uFade, 1.0);
 }`;
 
@@ -138,14 +148,16 @@ export class Belt {
     this.rIn = rIn; this.rOut = rOut;
     // LOD by size class: the few big rocks get detailed meshes
     const classes = [
-      { detail: 1, variants: 6, frac: 0.92, size: [0.012, 0.09] },
-      { detail: q.level >= 2 ? 3 : 2, variants: 4, frac: 0.075, size: [0.09, 0.42] },
-      // a handful of large worldlets with full detail
-      { detail: q.level >= 2 ? 5 : 4, variants: 2, frac: 0.005, size: [0.42, 0.9] },
+      // sizes stay well below the inner worlds' discs (planetR ~0.4): a belt is dust and gravel at
+      // system scale, never boulders bigger than Earth
+      { detail: 1, variants: 6, frac: 0.92, size: [0.006, 0.04] },
+      { detail: q.pick(3, 4, 6, 7), variants: 4, frac: 0.075, size: [0.04, 0.15] },
+      // a handful of large worldlets with dense, sharply fractured meshes (they only exist up close)
+      { detail: q.pick(10, 14, 26, 30), variants: 2, frac: 0.005, size: [0.15, 0.32] },
     ];
     const sun = starColor.clone().multiplyScalar(1.9);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.8).lerp(new THREE.Color(0.36, 0.3, 0.25), kuiper ? 0 : 0.3) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 }, uFade: { value: 1 } },
+      uniforms: { uDays: { value: 0 }, uTime: { value: 0 }, uCol: { value: new THREE.Color().setRGB(belt.color[0], belt.color[1], belt.color[2], THREE.SRGBColorSpace).multiplyScalar(kuiper ? 0.9 : 0.8).lerp(new THREE.Color(0.36, 0.3, 0.25), kuiper ? 0 : 0.3) }, uSun: { value: sun }, uIce: { value: kuiper ? 1 : 0.15 }, uFade: { value: 1 }, uGain: { value: 1 }, uPxScale: { value: 500 } },
       vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG,
     });
     this.instances = []; // CPU copy (for shots / picking)
@@ -172,7 +184,7 @@ export class Belt {
           let th = rng.range(0, Math.PI * 2);
           let y = rng.gaussian(0, thick * 0.5);
           // the largest bodies anchor the families; a share of the rest swarms around them
-          const big = cls.size[0] >= 0.4;
+          const big = cls.size[0] >= 0.15;
           let fam = null;
           if (big || rng.chance(kuiper ? 0.15 : 0.32)) {
             const F = fam = big ? fams[fams.findIndex((q) => !q.used) >= 0 ? fams.findIndex((q) => !q.used) : rng.int(0, nF - 1)] : fams[rng.int(0, nF - 1)];
@@ -220,12 +232,12 @@ export class Belt {
           vec4 mv = viewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           vec3 V = normalize(cameraPosition - p), L = normalize(-p);
-          float fwd = pow(max(dot(-V, L), 0.0), 4.0);
+          float fwd = pow(max(dot(-V, L), 0.0), 8.0);
           float dist = -mv.z;
           // soft, overlapping motes: from afar they merge into a faint dusty band instead of salt noise
           // backlit, the motes swell into a soft forward-scattering haze (energy spread over a larger sprite)
-          float sz = clamp(150.0 / dist, 2.0, 8.0) * (1.0 + 0.6 * fwd);
-          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.2 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
+          float sz = clamp(420.0 / dist, 3.0, 14.0) * (1.0 + 0.4 * fwd);
+          vC = uSun * vec3(1.0, 0.84, 0.66) * (0.0016 + 0.07 * fwd) * uK * smoothstep(0.3, 3.0, dist) / max(1.0, dist * 0.04) * (13.0 / (sz * sz));
           gl_PointSize = sz * uDpr;
         }`,
       fragmentShader: /* glsl */`varying vec3 vC; void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; float a = exp(-dot(c, c) * 3.0); gl_FragColor = vec4(vC * a, 1.0); }`,
@@ -236,8 +248,9 @@ export class Belt {
     this.group.add(dust);
   }
 
-  update(days, t, dpr) {
+  update(days, t, dpr, camera) {
     this.mat.uniforms.uDays.value = days;
+    if (camera) this.mat.uniforms.uPxScale.value = (window.innerHeight * dpr) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     this.mat.uniforms.uTime.value = t;
     this.dustMat.uniforms.uDays.value = days;
     this.dustMat.uniforms.uDpr.value = dpr;

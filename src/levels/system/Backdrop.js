@@ -118,16 +118,17 @@ export class Backdrop {
           vec3 p = d * 3.0 + uSeed;
           float wob = fbm(vec3(l * 1.3, 0.0, uSeed), 3) * 0.05;
           float bb = b - wob;
-          float width = 0.05 + 0.075 * near * uBulge;
+          float width = 0.04 + 0.055 * near * uBulge;
           float band = exp(-bb * bb / (2.0 * width * width));
           float clouds = 0.75 + 0.45 * max(fbm(p * 2.2, uOct), -0.4);
-          float fine = 0.7 + 0.6 * fbm(p * 9.0, 3);
+          float fine = 0.82 + 0.36 * fbm(p * 9.0, 3);
           float bulge = exp(-(l * l) / 0.22 - (bb * bb) / (0.02 + 0.03 * uBulge)) * uBulge;
           // unresolved star clouds: grainy, clumpy starlight rather than a smooth gradient
           float grainS = 0.75 + 0.5 * smoothstep(-0.2, 0.7, fbm(p * 14.0 + 5.0, 3));
           // brightness carried by star density: sub-pixel speckle of unresolved stars, clumped into star clouds
-          float speck = pow(0.5 + 0.5 * snoise(d * 950.0 + uSeed), 5.0) * 2.2 + pow(0.5 + 0.5 * snoise(d * 420.0 - uSeed), 3.0) * 1.2;
-          grainS *= 0.45 + speck * smoothstep(-0.3, 0.5, fbm(p * 6.0 + 9.0, 3) + 0.2);
+          // (no per-pixel speckle: it read as TV static) — bright star clouds vs. thin voids at low frequency
+          float sc = smoothstep(-0.25, 0.55, fbm(p * 4.2 + 9.0, 4));
+          grainS *= 0.25 + 0.95 * sc * sc;
           float I = band * clouds * fine * grainS * (0.35 + 0.65 * near) + bulge * 0.9;
           // diffuse galactic light: a much wider, faint skirt around the band
           float skirt = exp(-bb * bb / (2.0 * 9.0 * width * width)) * (0.25 + 0.75 * near);
@@ -141,10 +142,10 @@ export class Backdrop {
           vec3 arm = mix(vec3(dot(uArm, vec3(0.3, 0.5, 0.2))), uArm, 0.3) * vec3(1.0, 0.97, 0.92);
           vec3 col = mix(arm, core, clamp(near * 0.7 + bulge * 0.5 + 0.15, 0.0, 1.0));
           // absorbing dust: lanes redden their edges (warm brown) rather than just dimming
-          col *= mix(vec3(1.0), vec3(1.0, 0.72, 0.5), clamp(lane * fil * uDust * 1.5 + 0.3 * band * uDust * smoothstep(0.1, 0.6, fbm(p * 3.1 - 3.0, 4)), 0.0, 0.85));
+          col *= mix(vec3(1.0), vec3(1.0, 0.72, 0.5), clamp(lane * fil * uDust * 0.7 + 0.15 * band * uDust * smoothstep(0.1, 0.6, fbm(p * 3.1 - 3.0, 4)), 0.0, 0.85));
           col += vec3(0.5, 0.08, 0.15) * 0.5 * smoothstep(0.62, 0.8, fbm(p * 7.0 + 2.0, 3)) * band * (1.0 - lane);
-          vec3 c = (col * I * 0.34 + mix(arm, col, 0.5) * skirt * 0.012) * uK;
-          c = max(c - 0.0015, 0.0); // keep the sky floor pure black (OLED)
+          vec3 c = (col * I * 0.22 + mix(arm, col, 0.5) * skirt * 0.008) * uK;
+          c = max(c - 0.0022, 0.0); // keep the sky floor pure black (OLED)
           gl_FragColor = vec4(c, 1.0);
         }`,
       side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending, transparent: true,

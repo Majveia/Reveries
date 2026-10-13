@@ -267,18 +267,28 @@ void main(){
     float mega = pow(0.5 + 0.5 * snoise(sd * 9.0 + 3.0), 6.0) * 12.0 + 0.2;
     float cores = smoothstep(0.07, 0.0, wc.x) * (0.6 + 0.4 * snoise(sd * 500.0));                                    // city cores
     float sprawl = smoothstep(0.3, 0.03, wc.x) * smoothstep(0.5, 0.85, snoise(sd * 320.0) * 0.5 + 0.5);
-    float roads = smoothstep(0.009, 0.0, wc.y - wc.x) * smoothstep(0.6, 0.2, wc.x);                                 // highways between cities
+    // highway lacework at two scales, anti-aliased so roads stay ~1 px wide at any distance
+    float e1 = wc.y - wc.x;
+    float roads = (1.0 - smoothstep(0.0, fwidth(e1) * 1.3 + 0.0015, e1)) * smoothstep(0.6, 0.2, wc.x);
+    vec2 wr2 = worley(sd * 190.0 + 3.0);
+    float e2 = wr2.y - wr2.x;
+    roads = max(roads, (1.0 - smoothstep(0.0, fwidth(e2) * 1.3 + 0.0015, e2)) * smoothstep(0.55, 0.1, wr2.x) * 0.7);
     vec2 wt = worley(sd * 260.0 + 7.0);
     float town = smoothstep(0.1, 0.0, wt.x) * smoothstep(0.3, 0.7, snoise(sd * 40.0) * 0.5 + 0.5); // scattered towns
     // sparkle: suburbs and towns resolve into pin-sharp grains of light, not a smooth glow
-    float grain = smoothstep(0.45, 0.95, snoise(sd * 1400.0) * 0.5 + 0.5) * 2.4 + 0.12;
+    // pin lights: a surface-locked hashed point field whose cell is ~1.5 px (power-of-two scale, so it
+    // never swims) — binary pins with heavy-tailed brightness instead of smooth noise
+    float pinS = exp2(floor(log2(0.66 / max(length(fwidth(sd)), 1e-6))));
+    vec3 ph3 = hash33(floor(sd * pinS) + 0.5);
+    float pins = step(0.72, ph3.x) * (0.4 + 3.2 * ph3.y * ph3.y * ph3.y);
+    float grain = mix(smoothstep(0.45, 0.95, snoise(sd * 1400.0) * 0.5 + 0.5) * 2.4, pins * 1.6, 0.65) + 0.12;
     float net = clamp(coast + corridor * 1.2, 0.0, 1.6) + 0.3;
     float lights = region * (cores * 2.4 * mega + (sprawl * 0.8 * min(mega, 3.0) + town * 0.8) * grain * net + roads * grain * 0.9 * min(mega, 3.0) + corridor * grain * 0.6) * net * inland * 2.6;
     lights *= 1.0 - smoothstep(0.3, 0.6, snow);
     // sodium amber suburbs vs LED-white downtowns
     vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);
     lights *= (uCiv - 1.0) * 1.3;
-    emis += lc * lights * night * 8.0 * (1.0 - cloud * 0.8);
+    emis += lc * lights * night * 17.0 * (1.0 - cloud * 0.8);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);
@@ -346,11 +356,14 @@ void main(){
   float b4 = prof(y, 140.0, uSeed + 11.0);
   // Cassini-like restraint: pale butterscotch zones, muted belts, grey-blue accents in a narrow value range
   float l0 = dot(uC0, vec3(0.3, 0.5, 0.2)), l1 = dot(uC1, vec3(0.3, 0.5, 0.2)), l2 = dot(uC2, vec3(0.3, 0.5, 0.2));
-  vec3 c0 = mix(vec3(l0), uC0, 0.36) * mix(vec3(1.06, 1.0, 0.86), vec3(1.0), 0.3) * 1.15;
-  vec3 c1 = mix(vec3(l1), uC1, 0.36) * 1.08;
+  vec3 c0 = mix(vec3(l0), uC0, 0.55) * mix(vec3(1.08, 1.0, 0.8), vec3(1.0), 0.3) * 1.18;
+  vec3 c1 = mix(vec3(l1), uC1, 0.55) * 1.04;
   c1 = mix(c1, c0, 0.3);
   vec3 c2 = mix(vec3(l2), uC2, 0.3);
-  vec3 col = mix(c1 * 0.88, c0, smoothstep(-0.6, 0.6, b1 + 0.35 * b2));
+  vec3 col = mix(c1 * 0.8, c0, smoothstep(-0.35, 0.35, b1 + 0.35 * b2));
+  // pale-yellow equatorial zone, blue-grey high latitudes (Cassini)
+  col = mix(col, c0 * vec3(1.1, 1.04, 0.82), exp(-lat0 * lat0 / 0.012) * 0.45);
+  col = mix(col, vec3(dot(col, vec3(0.3, 0.5, 0.2))) * vec3(0.78, 0.86, 0.98), smoothstep(0.45, 0.8, abs(lat0)) * 0.5);
   col = mix(col, c2, smoothstep(0.4, 0.95, b2 * 0.7 + b3 * 0.4) * 0.22);
   col *= 0.92 + 0.065 * b3 + 0.04 * b4;
   col *= 0.95 + 0.07 * n;
@@ -466,15 +479,15 @@ void main(){
   float tone = 0.86 + 0.16 * rNoise(x * 55.0 + uSeed) + 0.08 * rNoise(x * 310.0 + uSeed * 2.0) + 0.05 * rNoise(x * 1400.0);
   // zone albedo: dark dusty C ring and Cassini division, brilliant B ring (brightening outward), greyer A ring
   float zAlb = mix(0.24, 0.38, smoothstep(0.0, 0.25, x));
-  zAlb = mix(zAlb, mix(0.78, 1.08, smoothstep(0.3, 0.55, x)), smoothstep(0.25, 0.29, x));
+  zAlb = mix(zAlb, mix(0.95, 1.3, smoothstep(0.3, 0.55, x)), smoothstep(0.25, 0.29, x));
   zAlb = mix(zAlb, 0.42, smoothstep(0.585, 0.6, x) * (1.0 - smoothstep(0.635, 0.655, x)));
-  zAlb = mix(zAlb, 0.68 - 0.08 * smoothstep(0.8, 0.95, x), smoothstep(0.64, 0.66, x));
+  zAlb = mix(zAlb, 0.72 - 0.1 * smoothstep(0.8, 0.95, x), smoothstep(0.64, 0.66, x));
   tone *= zAlb;
   // C ring and Cassini division: dusty grey-brown; B ring: warm cream (brightest); A ring: cooler, greyer
-  vec3 tint = mix(vec3(0.62, 0.5, 0.42), vec3(1.06, 0.98, 0.86), smoothstep(0.22, 0.34, x));
+  vec3 tint = mix(vec3(0.62, 0.5, 0.42), vec3(1.08, 0.98, 0.84), smoothstep(0.22, 0.34, x));
   tint = mix(tint, vec3(0.84, 0.86, 0.9), smoothstep(0.6, 0.68, x));
   vec3 alb = uCol * tone * tint;
-  alb = mix(vec3(dot(alb, vec3(0.3, 0.55, 0.15))), alb, 0.5);   // water-ice particles: neutral grey-beige (Cassini)
+  alb = mix(vec3(dot(alb, vec3(0.3, 0.55, 0.15))), alb, 0.7);   // water-ice particles: neutral grey-beige (Cassini)
   // self-gravity wakes: faint azimuthal clumping that gives the A ring its grain up close
   float ang = atan(vLP.y, vLP.x);
   float wake = rNoise(ang * 900.0 + x * 400.0 + uSeed) * smoothstep(0.66, 0.75, x) * (1.0 - smoothstep(0.003, 0.02, fw));
@@ -498,7 +511,9 @@ void main(){
   float tp = dot(oc, L);
   float dc = length(oc - L * tp);
   float sh = tp > 0.0 ? smoothstep(uPR * 0.985, uPR * 1.02, dc) : 1.0;
-  vec3 c = alb * uSun * (I + fwd) * sh * 1.1;
+  // opposition surge: coherent backscatter brightens the rings around the zero-phase point
+  float phase = acos(clamp(dot(V, L), -1.0, 1.0));
+  vec3 c = alb * uSun * (I * (1.0 + 0.6 * exp(-phase / 0.05)) + fwd) * sh * 1.18;
   // planetshine on the rings from the day side of the giant (faint, warm)
   c += alb * uSun * 0.01 * (1.0 - sh);
   gl_FragColor = vec4(c * opV, opV);

@@ -175,7 +175,7 @@ export default class SystemLevel {
   _update(dt, t) {
     const cam = this.camera;
     for (const sp of this.planets) sp.update(this.days, t, this.spinT);
-    for (const b of this.belts) b.update(this.days, t, this.engine.renderer.getPixelRatio());
+    for (const b of this.belts) b.update(this.days, t, this.engine.renderer.getPixelRatio(), cam);
     for (const c of this.comets) c.update(this.days, t);
     cam.updateMatrixWorld();
     this.star.update(dt, t, cam, this._starVisibility());
@@ -338,7 +338,7 @@ export default class SystemLevel {
     return {
       hero: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 1;   // galactic band yields to close-up subjects
-        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         // beside the ringed giant at a ~115° phase angle: a lit crescent with open rings in the
         // foreground, the star and the inner worlds strung along their orbits beyond it
         const sp = this.planets.find((x) => x.planet.rings) || this._planet(2);
@@ -350,7 +350,9 @@ export default class SystemLevel {
         // elevation and distance so the star sits on the left third and the ringed giant fills the right
         this.camera.fov = 46; this.camera.updateProjectionMatrix();
         const tanH = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect;
-        const aS = Math.atan(0.74 * tanH), aP = Math.atan(0.5 * tanH);
+        const aS = Math.atan(0.84 * tanH), aP = Math.atan(0.5 * tanH);
+        const others = this.planets.filter((x) => x !== sp).map((x) => x.position);
+        const pxRad = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / 720;
         let best = null, bestScore = -Infinity;
         for (let ph = 112; ph <= 166; ph += 3) for (let el = -0.5; el <= 0.7; el += 0.1) for (let k = 5.5; k <= 10; k += 0.75) {
           const a = THREE.MathUtils.degToRad(ph);
@@ -364,7 +366,13 @@ export default class SystemLevel {
           const open = Math.abs(d.dot(sp.ringN));
           const lit = 0.5 * (1 + d.dot(s));                                     // illuminated fraction of the disk
           const size = ringAng;                                                 // bigger giant = more awe
-          const score = Math.min(open, 0.38) * 3 + lit * 3.5 + size * 2.5 - Math.abs(el - 0.25) * 0.3;
+          // inner worlds must not stack into one dot: penalise pairs closer than ~24 px on screen
+          let clash = 0;
+          for (let i = 0; i < others.length; i++) for (let j = i + 1; j < others.length; j++) {
+            const a1 = _v.copy(others[i]).sub(cam).normalize(), a2 = _w.copy(others[j]).sub(cam).normalize();
+            if (a1.angleTo(a2) < pxRad * 24) clash++;
+          }
+          const score = Math.min(open, 0.38) * 3 + lit * 3.5 + size * 2.5 - Math.abs(el - 0.25) * 0.3 - clash * 0.04;
           if (score > bestScore) { bestScore = score; best = { cam, toP, toS, sep }; }
         }
         if (!best) {
@@ -383,7 +391,7 @@ export default class SystemLevel {
       overview: async () => { this.focus = null; this._pose(new THREE.Vector3(), this.extent * 1.55, 0.7, 0.55); },
       star: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 1;   // galactic band yields to close-up subjects
-        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         this.focus = null;
         const R = L.starR;
         const d0 = new THREE.Vector3(0.05, 0.22, -1).normalize();
@@ -393,7 +401,7 @@ export default class SystemLevel {
       },
       gasgiant: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 0.55;   // galactic band yields to close-up subjects
-        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.3;   // distant belt rocks must not read as confetti in close-ups
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.3, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         const sp = this.planets.find((x) => x.planet.kind === 'gas' && x.planet.rings) || this.planets.find((x) => x.planet.kind === 'gas') || this._planet(5);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
@@ -403,7 +411,7 @@ export default class SystemLevel {
       },
       planet: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 0.6;   // galactic band yields to close-up subjects
-        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.4;   // distant belt rocks must not read as confetti in close-ups
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 0.4, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         const sp = this._planet(2);
         this.focus = sp;
         const s = sp.position.clone().multiplyScalar(-1).normalize();
@@ -413,13 +421,14 @@ export default class SystemLevel {
       },
       belt: async () => {
         this.backdrop.bandMat.uniforms.uK.value = 0.6;   // galactic band yields to close-up subjects
-        for (const b of this.belts) b.mat.uniforms.uFade.value = 1;   // distant belt rocks must not read as confetti in close-ups
+        for (const b of this.belts) b.mat.uniforms.uFade.value = 1, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         this.focus = null;
         const b = this.belts.find((x) => x.kind !== 'kuiper') || this.belts[0];
         if (!b) { this._pose(new THREE.Vector3(), this.extent, 0.4, 0.1); return; }
         const P = b.instances.map((it) => b.instancePosition(it, this.days, new THREE.Vector3()));
         const up = new THREE.Vector3(0, 1, 0);
-        const ph = THREE.MathUtils.degToRad(120);   // ~1/3 lit: a sculpted terminator, the belt haze glowing toward the star
+        for (const x of this.belts) x.mat.uniforms.uGain.value = 1.6;   // close-up exposure for dark regolith
+        const ph = THREE.MathUtils.degToRad(74);   // ~2/3 lit: a sculpted terminator across the hero rock, the star still in frame
         const camFor = (pos, S) => {
           const s = pos.clone().multiplyScalar(-1).normalize();
           const t = new THREE.Vector3().crossVectors(up, s).normalize();
@@ -431,18 +440,18 @@ export default class SystemLevel {
         let bi = 0, bScore = -Infinity;
         const tmp = new THREE.Vector3();
         b.instances.forEach((it, i) => {
-          if (it.s < 0.3) return;
+          if (it.s < 0.15) return;
           const cam = camFor(P[i], it.s), dRock = cam.distanceTo(P[i]);
           const ax = P[i].clone().sub(cam).normalize();
           let nb = 0, occ = 0;
           for (let j = 0; j < P.length; j++) {
-            const o = b.instances[j]; if (j === i || o.s < 0.06) continue;
+            const o = b.instances[j]; if (j === i || o.s < 0.025) continue;
             const dd = P[j].distanceTo(P[i]);
-            if (dd < it.s * 12) nb += Math.min(1, o.s / 0.15);
+            if (dd < it.s * 12) nb += Math.min(1, o.s / 0.06);
             tmp.copy(P[j]).sub(cam); const dc = tmp.length();
-            if (dc < dRock * 1.05 && tmp.dot(ax) > dc * 0.8) occ += 1 + o.s * 4;
+            if (dc < dRock * 1.05 && tmp.dot(ax) > dc * 0.8) occ += 1 + o.s * 10;
           }
-          const sc = it.s * 4 + Math.min(nb, 10) - occ * 6;
+          const sc = it.s * 10 + Math.min(nb, 10) - occ * 6;
           if (sc > bScore) { bScore = sc; bi = i; }
         });
         const pos = P[bi], S = b.instances[bi].s;
@@ -451,9 +460,9 @@ export default class SystemLevel {
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
         const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
-        // the boulder sits right of centre, the star inside the left third
-        const sepSR = toStar.angleTo(toRock);
-        const lookDir = toStar.clone().applyAxisAngle(axis, Math.min(sepSR * 0.6, Math.atan(0.7 * Math.tan(hfov / 2))));
+        // the boulder sits right of centre, lit from the left; the star burns just outside the left edge
+        // and its light rakes across the rock (the field of fragments recedes behind it)
+        const lookDir = toRock.clone().applyAxisAngle(axis, -0.32 * hfov / 2);
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },
