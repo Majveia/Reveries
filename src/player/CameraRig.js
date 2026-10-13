@@ -112,7 +112,7 @@ export class CameraRig {
     // FOV
     // portrait screens (phones): widen the vertical FOV so the horizontal view stays usable
     const portrait = clamp((1.25 - cam.aspect) / 0.8, 0, 1);
-    const fovT = (this.view === 'first' ? 72 : this.baseFov + 9 * (p.sprint || 0) + 13 * (p.glide || 0) + (p.fovAdd || 0)) + portrait * 16;
+    const fovT = (this.view === 'first' ? 64 : this.baseFov + 9 * (p.sprint || 0) + 13 * (p.glide || 0) + (p.fovAdd || 0)) + portrait * 16;
     this.fov += (fovT - this.fov) * (p.freeze ? 1 : 1 - Math.exp(-3.5 * dt));
 
     // shake

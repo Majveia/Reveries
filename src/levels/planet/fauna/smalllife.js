@@ -65,12 +65,17 @@ void main() {
   vec3 up = normalize(aHome.xyz + modelMatrix[3].xyz);
   vec3 c = aHome.xyz + vec3(sin(t * 0.31 + sd) * 1.6 + sin(t * 0.9 + sd * 2.0) * 0.4, 0.0, cos(t * 0.27 + sd * 3.0) * 1.6 + cos(t * 1.1 + sd) * 0.4);
   c += up * (0.5 + 0.9 * (0.5 + 0.5 * sin(t * 0.43 + sd * 5.0)));
-  float period = 3.0 + 5.0 * fract(sd * 0.37);
+  // asymmetric duty cycle: a ~0.4 s flash, then 1.5–5 s dark (real Photinus rhythm)
+  float period = 1.9 + 3.6 * fract(sd * 0.37);
   float ph = fract(t / period + aHome.w * 13.0);
-  vB = smoothstep(0.0, 0.08, ph) * (1.0 - smoothstep(0.1, 0.45, ph)) * uOn;
+  float on = 0.4 / period;
+  vB = smoothstep(0.0, on * 0.25, ph) * (1.0 - smoothstep(on * 0.35, on, ph)) * uOn;
   vUv = position.xy;
   vec4 mv = modelViewMatrix * vec4(c, 1.0);
-  mv.xy += position.xy * 0.22 * step(0.002, vB);
+  // a tiny HDR point core (~2 px) whatever the distance: bloom draws the halo, not a big sprite
+  float sz = min(0.22, 12.0 * max(-mv.z, 0.1) / (projectionMatrix[1][1] * 450.0));
+  vB *= 0.22 / max(sz, 1e-3) > 1.0 ? mix(1.0, 2.2, smoothstep(1.0, 4.0, 0.22 / max(sz, 1e-3))) : 1.0;
+  mv.xy += position.xy * sz * step(0.002, vB);
   gl_Position = projectionMatrix * mv;
 }
 `;

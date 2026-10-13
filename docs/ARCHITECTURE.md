@@ -179,12 +179,16 @@ directions. Main thread and workers must produce identical heights.
     `opts.quiet` renders an always-on name at reduced opacity (hover lifts it); overlapping labels are
     decluttered greedily each frame (hover > named > quiet; a name first tries its preferred side,
     then the other side, then under its body, and never covers another body's anchor; an explicit
-    `opts.align` pins the side). `ui.mapNames` (default on) lets map
+    `opts.align` pins the side). `labelWorld(id, centre, camera, text, {radius})` (world units, or
+    `radiusPx`) anchors the name on the body's projected limb at 45° instead of a point above it
+    (pass the body centre as the vec3, or `opts.center`). `ui.mapNames` (default on) lets map
     levels show quiet names for every body, in shots too.
   - Legibility: the UI samples the presented frame under each HUD anchor every ~18 frames
     (every 2 in shot mode; live play reads back asynchronously through a fenced pixel-pack buffer, so
     it never stalls the GPU) and fades in a feathered "ink" scrim + stronger text halo where the
-    background is bright; pure-black space stays untouched.
+    background is bright; pure-black space stays untouched. The scrim is a masked local backdrop blur
+    (no grey cast; plain veil at quality low); the compass flips to dark ink over bright sky
+    (`.is-onlight`), and the pointer-lock hint carries its own frosted pill.
   - `ui.arrival` in game modes (planet) renders as a lower-left plaque (phones: compact top-left
     caption, auto-fades ≤ 4.6 s, compass hidden meanwhile); map levels keep the centred title card.
     The pointer-lock hint lives bottom-right; bottom-centre is for contextual prompts/hints.

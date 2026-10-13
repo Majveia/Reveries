@@ -39,7 +39,8 @@ void main() {
   float dc = length(wp - uCamW);
   vFade = (1.0 - smoothstep(0.7, 1.0, max(e.x, e.y))) * smoothstep(0.4, 1.5, dc) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.48, dc) * uKind) * (1.0 - smoothstep(uHeight * 0.85, uHeight, lp.y - uGroundY));
   // tumbling quad
-  float a1 = t * (1.5 + 2.0 * r) + r * 30.0, a2 = t * (1.1 + r) + r * 11.0;
+  // slow two-axis tumble with a flutter phase (fast spins comb into streaks under TAA)
+  float a1 = t * (0.55 + 0.8 * r) + r * 30.0 + 0.5 * sin(t * 2.3 + r * 9.0), a2 = t * (0.4 + 0.5 * r) + r * 11.0;
   vec3 ax = normalize(uT1 * cos(a1) + uUp * sin(a1) * 0.7 + uT2 * sin(a2) * 0.6);
   vec3 ay = normalize(cross(ax, normalize(uT2 * cos(a2) + uUp * sin(a2) + uT1 * 0.3)));
   if (uKind > 0.5) { // camera-facing points

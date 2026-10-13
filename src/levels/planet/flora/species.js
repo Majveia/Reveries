@@ -16,9 +16,9 @@ const V = THREE.Vector3;
 const UP = new V(0, 1, 0);
 
 class Builder {
-  constructor() { this.p = []; this.n = []; this.c = []; this.uv = []; this.w = []; this.i = []; }
+  constructor() { this.p = []; this.n = []; this.c = []; this.uv = []; this.w = []; this.i = []; this.ao = []; }
   get vcount() { return this.p.length / 3; }
-  vert(p, n, c, u, v, w0, w1, g) { this.p.push(p.x, p.y, p.z); this.n.push(n.x, n.y, n.z); this.c.push(c.r, c.g, c.b); this.uv.push(u, v); this.w.push(w0, w1, g); }
+  vert(p, n, c, u, v, w0, w1, g, ao = 1) { this.ao.push(ao); this.p.push(p.x, p.y, p.z); this.n.push(n.x, n.y, n.z); this.c.push(c.r, c.g, c.b); this.uv.push(u, v); this.w.push(w0, w1, g); }
   geometry() {
     if (!this.i.length) return null;
     const g = new THREE.BufferGeometry();
@@ -27,6 +27,7 @@ class Builder {
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.setAttribute('aWind', new THREE.Float32BufferAttribute(this.w, 3));
+    g.setAttribute('aAO', new THREE.Float32BufferAttribute(this.ao, 1));
     g.setIndex(this.i);
     g.computeBoundingSphere();
     return g;
@@ -71,7 +72,10 @@ function tube(B, pts, radii, sides, col, H, opts = {}) {
       const nx = normal.x * ca + binormal.x * sa, ny = normal.y * ca + binormal.y * sa, nz = normal.z * ca + binormal.z * sa;
       // root flare
       let rr = r;
-      if (opts.flare && k === 0) rr *= 1.0 + opts.flare * (0.6 + 0.4 * Math.cos(a * 5));
+      if (opts.flare && k <= 1) {
+        const fl = k === 0 ? 1 : 0.38, nL = opts.flareN || 5;
+        rr *= 1.0 + opts.flare * fl * (0.45 + 0.55 * Math.pow(0.5 + 0.5 * Math.cos(a * nL + (opts.flareP || 0)), 2.2));
+      }
       const p = new V(pts[k].x + nx * rr, pts[k].y + ny * rr, pts[k].z + nz * rr);
       c.copy(col).multiplyScalar(ao);
       B.vert(p, new V(nx, ny, nz), c, (s / sides) * circ + (opts.twist || 0) * vAcc / uvK, vAcc / uvK, swayAt(p.y, H, opts.swayK ?? 1), 0, opts.glow || 0);
@@ -131,7 +135,7 @@ function card(B, center, ax, ay, w, h, tile, col, canopy, H, flutter = 1, glow =
       const G = canopy.g;
       const dg = p.clone().sub(G.c); dg.x /= G.rx; dg.y /= G.ry; dg.z /= G.rx;
       const rg = dg.length();
-      n = sn.multiplyScalar(0.62).addScaledVector(dg.normalize(), 0.28).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.14 : -0.14).normalize();
+      n = sn.multiplyScalar(0.72).addScaledVector(dg.normalize(), 0.2).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.14 : -0.14).normalize();
       ao = (0.1 + 0.9 * THREE.MathUtils.smoothstep(rl, 0.3, 1.0)) * (0.5 + 0.5 * THREE.MathUtils.smoothstep(rg, 0.2, 0.95)) * (0.72 + 0.28 * THREE.MathUtils.clamp((p.y - G.c.y) / G.ry + 0.5, 0, 1)) * 1.12;
     } else {
       n = sn.multiplyScalar(0.8).addScaledVector(cn, cn.dot(sn) >= 0 ? 0.2 : -0.2).normalize();
@@ -140,7 +144,7 @@ function card(B, center, ax, ay, w, h, tile, col, canopy, H, flutter = 1, glow =
     }
     c.copy(col).multiplyScalar(ao);
     // glow follows the lobe shading: luminous rims, dimmer cores (soft HDR gradients)
-    B.vert(p, n, c, sx + 0.5 > 0.5 ? u1 : u0, (anchorBottom ? sy : sy + 0.5) > 0.5 ? v1 : v0, swayAt(p.y, H), flutter, glow * (anchorBottom ? 1 : 0.3 + 0.7 * Math.min(1, ao)));
+    B.vert(p, n, c, sx + 0.5 > 0.5 ? u1 : u0, (anchorBottom ? sy : sy + 0.5) > 0.5 ? v1 : v0, swayAt(p.y, H), flutter, glow * (anchorBottom ? 1 : 0.3 + 0.7 * Math.min(1, ao)), Math.min(1, ao));
   }
   B.i.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
@@ -181,6 +185,13 @@ function path(start, dir, len, segs, rng, wiggle, trop) {
  */
 function deciduous(P, rng) {
   const B = new Builder(), L = new Builder();
+  // per-variant character: spread, limb length, clear bole and a one-sided
+  // reach toward the light, so a stand never reads as copy-paste lollipops
+  P = { ...P };
+  P.angle *= 0.8 + rng.float() * 0.42; P.lenK *= 0.86 + rng.float() * 0.3; P.trunkK = (P.trunkK ?? 0.55) * (0.85 + rng.float() * 0.35);
+  const reachDir = new V(rng.float() - 0.5, 0, rng.float() - 0.5).normalize();
+  const asym = 0.1 + rng.float() * 0.24;
+  const flareN = 3 + Math.floor(rng.float() * 3), flareP = rng.float() * 6.28;
   const H = P.H;
   const leafPts = [], leafLobe = [];
   let nLobes = 0;
@@ -192,9 +203,9 @@ function deciduous(P, rng) {
     const segs = depth === 0 ? 8 : depth === 1 ? 6 : depth === 2 ? 4 : 3;
     const pts = path(start, dir, len, segs, rng, P.wiggle * (depth === 0 ? 0.55 : 1.1), depth === 0 ? 0.03 : P.trop * (depth === 1 ? 1.6 : 1) - (P.droop || 0) * depth * 0.3);
     const radii = pts.map((_, k) => r * (1 - (k / segs) * (depth === 0 ? 0.5 : 0.72)));
-    tube(B, pts, radii, depth === 0 ? (P.trunkSides || 10) : depth === 1 ? (P.trunkSides ? 12 : 7) : depth === 2 ? 5 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.5) : 0, child: depth > 0, uvK: depth < 2 ? (P.barkUV || 1) : 1, twist: depth < 2 ? (P.barkTwist || 0) : 0 });
+    tube(B, pts, radii, depth === 0 ? (P.trunkSides || 16) : depth === 1 ? (P.trunkSides ? 12 : 8) : depth === 2 ? 5 : 4, P.barkCol, H, { flare: depth === 0 ? (P.flare ?? 0.5) : 0, flareN, flareP, child: depth > 0, uvK: depth < 2 ? (P.barkUV || 1) : 1, twist: depth < 2 ? (P.barkTwist || 0) : 0 });
     if (depth >= P.depth) {
-      for (let k = 1; k < pts.length; k++) if (rng.float() < P.leafDensity) { leafPts.push(pts[k]); leafLobe.push(lobe); }
+      for (let k = Math.max(1, Math.floor(pts.length * 0.45)); k < pts.length; k++) if (rng.float() < P.leafDensity) { leafPts.push(pts[k]); leafLobe.push(lobe); }
       leafPts.push(pts[pts.length - 1]); leafLobe.push(lobe);
       return;
     }
@@ -209,9 +220,10 @@ function deciduous(P, rng) {
       perp.addScaledVector(pd, -perp.dot(pd)).normalize();
       const ang = P.angle * (0.75 + rng.float() * 0.5) * (depth === 0 ? 1 : 0.85);
       const nd = pd.clone().multiplyScalar(Math.cos(ang)).addScaledVector(perp, Math.sin(ang)).normalize();
+      nd.addScaledVector(reachDir, asym * (depth === 0 ? 1 : 0.5)).normalize();
       const childLen = len * P.lenK * (depth === 0 ? (1.15 - t * 0.55) : (1.05 - t * 0.4)) * (0.8 + rng.float() * 0.4);
       const childR = radii[idx] * (0.45 + rng.float() * 0.2);
-      grow(sp, nd, childLen, Math.max(0.025, childR), depth + 1, depth === 0 ? nLobes++ : lobe);
+      grow(sp, nd, childLen, Math.max(0.025, childR), depth + 1, depth === 0 || (depth === 1 && P.depth >= 3) ? nLobes++ : lobe);
     }
     // trunk/leader continues into the crown
     if (depth === 0 && P.leaderLeaves) { const lb = nLobes++; for (let k = Math.floor(pts.length * 0.6); k < pts.length; k++) { leafPts.push(pts[k]); leafLobe.push(lb); } }
@@ -242,6 +254,8 @@ function deciduous(P, rng) {
   const solo = { c: canopy.c, rx: canopy.rx, ry: canopy.ry, g: canopy, hue: 0, lit: 0 };
   leafPts.forEach((p, k) => {
     const lb = lobes[leafLobe[k]] || solo;
+    const dc = p.clone().sub(canopy.c); dc.x /= canopy.rx; dc.y /= canopy.ry; dc.z /= canopy.rx;
+    if (dc.length() < 0.42 && rng.float() < 0.6) return;
     for (let m = 0; m < per; m++) {
       const glow = P.glow ? (rng.float() < 0.5 ? P.glow : P.glow * 0.25) : 0;
       const j = m === 0 ? 0.25 : 0.9;
@@ -275,7 +289,13 @@ function deciduous(P, rng) {
       const a = rng.float() * Math.PI;
       const len = P.strandLen * (0.6 + rng.float() * 0.6);
       lc.copy(P.strandCol || P.leafCol);
-      card(L, p.clone().add(new V(0, -len, 0)), new V(Math.cos(a), 0, Math.sin(a)), new V(0, 1, 0), len * 0.2, len, TILE.strand, lc, canopy, H, 0.6, P.strandGlow || 0, true);
+      if (P.strandGlow) { card(L, p.clone().add(new V(0, -len, 0)), new V(Math.cos(a), 0, Math.sin(a)), new V(0, 1, 0), len * 0.2, len, TILE.strand, lc, canopy, H, 0.6, P.strandGlow, true); continue; }
+      const nS = Math.max(3, Math.round(len / 0.9)), sw = 0.32 + 0.1 * rng.float();
+      for (let q = 0; q < nS; q++) {
+        const t = (q + 0.5) / nS, ww = sw * (1 - 0.55 * t);
+        const ax = new V(Math.cos(a + q * 1.3), 0, Math.sin(a + q * 1.3));
+        card(L, p.clone().add(new V(Math.cos(a) * 0.25 * t, -len * t, Math.sin(a) * 0.25 * t)), ax, new V(0, 1, 0), ww, len / nS * 1.35, TILE.small, lc.clone().multiplyScalar(0.9 - 0.25 * t), canopy, H, 0.9, 0);
+      }
     }
   }
   return { bark: B.geometry(), leaves: L.geometry(), height: box.max.y + P.leafSize * 0.5, crown: canopy.rx, trunkR: P.trunkR };
@@ -332,7 +352,7 @@ function conifer(P, rng) {
         const bd = pts[pIdx + 1].clone().sub(pts[pIdx]).normalize();
         const side = new V().crossVectors(bd, UP).normalize();
         const ay = bd.clone();
-        const ax = side.clone().applyAxisAngle(bd, (rng.float() - 0.5) * (pad ? 0.5 : 1.1));
+        const ax = side.clone().applyAxisAngle(bd, pad ? (rng.float() - 0.5) * 0.5 : (rng.float() < 0.5 ? -1 : 1) * (0.35 + rng.float() * 0.35));
         lc.copy(P.leafCol).offsetHSL((rng.float() - 0.5) * 0.02, 0, (rng.float() - 0.5) * 0.07);
         if (P.snow && rng.float() < P.snow) lc.lerp(new THREE.Color(0.85, 0.88, 0.92), 0.65);
         const s = P.leafSize * (1.05 - f * 0.35) * (pad ? 1.15 : 0.85);
@@ -539,7 +559,7 @@ export function buildPlant(kind, rng, pal = {}, opts = {}) {
     case 'birch': return deciduous({ H: (11 + r() * 6) * s, trunkR: (0.16 + r() * 0.07) * s, depth: 2, kids: [12 + Math.floor(r() * 4), 5], angle: 0.65, lenK: 0.4, wiggle: 0.5, trop: -0.02, droop: 0.4, leafTile: TILE.small, leafSize: 2.0 * s, leafCol: pal.leaf || C('#8aa83a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#d8d4c8'), leafDensity: 1.0, crownStart: 0.3, flare: 0.1, leaderLeaves: true, trunkK: 0.95 }, rng);
     case 'biolum': return deciduous({ H: (11 + r() * 9) * s, trunkR: (0.4 + r() * 0.22) * s, depth: 3, kids: [6, 3, 3], angle: 1.0, lenK: 0.7, wiggle: 0.8, trop: 0.02, droop: 0.3, leafTile: TILE.broad, leafSize: 1.5 * s, perPoint: 2, leafCol: pal.leaf || C('#2f8a5a'), leafCol2: pal.leaf2, barkCol: pal.bark || C('#3a3440'), leafDensity: 0.8, fill: 0.6, crownStart: 0.4, glow: pal.glowAmt ?? 0.6, strands: 14, strandLen: 4.5 * s, strandCol: pal.glow || C('#5ae0ff'), strandGlow: 1.15, flare: 0.6, trunkK: 0.5 }, rng);
     case 'willow': return deciduous({ H: (8 + r() * 4) * s, trunkR: (0.4 + r() * 0.15) * s, depth: 2, kids: [7, 4], angle: 1.0, lenK: 0.7, wiggle: 0.6, trop: 0.05, leafTile: TILE.small, leafSize: 1.6 * s, leafCol: pal.leaf || C('#7a9a4a'), barkCol: pal.bark || C('#4a4238'), leafDensity: 0.7, crownStart: 0.4, strands: 26, strandLen: 4.2 * s, strandCol: (pal.leaf || C('#7a9a4a')).clone().multiplyScalar(0.8), trunkK: 0.45 }, rng);
-    case 'conifer': return conifer({ H: (13 + r() * 10) * s, trunkR: (0.3 + r() * 0.12) * s, width: 0.2 + r() * 0.06, whorls: 13 + Math.floor(r() * 5), perWhorl: 6, droop: 0.35, leafSize: 1.9 * s, leafCol: pal.leaf || C('#2f4a2c'), barkCol: pal.bark || C('#4a3a30'), snow: pal.snow || 0 }, rng);
+    case 'conifer': return conifer({ H: (13 + r() * 10) * s, trunkR: (0.3 + r() * 0.12) * s, width: 0.2 + r() * 0.06, whorls: 13 + Math.floor(r() * 5), perWhorl: 6, droop: 0.42, leafSize: 1.5 * s, leafCol: pal.leaf || C('#2f4a2c'), barkCol: pal.bark || C('#4a3a30'), snow: pal.snow || 0 }, rng);
     case 'pine': return conifer({ H: (10 + r() * 6) * s, trunkR: (0.48 + r() * 0.16) * s, width: 0.36 + r() * 0.1, whorls: 10 + Math.floor(r() * 3), perWhorl: 6, droop: -0.05, shape: 0.35, clearTrunk: 0.3, pads: true, leafSize: 2.3 * s, leafCol: pal.leaf || C('#2a3a28'), barkCol: pal.bark || C('#5a4034') }, rng);
     case 'palm': return palm({ H: (8 + r() * 7) * s, trunkR: 0.22 * s, frond: 4.2 * s, leafCol: pal.leaf || C('#4a8a3a'), barkCol: pal.bark || C('#7a6a52') }, rng);
     case 'fungus': return fungus({ H: (5 + r() * 9) * s, trunkR: (0.35 + r() * 0.35) * s, cap: (3 + r() * 4) * s, capH: 0.3 + r() * 0.3, capCol: pal.leaf || C('#c8b48a'), barkCol: pal.bark || C('#e0d8c4'), gillCol: pal.leaf2, gillGlow: pal.glowAmt ?? 0, spotGlow: (pal.glowAmt ?? 0) * 0.5, stemGlow: (pal.glowAmt ?? 0) * 0.08 }, rng);

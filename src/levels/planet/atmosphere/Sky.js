@@ -278,14 +278,17 @@ void main(){
     // blue-white star clouds in the faint arms, warm only in the luminous bulge
     vec3 gtint = mix(vec3(0.86, 0.93, 1.1), vec3(1.1, 0.97, 0.84), smoothstep(0.08, 0.35, gd));
     vec3 galD = mix(vec3(gl) * gtint, gal, 0.15) * uGalaxyGain * 0.7;
-    galD *= smoothstep(0.007, 0.05, gd) * clamp(gd / 0.04, 0.3, 1.8);
+    galD *= smoothstep(0.007, 0.05, gd) * clamp(gd / 0.04, 0.3, 1.25);
+    // soft shoulder on the bulge: the dark-adapted eye (and the auto-exposure) keep the arms,
+    // rifts and star clouds readable instead of one blown beige blob around the centre
+    galD *= 1.0 / (1.0 + 7.0 * max(gd - 0.04, 0.0));
     // dust: coherent dark rifts hugging the mid-plane (Great-Rift-like) plus mottled
     // star clouds; smooth fBm lanes, anisotropic along the plane (no crackle veins)
     vec3 dg = uCelToGal * dc;
     float bandM = exp(-dg.y * dg.y / 0.012);
     if (bandM > 0.01) {
       // filaments stretched along galactic longitude
-      vec3 fp = vec3(dg.x, dg.y * 5.0, dg.z);
+      vec3 fp = vec3(dg.x, dg.y * 3.2, dg.z);
       float lanes = snoise(fp * 4.0 + 1.7) * 0.55 + snoise(fp * 11.0 + vec3(5.1, 2.3, 8.7)) * 0.3 + snoise(fp * 27.0 - 3.3) * 0.15;
       float rift = smoothstep(0.05, 0.35, lanes) * exp(-dg.y * dg.y / 0.0016);
       float patchy = smoothstep(0.15, 0.7, snoise(fp * 18.0 + 9.1) * 0.6 + snoise(fp * 45.0) * 0.4) * 0.45;
@@ -554,7 +557,7 @@ export default class Sky {
     u.uStarVis.value = Math.max(night, space);
     // the band is the centrepiece of a dark night (adapted eye); beside a sunlit planet it fades
     const deepNight = night * (1 - THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2) * space);
-    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.48, 1.45, deepNight * (1 - space * 0.5));
+    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.48, 1.0, deepNight * (1 - space * 0.5)) // (dark-adapted, but the bulge must keep its dust lanes, not blow out);
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);

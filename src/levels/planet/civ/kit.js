@@ -256,10 +256,10 @@ export function lowWall(ctx, pts, h = 0.9, t = 0.6, mat = M.STONE, color = null)
 }
 
 /** Straight stair flight (building-local) climbing +Z from (z0,y0) to (z1,y1). */
-export function stair(ctx, x0, x1, z0, z1, y0, y1, mat = M.STONE, color = null) {
+export function stair(ctx, x0, x1, z0, z1, y0, y1, mat = M.STONE, color = null, step = 0.18) {
   const B = ctx.B;
   B.mat(mat, ctx.rng.float(), 0, 3).color(color || ctx.pal.stone).ext(0.92, 0, F.NOWIN, 0);
-  B.stairs(x0, x1, z0, z1, y0, y1, { step: 0.18, solid: true, floor: Math.min(y0, y1) - 1.0, sideFaces: true });
+  B.stairs(x0, x1, z0, z1, y0, y1, { step, solid: true, floor: Math.min(y0, y1) - 1.0, sideFaces: true });
 }
 
 /** Ground-level lamp glows and simple stone bollards along a road, every `every` m. */

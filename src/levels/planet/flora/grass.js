@@ -174,7 +174,7 @@ const BLADE_BODY = /* glsl */ `
 #ifdef FLOWER
   if (part > 0.5) {
     // hero blooms close to the lens, smaller and sparser far away
-    float hs = uHeadSize * (0.55 + 0.9 * rnd * rnd) * vis * min(wk, 2.2) * (1.0 + 0.55 * (1.0 - smoothstep(2.0, 7.0, dC)));
+    float hs = uHeadSize * (0.65 + 0.6 * rnd * rnd) * vis * min(wk, 2.2) * (0.62 + 0.38 * smoothstep(1.2, 6.0, dC));
     vec3 hup = normalize(tang + gUp * 0.6);
     vec3 hs1 = normalize(cross(hup, side)); vec3 hs2 = cross(hs1, hup);
     p += (hs1 * position.x + hs2 * position.z + hup * position.y) * hs;
@@ -206,13 +206,14 @@ const BLADE_BODY = /* glsl */ `
 #else
   // deep root occlusion inside the sward, sunlit tips; per-blade jitter fades
   // with distance so the far field resolves to the clump colour, not noise
-  float ao = mix(0.46, 1.0, smoothstep(0.0, 0.42, t));
+  float ao = mix(0.55, 1.0, smoothstep(0.0, 0.42, t));
   vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
   vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * mix(0.86 + 0.28 * rnd, 1.0, smoothstep(8.0, 35.0, dC));
   // glowing blades come in patches (a few metres across), not as uniform frost
   vec3 gpc = floor((uAnchor + base) * 0.3);
   float gpatch = smoothstep(0.55, 0.85, fract(sin(dot(gpc, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
-  vGlow = uGlow * smoothstep(0.55, 1.0, t) * step(0.6, rnd) * gpatch;
+  // tip-weighted fronds with slow luminous waves travelling through the meadow
+  vGlow = uGlow * pow(t, 2.2) * (0.18 + 0.82 * gpatch * step(0.4, rnd) + 0.3 * step(0.85, rnd)) * (0.5 + 0.5 * sin(uTime * 1.9 - dot(uAnchor + base, vec3(0.11, 0.07, 0.09))));
   vTrans = t * t;
   vGX = vec2(position.x * 2.0, smoothstep(14.0, 4.0, dC));
 #endif
@@ -240,8 +241,10 @@ function makeBladeMaterial(U, flower, spike = false, pools = false) {
     sh.vertexShader = BLADE_VERT + sh.vertexShader
       .replace('#include <beginnormal_vertex>', BLADE_BODY)
       .replace('#include <begin_vertex>', 'vec3 transformed = p;');
-    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nvarying vec2 vGX;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n#ifdef SPIKE\nvarying vec2 vQ;\n#endif\n#ifdef GLOWPOOL\nvarying float vPool;\n#endif\n' + sh.fragmentShader
+    sh.fragmentShader = 'varying vec3 vGCol;\nvarying float vTrans;\nvarying float vGlow;\nvarying vec2 vGX;\nuniform float uGlow;\nuniform vec3 uKeyColor;\nuniform float uNight;\nuniform float uTransK;\nuniform vec3 uGlowCol;\n#ifdef SPIKE\nvarying vec2 vQ;\n#endif\n#ifdef GLOWPOOL\nvarying float vPool;\n#endif\n' + sh.fragmentShader
       .replace('#include <color_fragment>', `diffuseColor.rgb = vGCol;
+  // glowing worlds at night: blades become dark silhouettes with lit tips
+  diffuseColor.rgb *= 1.0 - 0.55 * uNight * step(0.001, uGlow);
 #ifndef FLOWER
   // blade anatomy up close: a pale midrib, darker channels beside it, thin bright margins
   float gx = abs(vGX.x);
@@ -257,7 +260,7 @@ function makeBladeMaterial(U, flower, spike = false, pools = false) {
   }
 #endif`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
-      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#ifdef GLOWPOOL\n  outgoingLight += (vGCol * 0.6 + uGlowCol * 0.25) * uGlowCol * min(vPool, 1.4) * (0.01 + 0.85 * uNight);\n#endif\n#include <opaque_fragment>');
+      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#ifdef GLOWPOOL\n  outgoingLight += (vGCol * 0.6 + uGlowCol * 0.35) * uGlowCol * min(vPool, 1.6) * (0.01 + 1.3 * uNight);\n#endif\n#include <opaque_fragment>');
   }, (flower ? (spike ? 'flora-spike' : 'flora-flower') : 'flora-grass') + (pools ? '-gp' : ''));
 }
 
@@ -430,7 +433,7 @@ export class Grass {
     const shoreCell = sea > -1e8 && Math.min(c00.h, c10.h, c01.h, c11.h) < sea + 1.6 && Math.max(c00.h, c10.h, c01.h, c11.h) > sea - 0.8;
     const siteK0 = this._siteClear(cx, cy, cz);
     const out = [], fout = [], out2 = [], fout2 = [];
-    if ((cellG > 0.01 || shoreCell) && siteK0 > 0) {
+    if (cellG > 0.01 || shoreCell) {
       const rng = cellRng(this.seed, 11, face, i, j);
       const cols = P.colors.map((h) => new THREE.Color(h));
       const dry = new THREE.Color(P.dry || '#b8a868'), reed = new THREE.Color(P.reed || '#5f7a3a');
@@ -447,7 +450,7 @@ export class Grass {
         let u = rng(), v = rng();
         const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng(), r5 = rng();
         let clump = null;
-        if (r4 < 0.72) {
+        if (r4 < 0.62) {
           clump = clumps[Math.floor(r5 * NK) % NK];
           const a = u * 6.2832, rr0 = Math.sqrt(v) * crad;
           u = clump[0] + Math.cos(a) * rr0; v = clump[1] + Math.sin(a) * rr0;
@@ -474,13 +477,14 @@ export class Grass {
         if (wet > 0.5 && P.reeds !== false && r3 < wet * 0.5) isReed = true;
         if (slope > 0.9) continue;
         g *= 1 - THREE.MathUtils.smoothstep(slope, 0.35, 0.9);
+        const gBio = g;
         // patches: clumps and bare spots, plus taller meadows
         const n1 = valueNoise3(x * nz.patch, y * nz.patch, z * nz.patch, 7);
         const n2 = valueNoise3(x * nz.color, y * nz.color, z * nz.color, 19);
         g *= THREE.MathUtils.smoothstep(n1 + (P.cover ?? 0.35), -0.15, 0.35);
-        // settlement edges: thinner and shorter (grazed / mown) rather than bare
+        // settlement edges: a mown lawn (full cover, short wide blades), bare only in the very core
         const clr = siteK0 < 1 ? this._siteClear(x, y, z) : 1;
-        g *= Math.sqrt(clr);
+        if (clr < 1) g = Math.max(g, Math.min(1, gBio * 1.3)) * (0.3 + 0.7 * THREE.MathUtils.smoothstep(clr, 0.0, 0.18)); // trodden village greens, never bare dirt
         if (r1 > g) continue;
         // colour: palette blend by macro noise + moisture, dry patches, per-blade jitter
         const ci = THREE.MathUtils.clamp((n2 * 0.5 + 0.5) * (cols.length - 1) + (r2 - 0.5) * 0.9, 0, cols.length - 1);
@@ -492,13 +496,13 @@ export class Grass {
         const n3 = valueNoise3(x * 0.45, y * 0.45, z * 0.45, 61);
         _c.multiplyScalar(0.84 + 0.3 * (n3 * 0.5 + 0.5));
         _c.r *= 1 + 0.16 * n3; _c.b *= 1 - 0.12 * n3;
-        let hh = THREE.MathUtils.lerp(P.h[0], P.h[1], r3 * r3) * (0.75 + 0.5 * (n1 * 0.5 + 0.5)) * (0.55 + 0.45 * g) * (0.4 + 0.6 * clr);
-        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2) * (P.wK ?? 1.4); // broad blades: a closed sward
+        let hh = THREE.MathUtils.lerp(P.h[0], P.h[1], r3 * r3) * (0.75 + 0.5 * (n1 * 0.5 + 0.5)) * (0.55 + 0.45 * g) * (0.3 + 0.7 * clr * clr);
+        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2) * (P.wK ?? 1.4) * (1.6 - 0.6 * clr); // broad blades: a closed sward (wider lawn)
         let yaw = r2 * 6.2832 + u * 31.4;
         if (clump) {
           hh *= clump[2]; yaw = clump[3] + (r2 - 0.5) * 1.3;
           _c.multiplyScalar(1 + clump[4]); _c.r *= 1 + clump[5] * 0.07; _c.b *= 1 - clump[5] * 0.08;
-        } else hh *= 0.62;
+        } else { hh *= 0.74; ww *= 1.25; }
         if (!isReed && r5 < 0.045 && !clump && P.seedHeads !== false) { hh = (P.seedH || 0.85) * (0.8 + 0.6 * r3); ww *= 0.55; _c.lerp(dry, 0.55); } // tall seed stems
         if (isReed) { _c.copy(reed).multiplyScalar(0.8 + r2 * 0.4); hh = 0.9 + r3 * 1.1; ww *= 1.5; }
         out.push(x - cx, y - cy, z - cz, k / full, yaw, hh, ww, packColor(_c));

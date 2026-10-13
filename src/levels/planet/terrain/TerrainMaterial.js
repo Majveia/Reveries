@@ -301,11 +301,20 @@ const FRAG_SURFACE = /* glsl */`
   shore *= 1.0 - 0.75 * smoothstep( 6.0, 40.0, pix );
   float sandW = max( sandA, shore * ( 1.0 - rockSlope ) );
   float soilW = clamp( smoothstep( 0.1, 0.24, slope + meso * 0.06 ) + ( 1.0 - smoothstep( 0.12, 0.35, moist ) ) * 0.5, 0.0, 1.0 );
-  float snowW = clamp( snowA * ( 1.0 - smoothstep( 0.32, 0.6, slope + meso * 0.1 ) ) * 1.25, 0.0, 1.0 );
+  // snow: wind-scoured off convex crests and steep faces (bare rock ribs), packed into
+  // gullies, couloirs and lee hollows; ragged multi-scale edge → rock shows through
+  float snowW;
+  {
+    float gully = smoothstep( 0.5, 0.62, cav ), ridge = smoothstep( 0.48, 0.36, cav );
+    float hold = 1.0 - smoothstep( 0.1 + 0.12 * gully, 0.3 + 0.16 * gully, slope + meso * 0.05 + m1.w * 0.03 );
+    float cover = snowA * 1.35 - 0.12 + gully * 0.25 - ridge * 0.3 * smoothstep( 0.04, 0.16, slope );
+    cover += ( m2.w * 0.22 + m1.w * 0.16 + m3.w * 0.12 ) * ( 1.0 - 0.5 * smoothstep( 0.9, 1.3, snowA * 1.35 ) );
+    snowW = smoothstep( 0.38, 0.62, cover ) * hold * step( 0.02, snowA );
+  }
 
   // ---- strata coordinate (radial height, gently warped) ----
   float strataH = uStyleA.x;
-  float sCoord = ( h + m2.w * strataH * 1.6 + m3.w * strataH * 0.35 ) / strataH;
+  float sCoord = ( h + m2.w * strataH * 0.45 + m3.w * strataH * 0.12 ) / strataH;
   float sBand = floor( sCoord );
   float sFrac = fract( sCoord );
   float bandRnd = hash11( sBand * 1.618 + 0.37 );
@@ -331,13 +340,13 @@ const FRAG_SURFACE = /* glsl */`
   if ( rockW > 0.004 ) {
     // large-scale structure (32 m / 8 m lattices + 16 m fractured slabs): keeps
     // mid-distance cliffs and shoulders reading as broken rock, not clay
-    gRock += m2.xyz * 5.0 + m3.xyz * 2.2;
+    gRock += m2.xyz * 5.0 * octW( 1.0 / 256.0, pix ) + m3.xyz * 2.2 * octW( 1.0 / 64.0, pix );
     hRock += m3.w * 0.35;
     // 20–40 m slabs: piecewise-planar facets readable from hundreds of metres
     {
       vec4 cX = nB( D.zxy + 41.0, 1.0 / 320.0 );
       vec3 tiltX = vec3( hash11( cX.z * 13.7 ), hash11( cX.z * 51.1 + 1.9 ), hash11( cX.z * 29.3 + 6.2 ) ) - 0.5;
-      float fX = smoothstep( 0.0, 0.1, cX.y ) * uStyleB.y * octW( 1.0 / 320.0, pix * 0.5 );
+      float fX = smoothstep( 0.0, 0.1, cX.y ) * uStyleB.y * octW( 1.0 / 320.0, pix );
       gRock += tiltX * 1.1 * fX;
       hRock += ( hash11( cX.z * 77.7 ) - 0.5 ) * 0.5 * fX;
       crack = max( crack, ( 1.0 - smoothstep( 0.0, 0.035, cX.y ) ) * fX * 0.9 );
@@ -346,7 +355,7 @@ const FRAG_SURFACE = /* glsl */`
     {
       vec4 cL = nB( D.yzx + 17.0, 1.0 / 128.0 );
       vec3 tiltL = vec3( hash11( cL.z * 19.1 ), hash11( cL.z * 67.3 + 2.1 ), hash11( cL.z * 7.9 + 4.4 ) ) - 0.5;
-      gRock += tiltL * 0.75 * smoothstep( 0.0, 0.08, cL.y ) * max( bwL, 0.35 * uStyleB.y );
+      gRock += tiltL * 0.75 * smoothstep( 0.0, 0.08, cL.y ) * bwL;
       crack = ( 1.0 - smoothstep( 0.0, 0.05, cL.y ) ) * bwL * 0.8;
       hRock += ( hash11( cL.z * 33.3 ) - 0.5 ) * 0.4;
     }
@@ -430,6 +439,7 @@ const FRAG_SURFACE = /* glsl */`
     float lam2 = 1.6 * ( 1.0 + 0.35 * wl4.w );
     float ph2 = dot( D, wt ) / lam2 + wq.w * 2.6 + wq2.w * 4.5 + dot( D, wb ) * ( 0.05 + 0.12 * wq2.w );
     float f1 = fract( ph1 ), f2 = fract( ph2 );
+    float bl1 = 1.0 - smoothstep( 0.12, 0.4, fwidth( ph1 ) ), bl2 = 1.0 - smoothstep( 0.12, 0.4, fwidth( ph2 ) );
     // asymmetric profile: long stoss slope, steep lee face
     float p1 = f1 < 0.75 ? f1 / 0.75 : ( 1.0 - f1 ) / 0.25;
     float d1 = f1 < 0.75 ? 1.0 / 0.75 : -1.0 / 0.25;
@@ -437,9 +447,9 @@ const FRAG_SURFACE = /* glsl */`
     float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3; d2 /= lam2 / 1.6;
     // ripples die on slip faces and on the knife-edge brink (cav < 0.5 → convex)
     float crestF = smoothstep( 0.47, 0.4, cav ) * smoothstep( 0.01, 0.05, slope );
-    float w1 = octW( 3.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) );
+    float w1 = octW( 3.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) ) * bl1;
     // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
-    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7;
+    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7 * bl2;
     // crisp wind ripples catching the light; megaripples are rare, gentle patches
     gSand += wt * ( d1 / lam ) * 0.005 * w1 + wt * ( d2 / 1.6 ) * 0.006 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
@@ -462,7 +472,7 @@ const FRAG_SURFACE = /* glsl */`
   rockCol *= 0.78 + 0.32 * ( macro * 0.5 + 0.5 ) + 0.18 * hRock;
   rockCol *= 1.0 - crack * 0.55;
   // wind-blown dust settles on flat rock in sandy worlds (desert pavement)
-  rockCol = mix( rockCol, uSand * ( 0.86 + 0.1 * meso ), ( 1.0 - smoothstep( 0.08, 0.34, slope ) ) * ( 0.7 + 0.2 * step( 0.99, uStyleA.w ) ) * uStyleA.w * ( 1.0 - crack * 0.6 ) );
+  rockCol = mix( rockCol, uSand * ( 0.86 + 0.1 * meso ), ( 1.0 - smoothstep( 0.08, 0.34, slope ) ) * ( 0.7 + 0.2 * step( 0.99, uStyleA.w ) ) * uStyleA.w * uStyleA.w * ( 1.0 - crack * 0.6 ) );
   // dark streaks down the walls, pale dry crowns
   float streak = clamp( 0.5 - hRock * 0.9, 0.0, 1.0 ) * uStyleA.z * smoothstep( 0.3, 0.7, slope );
   rockCol *= 1.0 - streak * ( 0.12 + 0.18 * uStyleA.z );
@@ -488,7 +498,19 @@ const FRAG_SURFACE = /* glsl */`
     // stains hang from each bedding lip and fade down the bed (not wall-high smears)
     float hang = mix( 1.0, 1.0 - smoothstep( 0.15, 0.95, 1.0 - sFrac ), uStyleA.y * 0.6 );
     float stain = smoothstep( 0.1, 0.5, st2 ) * smoothstep( 0.35, 0.8, slope ) * ( 0.4 + 0.6 * moist ) * uStyleB.x * hang;
-    rockCol = mix( rockCol, rockCol * vec3( 0.5, 0.5, 0.48 ), stain * 0.5 );
+    rockCol = mix( rockCol, rockCol * vec3( 0.52, 0.5, 0.49 ), stain * 0.32 );
+  }
+  // vista band (albedo only, 3–60 m): drainage gullies and pale ribs down the walls and
+  // warm/cool weathering patches. Albedo cannot alias like normals, so it carries rock
+  // character at 300 m – 3 km where the normal octaves have faded out.
+  {
+    vec3 Dv = D - up * dot( D, up ) * 0.85;
+    float gul = nA( Dv.zxy + 7.0, 1.0 / 48.0 ).w * 0.7 + nA( Dv.yzx + 2.0, 1.0 / 16.0 ).w * 0.3 * octW( 1.0 / 16.0, pix * 0.5 );
+    float gw = smoothstep( 0.22, 0.55, slope ) * octW( 1.0 / 48.0, pix * 0.35 );
+    rockCol *= 1.0 - gw * smoothstep( 0.05, 0.6, gul ) * 0.38;
+    rockCol *= 1.0 + gw * smoothstep( -0.15, -0.6, gul ) * 0.16;
+    rockCol *= mix( vec3( 1.0 ), vec3( 1.07, 1.0, 0.9 ), smoothstep( -0.3, 0.5, m1.w ) * 0.5 );
+    rockCol *= mix( vec3( 1.0 ), vec3( 0.9, 0.95, 1.04 ), smoothstep( 0.0, -0.6, m0.w ) * 0.4 );
   }
   // value structure: sunlit convex faces bright, recesses & cracks dark
   float convexity = clamp( ( 0.5 - cav ) * 3.0 + 0.5 + hRock * 0.35, 0.0, 1.0 );
@@ -556,11 +578,12 @@ const FRAG_SURFACE = /* glsl */`
     if ( wc > 0.0 ) {
       vec4 cl = nB( D.zxy + 31.0, 1.0 / 4.0 );           // ~0.5 m turf clumps
       float gap = smoothstep( 0.1, 0.0, cl.y ) * ( 0.55 + 0.45 * smoothstep( 0.3, 0.7, cl.z ) );
-      vec3 dirt = mix( uSoil * 0.7, uSoil * vec3( 1.05, 0.95, 0.85 ), cl.w );
+      vec3 dirt = mix( uSoil * 0.85, uSoil * vec3( 1.1, 0.98, 0.86 ), cl.w );
+      dirt *= clamp( 0.11 / max( dot( dirt, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-3 ), 1.0, 2.2 );
       grassCol *= 1.0 + ( cl.z - 0.5 ) * 0.22 * wc;           // clump-to-clump value jitter
       grassCol = mix( grassCol, grassCol * vec3( 1.12, 1.06, 0.8 ), smoothstep( 0.7, 0.95, cl.z ) * 0.5 * wc );
       grassCol = mix( grassCol, dirt, gap * 0.75 * wc );
-      groundAO -= gap * 0.4 * wc; // turf gaps sit in the shade of the blades
+      groundAO -= gap * 0.25 * wc; // turf gaps sit in the shade of the blades
       float wl = octW( 1.0 / 1.5, pix );
       if ( wl > 0.0 ) {
         vec4 lt = nB( D.yzx + 3.0, 1.0 / 1.5 );          // ~19 cm litter flakes
@@ -619,15 +642,31 @@ const FRAG_SURFACE = /* glsl */`
   float wRock = rockW > 0.004 ? hblend( rockW, hRock * 0.6, 0.0, 0.3 ) : 0.0;
   albedo = mix( albedo, rockCol, wRock );
   gN = mix( gN, gRock, wRock );
-  rough = mix( rough, 0.8 + 0.12 * crack, wRock );
+  rough = mix( rough, min( 0.97, 0.8 + 0.12 * crack + 0.1 * smoothstep( 0.5, 12.0, pix ) ), wRock );
 
+  // vegetation clinging to ledges, bedding tops and the gentler rock in moist climates
+  // (shrub tufts → far: a broken green veil that gives cliffs scale, Guilin / Ghibli)
+  {
+    float ledgeV = 1.0 - smoothstep( 0.28, 0.6, slope + meso * 0.08 );
+    float bedTop = smoothstep( 0.72, 0.96, sFrac ) * smoothstep( 0.3, 0.7, slope ) * uStyleA.y;
+    float clingK = clamp( ledgeV * 0.85 + bedTop * 0.8, 0.0, 1.0 ) * smoothstep( 0.32, 0.62, moist ) * uGrassK * ( 1.0 - snowW ) * ( 1.0 - sandA );
+    if ( clingK * wRock > 0.01 ) {
+      vec4 vt = nB( D.zxy + 3.0, 1.0 / 16.0 );       // ~2 m shrub tufts
+      float tuft = mix( smoothstep( 0.55, 0.2, vt.x ), 0.45 + 0.25 * meso, smoothstep( 0.4, 3.0, pix ) );
+      float cw = smoothstep( 0.32, 0.62, clingK * ( 0.55 + 0.7 * tuft ) + meso * 0.12 + m3.w * 0.06 );
+      vec3 shrub = grassCol * vec3( 0.62, 0.7, 0.6 ) * ( 0.8 + 0.4 * vt.z );
+      albedo = mix( albedo, shrub, cw * wRock * 0.85 );
+      gN = mix( gN, gSoil, cw * wRock * 0.6 );
+      rough = mix( rough, 0.95, cw * wRock );
+    }
+  }
   // moss / lichen on rock: up-facing ledges in moist climates
   vec3 gT0 = gN - Ng * dot( gN, Ng );
   float mossW = uStyleB.x * wRock * smoothstep( 0.35, 0.75, moist ) * smoothstep( 0.78, 0.86, dot( normalize( Ng - gT0 * 0.12 ), up ) + meso * 0.05 ) * ( 1.0 - snowW );
   albedo = mix( albedo, uMoss * ( 0.8 + 0.3 * hGrass ), mossW * 0.85 );
 
   // snow on top
-  float wSnow = snowW > 0.004 ? hblend( snowW, 0.0, hRock * 0.4 * wRock, 0.25 ) : 0.0;
+  float wSnow = snowW > 0.004 ? hblend( snowW, 0.0, hRock * 0.7 * wRock, 0.22 ) : 0.0;
   albedo = mix( albedo, snowCol, wSnow );
   gN = mix( gN, gSoil * 0.4, wSnow );
   rough = mix( rough, 0.55, wSnow );
@@ -636,7 +675,7 @@ const FRAG_SURFACE = /* glsl */`
   {
     float farR = smoothstep( 2.0, 25.0, pix );
     float rv = smoothstep( 0.4, 0.62, cav );
-    albedo *= mix( 1.0, mix( 1.12, 0.84, rv ), farR * ( 1.0 - 0.75 * wSand ) ); // dune troughs: no dark crease lines
+    albedo *= mix( 1.0, mix( 1.0 + 0.1 * ( 1.0 - wRock ) * ( 1.0 - wSnow ), 0.72, rv ), farR * ( 1.0 - 0.75 * wSand ) ); // dune troughs: no dark crease lines
     // exposed rock streaks on steep far slopes
     albedo = mix( albedo, rockCol * 0.9, farR * smoothstep( 0.22, 0.45, slope ) * smoothstep( -0.2, 0.3, meso ) * ( 1.0 - wSnow ) * ( 1.0 - wRock ) * 0.6 );
   }
@@ -667,7 +706,7 @@ const FRAG_SURFACE = /* glsl */`
   ao *= 1.0 - crack * 0.6 * wRock;
   ao *= mix( 1.0, 0.75 + 0.25 * clamp( hRock + 0.5, 0.0, 1.0 ), wRock );
   ao *= mix( 0.9 + 0.1 * clamp( hGrass * 0.5 + 0.5, 0.0, 1.0 ), 1.0, max( wRock, wSand ) );
-  ao *= mix( clamp( groundAO, 0.35, 1.0 ), 1.0, max( max( wRock, wSand ), wSnow ) );
+  ao *= mix( clamp( groundAO, 0.62, 1.0 ), 1.0, max( max( wRock, wSand ), wSnow ) );
   tAO = ao;
 
   // ---- volcanic glow in deep cracks of hot basalt ----
@@ -753,9 +792,9 @@ export function createTerrainMaterial(world, style) {
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n\tnormal = normalize( ( viewMatrix * vec4( tN, 0.0 ) ).xyz );\n\tnonPerturbedNormal = normalize( ( viewMatrix * vec4( tGeoN, 0.0 ) ).xyz );')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += tEmit;')
       .replace('#include <lights_fragment_begin>', lights)
-      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.35 );');
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.15 );');
   };
-  material.customProgramCacheKey = () => 'reveries-terrain-v3';
+  material.customProgramCacheKey = () => 'reveries-terrain-v4';
 
   // Shadow-map caster. Shadows render back faces (three's default for FrontSide), which
   // on a heightfield are exactly the slopes facing away from the light — plus the chunk

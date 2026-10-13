@@ -55,8 +55,8 @@ export const PALETTE = {
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#4f493f'),
-  suitDark: lin('#2e2b27'),
+  suit: lin('#625b4e'),
+  suitDark: lin('#3d3934'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
   scarf: lin('#a3182a'),
@@ -345,6 +345,43 @@ function makePieces(spec, body) {
       seam: () => FAR,
     });
   }
+  // ---- utility-belt kit: varied canvas pouches + a gunmetal canister around the belt -------
+  // (silhouette breakers that read from the 3/4-rear hero camera; a travelled explorer)
+  {
+    const kit = [ // [azimuth (0 = front, +π/2 = left), y, half tangent, half height, half depth]
+      [1.32, 0.99, 0.034, 0.042, 0.024],
+      [2.35, 0.995, 0.042, 0.036, 0.026],
+      [-2.42, 0.99, 0.03, 0.04, 0.022],
+      [-1.45, 0.985, 0.026, 0.032, 0.02],
+    ].map(([a, y, hx, hy, hz]) => {
+      const n = [Math.sin(a), 0, Math.cos(a)], t = [Math.cos(a), 0, -Math.sin(a)];
+      const c = [n[0] * (0.152 + hz * 0.7), y - 0.008, n[2] * (0.132 + hz * 0.7)];
+      return { c, n, t, hx, hy, hz };
+    });
+    const can = { a: [-0.118, 0.955, -0.112], b: [-0.118, 1.045, -0.112] };
+    const f = (x, y, z) => {
+      let d = FAR;
+      for (const k of kit) {
+        let b = sdRoundBox(x, y, z, k.c, k.t, [0, 1, 0], k.n, k.hx, k.hy, k.hz, 0.01);
+        // flap: a slightly proud lid over the top third
+        const lid = sdRoundBox(x, y, z, add(k.c, [k.n[0] * 0.004, k.hy * 0.62, k.n[2] * 0.004]), k.t, [0, 1, 0], k.n, k.hx + 0.003, k.hy * 0.42, k.hz + 0.002, 0.008);
+        b = Math.min(b, lid);
+        d = Math.min(d, b);
+      }
+      d = Math.min(d, sdCapsule(x, y, z, ...can.a, ...can.b, 0.022));
+      return d;
+    };
+    pieces.push({
+      name: 'beltKit', bone: B.hips, f, bounds: [-0.24, 0.9, -0.22, 0.24, 1.09, 0.2], h: 0.0062,
+      color: (x, y, z) => {
+        if (Math.hypot(x + 0.118, z + 0.112) < 0.03 && y > 0.94 && y < 1.07) return Math.abs(y - 1.03) < 0.008 ? PALETTE.signal : PALETTE.gunmetal;
+        for (const k of kit) if (Math.abs(dot(sub([x, y, z], k.c), k.t)) < k.hx + 0.012 && Math.abs(y - k.c[1]) < k.hy + 0.012) return y > k.c[1] + k.hy * 0.22 ? PALETTE.webbing : PALETTE.canvas;
+        return PALETTE.canvas;
+      },
+      mat: (x, y, z) => (Math.hypot(x + 0.118, z + 0.112) < 0.03 ? [0.38, 0.7] : [0.86, 0]),
+      line: () => FAR, seam: () => FAR,
+    });
+  }
   // ---- hip guards ---------------------------------------------------------------------
   for (const s of [1, -1]) {
     const f = (x, y, z) => {
@@ -388,7 +425,7 @@ function makePieces(spec, body) {
       const lo = [Math.min(sh[0], el[0]) - 0.12, sh[1] - 0.17, -0.13], hi = [Math.max(sh[0], el[0]) + 0.12, sh[1] + 0.12, 0.1];
       pieces.push({
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
-        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return s > 0 && t > 0.036 && t < 0.056 ? PALETTE.signal : ivory; },
+        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return (s > 0 && t > 0.036 && t < 0.056) || (s < 0 && t > 0.06) ? PALETTE.signal : ivory; },
         mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
         line: () => FAR,
         seam: () => FAR,
@@ -565,7 +602,7 @@ function makePieces(spec, body) {
   // ---- helmet ---------------------------------------------------------------------------
   const HC = [0, 1.668, 0.014];
   const helmetOuter = (x, y, z) => {
-    let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.006, 0.127, 0.134, 0.136);
+    let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.016, 0.124, 0.134, 0.149); // longer, less of a ball
     // faceted crown: bevelled planes turn the dome into a designed, angular shell
     const px = x - HC[0], py = y - HC[1], pz = z - HC[2];
     d = smax(d, py * 0.985 + pz * 0.17 - 0.122, 0.012);
@@ -595,7 +632,7 @@ function makePieces(spec, body) {
       // side pods (asymmetric: a sensor block on the left, a comms disc on the right)
       d = smin(d, sdRoundBox(x, y, z, [0.13, 1.668, -0.012], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.026, 0.044, 0.062, 0.01), 0.008);
       d = smin(d, sdCylinder(x, y, z, 0.142, 1.683, 0.03, 0.142, 1.683, 0.062, 0.01, 0.002), 0.003); // sensor lens
-      d = smin(d, sdCylinder(x, y, z, -0.11, 1.662, -0.006, -0.148, 1.662, -0.006, 0.036, 0.007), 0.008);
+      d = smin(d, sdRoundBox(x, y, z, [-0.128, 1.664, -0.02], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.022, 0.036, 0.05, 0.009), 0.008); // comms pod (angular: a round metal disc read as an 'eye')
       // chin / rebreather block under the visor
       d = smin(d, sdRoundBox(x, y, z, [0, 1.575, 0.104], [1, 0, 0], norm([0, 1, -0.35]), norm([0, 0.35, 1]), 0.052, 0.03, 0.034, 0.013), 0.012);
       for (const s of [1, -1]) d = smin(d, sdCylinder(x, y, z, s * 0.044, 1.566, 0.118, s * 0.05, 1.56, 0.142, 0.016, 0.004), 0.004); // filters
@@ -616,7 +653,7 @@ function makePieces(spec, body) {
       mat: (x, y, z) => {
         const ax = Math.abs(x);
         if ((y < 1.598 && z > 0.07) || (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6)) return [0.42, 0.5];
-        if (ax > 0.118) return [0.36, 0.65];
+        if (ax > 0.118) return [0.42, 0.3];
         return [0.28, 0.0];
       },
       split: (x, y, z) => {
@@ -628,8 +665,8 @@ function makePieces(spec, body) {
         return -Math.max(pod, chin, rear) + 0 * crest;
       },
       line: (x, y, z) => {
-        if (x > 0.14) return Math.min(Math.hypot(y - 1.646, z - 0.026) - 0.0045, Math.hypot(y - 1.683, z - 0.062) - 0.006); // status LED + lens
-        if (x < -0.146) return Math.hypot(y - 1.662, z + 0.006) - 0.006; // status LED
+        if (x > 0.14) return Math.hypot(y - 1.646, z - 0.026) - 0.0035; // status LED (the lens stays dark glass)
+        if (x < -0.146) return Math.hypot(y - 1.682, z + 0.03) - 0.003; // small status LED, off-centre (no 'eye' disc)
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
         return FAR;
@@ -710,6 +747,9 @@ function makePieces(spec, body) {
       split: (x, y, z) => -Math.max(z + 0.16, Math.min(0.032 - Math.abs(x), -0.25 - z), 1.125 - y),
       line: (x, y, z) => {
         if (y < 1.095 && Math.abs(Math.abs(x) - 0.128) < 0.03) return Math.hypot(Math.abs(x) - 0.128, z + 0.218) - 0.022; // nozzle mouth
+        // recessed status-light strips either side of the spine (read from the rear camera)
+        const ax = Math.abs(x);
+        if (z < -0.24 && ax > 0.066 && ax < 0.098 && Math.abs(y - 1.415) < 0.02) return Math.max(Math.abs(y - 1.415) - 0.0028, ax - 0.096, 0.068 - ax);
         return FAR;
       },
       seam: (x, y, z) => {
@@ -1119,11 +1159,20 @@ function visorUV(theta, rho) {
   return [u, v];
 }
 function visorPoint(f, u, v, out) {
-  const x = u * 0.122 * (1 - Math.max(0, -v) * 0.2);
-  const y = 1.662 - 0.8 * x * x + v * 0.066;
-  let z0 = 0.0, z1 = 0.26;
-  for (let k = 0; k < 40; k++) { const zm = (z0 + z1) * 0.5; if (f(x, y, zm) < 0) z0 = zm; else z1 = zm; }
-  const z = (z0 + z1) * 0.5, e = 0.0008;
+  // Wide wrap-around visor (~135°): (u, v) map to azimuth / elevation around the helmet
+  // centre and the point is found by bisecting the helmet field along that ray, so the
+  // glass band wraps onto the temples (it reads from the 3/4-rear camera as a dark
+  // mirrored strip, not a single round 'eye'). The band narrows and sweeps down toward
+  // the temples like a sports visor.
+  const au = Math.abs(u);
+  const phi = u * 1.08;
+  const el = -0.06 + v * 0.4 * (1 - 0.42 * au * au) - 0.1 * au * au;
+  const dx = Math.sin(phi) * Math.cos(el), dy = Math.sin(el), dz = Math.cos(phi) * Math.cos(el);
+  const cx = 0, cy = 1.668, cz = 0.012;
+  let t0 = 0.0, t1 = 0.3;
+  for (let k = 0; k < 40; k++) { const tm = (t0 + t1) * 0.5; if (f(cx + dx * tm, cy + dy * tm, cz + dz * tm) < 0) t0 = tm; else t1 = tm; }
+  const t = (t0 + t1) * 0.5, e = 0.0008;
+  const x = cx + dx * t, y = cy + dy * t, z = cz + dz * t;
   let nx = f(x + e, y, z) - f(x - e, y, z), ny = f(x, y + e, z) - f(x, y - e, z), nz = f(x, y, z + e) - f(x, y, z - e);
   const nl = Math.hypot(nx, ny, nz) || 1;
   out[0] = x; out[1] = y; out[2] = z; out[3] = nx / nl; out[4] = ny / nl; out[5] = nz / nl;

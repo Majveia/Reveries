@@ -688,6 +688,8 @@ export default class Player {
       const hs = w.raycast(cp, toT.normalize(), tl);
       if (hs && hs.distance < tl * 0.9) score -= 2.5;
       score -= this._occlusion(cp, camH, up, 25, 0.5) * 3;
+      // nothing dark (trunk, wall, crown) directly behind the hero silhouette
+      score -= this._occlusion(piv, camH, up, 24, 0.2) * 6;
       if (!best || score > best.score) best = { score, camH };
     }
     return best.camH;
@@ -787,8 +789,36 @@ export default class Player {
       try { v.exit?.(); } catch { /* ignore */ }
       this.engine.ui.telemetry?.(null);
     }
+    if (name === 'fp' && spot.site && level.scenicSpot) {
+      // first person looks at the settlement from outside it (30-90 m beyond the edge)
+      const si = Math.max(0, w.sites.indexOf(spot.site));
+      const s2 = level.scenicSpot(si, (spot.site.radius || 180) + 70, 0);
+      spot = { ...spot, position: s2.position, dir: s2.dir };
+    }
     const target = (spot.site?.position || spot.lookAt).clone();
-    const where = (name === 'character' || name === 'vista') ? this._refineHeroSpot(spot.position, target, name === 'vista') : spot.position;
+    // Tree trunk colliders stream around the player inside flora's late update, so a fresh
+    // teleport has none yet and the hero-frame search would be blind to trunks right behind
+    // the body. Prime flora at a position (player + camera there) before scoring frames.
+    const primeFlora = (p) => {
+      const fl = level.flora;
+      if (!fl?.lateUpdate || !this.engine.shotMode) return;
+      try {
+        this.ctl.place(p, target.clone().sub(p)); this._afterTeleport();
+        level.camera.position.copy(p).addScaledVector(_v.copy(p).normalize(), 1.7);
+        level.camera.updateMatrixWorld();
+        fl.lateUpdate(0, this.engine.time);
+      } catch (e) { console.warn('[player] flora prime', e); }
+    };
+    if (name !== 'night') primeFlora(spot.position);
+    // fp also searches an open crest: the raw spot can sit inside the village with walls at 3 m
+    const where = (name === 'character' || name === 'vista' || name === 'fp') ? this._refineHeroSpot(spot.position, target, name !== 'character') : spot.position;
+    if (name === 'character' && where !== spot.position) primeFlora(where);
+    if (name === 'fp' && level.floraClear) {
+      // first person: keep a view corridor toward the settlement open (no crown filling the
+      // glass at 4 m) — the sanctioned flora 'set piece' clearing used for cameras
+      const fw = target.clone().sub(where); fw.addScaledVector(where.clone().normalize(), -fw.dot(where.clone().normalize())).normalize();
+      for (const [d, r] of [[2, 6], [10, 9], [22, 13], [38, 16]]) level.floraClear(where.clone().addScaledVector(fw, d), r);
+    }
     const toSite = target.clone().sub(where);
     this.ctl.place(where, toSite);
     this._afterTeleport();
@@ -810,13 +840,14 @@ export default class Player {
       const speed = 3.7;
       const gait = THREE.MathUtils.smoothstep(speed, 2.6, 4.6);
       const duty = THREE.MathUtils.lerp(0.6, 0.29, gait);
-      this.shotPose = { state: 'ground', speed, look: [-0.45, 0.04], leanAdd: 0.1, air: 3.3 };
+      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.06], leanAdd: 0.15, air: 2.2 };
       cam.view = 'third';
       cam.distance = portrait ? 2.55 : 2.5; cam.shoulder = portrait ? 0.1 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.3 : 1.22;
+      cam.pivotHeight = portrait ? 1.24 : 1.12; // slightly low, heroic angle
       const camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
-      this.ctl.setFacing(turn(camH, -0.62));
+      // 3/4 profile: the wrap visor and the face side of the helmet read from the lens
+      this.ctl.setFacing(turn(camH, -0.95));
       // passing / push-off instant: the rear foot rolls onto its toe behind the hips while the
       // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
       this.anim.phase = duty * 0.78 + 0.5;

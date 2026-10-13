@@ -45,7 +45,7 @@ const RIM_GLSL = /* glsl */`
   {
     vec3 V = normalize(vViewPosition);
     float nv = saturate(dot(normal, V));
-    float fres = pow(1.0 - nv, 3.5);
+    float fres = pow(1.0 - nv, 2.4);
     // stronger when the sun is behind the character (back/edge light)
     float back = 0.2 + 0.8 * pow(saturate(dot(uSunView, -V) * 0.5 + 0.5), 1.5);
     // albedo-tinted: cloth keeps its colour at grazing angles, dark fabric doesn't halo
@@ -298,7 +298,10 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
         float arc = 1.0 - smoothstep(0.0, 0.05, abs(q.y + 0.55 - q.x * q.x * 0.2));
         arc *= smoothstep(0.75, 0.2, abs(q.x));
         float scan = 0.5 + 0.5 * sin(q.y * 80.0 - uTime * 3.0);
-        vec3 glow = uAccent * (pool * 0.012 + rim * 0.08 + arc * 0.0);
+        // no closed glowing outline (it read as a single round 'eye' from the 3/4 rear):
+        // only a thin HUD light strip along the lower lip of the wrap visor
+        float lip = smoothstep(0.8, 0.96, -q.y) * (1.0 - smoothstep(0.55, 0.95, abs(q.x)));
+        vec3 glow = uAccent * (pool * 0.006 + lip * 0.035 + rim * 0.0 + arc * 0.0);
         totalEmissiveRadiance += glow * uVisorGlow;
       }`)
       .replace('#include <opaque_fragment>', /* glsl */`
@@ -381,6 +384,14 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
         if (tip > fr && abs(fract(strand) - 0.5) > 0.3) discard;
         float hem = smoothstep(fr - 0.012, fr - 0.004, tip) * (1.0 - step(fr, tip));
         diffuseColor.rgb *= 1.0 - hem * 0.45;
+      }
+      // thin-cloth back-light transmission: with the sun behind the scarf the dyed silk
+      // glows through (the Journey / Ghibli read), strongest where it faces the light
+      {
+        vec3 Vv = normalize(vViewPosition);
+        float thru = pow(saturate(dot(uSunView, -Vv)), 3.0);
+        float facing = 0.45 + 0.55 * abs(dot(normalize(vNormal), uSunView));
+        rvEmit += diffuseColor.rgb * uRim * thru * facing * 1.15;
       }
       ` : /* glsl */`
       float ang = cuv.x, hh = cuv.y;

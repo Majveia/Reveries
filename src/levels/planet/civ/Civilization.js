@@ -216,6 +216,12 @@ export default class Civilization {
     const lmTop = lm ? (lm.R ? lm.h + lm.R * 0.95 : lm.h) : 0;
     const lmBot = lm ? (lm.R ? lm.h - lm.R * 1.3 : f.hAt(lm.x, lm.z)) : 0;
     const fps = s.ctx.footprints || [];
+    // buildings as plan-space occluders (for foreground clutter: a frame walled by the nearest roofs)
+    const fpBlk = [];
+    for (const fp of fps) {
+      const L = fp.lot; if (!L || fp.h < 4) continue;
+      fpBlk.push({ x: L.x, z: L.z, r: Math.max(L.w, L.d) * 0.5, top: (L.base ?? f.hAt(L.x, L.z)) + fp.h });
+    }
     const sunPref = sh.sunPref ?? 1.85; // sun ahead and to the side: rim light, long shadows toward the camera
     // first terrain hit along a ray (plan space, curvature-corrected); returns [dist, groundH] or null
     const march = (x0, z0, y0, yaw, pitch, maxS, steps) => {
@@ -264,7 +270,7 @@ export default class Civilization {
             const eTop = elevOf(x, z, camY, lm.x, lm.z, lmTop);
             const eBot = elevOf(x, z, camY, lm.x, lm.z, lmBot);
             // landmark top near the upper frame line, town centre in the lower third
-            vfov = THREE.MathUtils.clamp((eTop - Math.min(eTown, eBot)) / 0.66, THREE.MathUtils.degToRad(sh.minFov ?? 38), THREE.MathUtils.degToRad(62));
+            vfov = THREE.MathUtils.clamp((eTop - Math.min(eTown, eBot)) / 0.66, THREE.MathUtils.degToRad(sh.minFov ?? 38), THREE.MathUtils.degToRad(sh.maxFov ?? 62));
             pitch = eTop - 0.4 * vfov;
             const over = (eTop - Math.min(eTown, eBot)) / 0.66 - vfov;
             if (over > 0) sc -= over * 8;
@@ -339,6 +345,21 @@ export default class Civilization {
               }
             }
             sc -= nb * 0.9;
+          }
+          // nearby buildings filling the lower corners: the frame must breathe (negative space, sky read)
+          {
+            const nearF = fpBlk.filter((bk) => bDist(bk, x, z) < dC * 0.45);
+            if (nearF.length) {
+              let fo = 0, nr = 0;
+              for (const u of [-0.85, -0.5, 0.5, 0.85]) {
+                for (const v of [-0.7, -0.3, 0.1, 0.5]) {
+                  nr++;
+                  if (nearHit(nearF, x, z, camY, yaw + u * hf * 0.5, pitch + v * vfov * 0.5, dC * 0.4)) fo += v > 0 ? 1.5 : 1;
+                }
+              }
+              const cov = fo / nr;
+              sc -= Math.max(0, cov - 0.3) * 6 * (sh.fgOcc ?? 1) + cov * 0.6 * (sh.fgOcc ?? 1);
+            }
           }
           // sun-lit town (the time's measured visibility) and no sun disc/glare inside the frame
           sc -= (1 - vis) * 7;

@@ -46,6 +46,13 @@ void rig(inout vec3 p, inout vec3 n) {
   }
   // body heave opposite to the wings
   p.y -= flap * 0.04 * uWing.y * sin(ph);
+#ifdef USE_INSTANCING
+  // distant birds never shrink below ~5 px of span (no 1-px hairline scribbles): grow them with distance instead
+  vec3 faC = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float faSpan = uWing.y / 0.225 * length(instanceMatrix[0].xyz);
+  float faPx = faSpan * projectionMatrix[1][1] * 450.0 / max(length(faC - cameraPosition), 1.0);
+  p *= clamp(5.0 / max(faPx, 1e-3), 1.0, 4.0);
+#endif
 }
 `;
 
@@ -221,6 +228,8 @@ export class Birds {
     for (const f of this.flocks.values()) {
       if (!f) continue;
       if (f.home.distanceTo(cam) > 3500 && !f.key.startsWith('forced')) continue;
+      // composed hero frames own the sky: only the staged flocks fly (no ambient specks peppering the lens)
+      if (this.fauna.showcase?.hero && !f.key.startsWith('forced')) continue;
       this._sim(f, dt, w, R);
       this._write(f, cam);
     }
@@ -307,7 +316,7 @@ export class Birds {
       _a.set(0, 0, 0);
       if (cnt) {
         _al.divideScalar(cnt).sub(b.v).multiplyScalar(0.9);
-        _c.divideScalar(cnt).sub(b.p).multiplyScalar(0.35);
+        _c.divideScalar(cnt).sub(b.p).multiplyScalar(f.cohesion ?? 0.35);
         _a.add(_al).add(_c);
       }
       _a.addScaledVector(_s, 1.6);

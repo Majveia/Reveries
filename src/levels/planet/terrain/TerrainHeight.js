@@ -719,7 +719,7 @@ export function createTerrain(p) {
     const fc = 1 - clamp(A1 / 0.62 / duneLambda, 0.12, 0.42);
     const kc = 0.009 + clamp(LS / duneLambda * 3, 0, 0.3); // knife-edge brink up close
     // primary transverse/draa ridges
-    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.9 + wC * 0.22;
+    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.9 + wC * 0.38; // sinuous seif crests, not straight pyramids
     const p1 = duneProfile(ph1 - Math.floor(ph1), fc, kc);
     const slip1 = DP.slip;
     // secondary oblique dunes (crossing pattern → star-like junctions where mReg is high)

@@ -20,6 +20,7 @@ uniform float uArcR;   // spine circle radius
 uniform float uDepth;  // spine circle centre depth below ground
 uniform float uBodyLen;
 uniform float uRad;
+varying float vWormY;
 float wormSeg(float s, out float f, out float hv) {
   // armour rings of varying pitch (6–14 m): integrate a hashed pitch along the body
   float x = s * uBodyLen / 10.0;
@@ -31,12 +32,14 @@ float wormSeg(float s, out float f, out float hv) {
 float wormR(float s, float a) {
   float f, hv; wormSeg(s, f, hv);
   // shingled plates: each ring swells toward its leading (head-ward) edge, then steps down into the seam
-  float shingle = 0.9 + 0.1 * smoothstep(0.0, 0.85, f) - 0.07 * smoothstep(0.9, 1.0, f);
-  float prof = mix(0.5, 1.0, smoothstep(0.0, 0.55, s)) * (1.0 + 0.22 * smoothstep(0.6, 0.93, s) * (1.0 - smoothstep(0.93, 0.975, s) * 0.3));
+  // low-relief shingles: the mass reads first, the armour only up close
+  float shingle = 0.965 + 0.035 * smoothstep(0.0, 0.85, f) - 0.03 * smoothstep(0.9, 1.0, f);
+  float prof = mix(0.78, 1.0, smoothstep(0.0, 0.45, s)) * (1.0 + 0.12 * smoothstep(0.6, 0.93, s) * (1.0 - smoothstep(0.93, 0.975, s) * 0.3));
   float maw = smoothstep(0.965, 1.0, s);
   float lobes = pow(0.5 + 0.5 * cos(a * 3.0), 0.6);
   float back = 1.0 + 0.05 * max(0.0, sin(a)) * (hv - 0.3);
-  return uRad * prof * shingle * back * (1.0 + maw * (0.5 + 0.35 * lobes));
+  // three thick petals flare wide open; deep notches between them
+  return uRad * prof * shingle * back * (1.0 + maw * (0.22 + 0.95 * lobes));
 }
 void rig(inout vec3 p, inout vec3 n) {
   float s = aRig.x;         // 0 tail .. 1 head
@@ -57,8 +60,11 @@ void rig(inout vec3 p, inout vec3 n) {
   float dr = (wormR(s + ds, a) - wormR(s - ds, a)) / 1.2;
   vec3 off = cos(a) * B + sin(a) * N;
   // three petal lips peel open and curl back: forward along T at the lobe centres, retracted between them
-  p = C + off * r + T * maw * (lobes * 1.1 - 0.35) * uRad * 0.55 - off * maw * maw * (1.0 - lobes) * uRad * 0.25;
+  // petals peel open forward-and-out (curling back at the tips), notches retract: a real three-jawed maw
+  float tip = smoothstep(0.985, 1.0, s);
+  p = C + off * r + T * maw * (lobes * 1.45 - 0.55) * uRad * 0.6 - T * tip * lobes * uRad * 0.35 - off * maw * maw * (1.0 - lobes) * uRad * 0.35;
   n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.5 * maw);
+  vWormY = p.y;
 }
 `;
 
@@ -99,6 +105,8 @@ function buildWormGeo(rings, around) {
 }
 
 const WORM_SURFACE = /* glsl */ `
+uniform float uRad;
+varying float vWormY;
 void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   float s = p.z;
   float x = s * 620.0 / 10.0, ring = floor(x), f = fract(x);
@@ -109,10 +117,12 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   if (!gl_FrontFacing) {
     // inside the maw: wet dark flesh, concentric rows of pale crystalline teeth, a furnace glow deep in the throat
     float depth = smoothstep(1.0, 0.94, s);
-    float rowF = fract(s * 620.0 / 1.6);
-    float tooth = faLine(fract(ang * 36.0 / 6.2831853 + floor(s * 620.0 / 1.6) * 0.5) - 0.5, 0.12 * (1.0 - rowF)) * smoothstep(0.0, 0.25, rowF) * (1.0 - smoothstep(0.5, 0.8, rowF));
-    col = mix(vec3(0.06, 0.02, 0.015), vec3(0.62, 0.55, 0.44), tooth * (1.0 - depth * 0.6));
-    glow = max(glow, depth * depth * 0.9 + 0.08);
+    float rowF = fract(s * 620.0 / 4.0);
+    float tooth = faLine(fract(ang * 15.0 / 6.2831853 + floor(s * 620.0 / 4.0) * 0.5) - 0.5, 0.2 * (1.0 - rowF)) * smoothstep(0.0, 0.2, rowF) * (1.0 - smoothstep(0.55, 0.85, rowF));
+    float wet = faNoise(vec3(s * 300.0, p.x * 6.0, p.y * 6.0));
+    // a dark wet cavern: ivory teeth crowd the lips, the throat falls away into near-black with a faint ember far down
+    col = mix(vec3(0.045, 0.014, 0.011) * (0.7 + 0.6 * wet), vec3(0.32, 0.28, 0.22), tooth * (1.0 - depth * 0.8)) * mix(1.0, 0.18, depth);
+    glow = max(glow, pow(depth, 4.0) * 0.16 + 0.004);
     return;
   }
   float seam = 1.0 - smoothstep(0.0, 0.04 + 0.03 * hv, min(f, 1.0 - f));
@@ -120,14 +130,21 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   float nz3 = faNoise(vec3(s * 2400.0, p.x * 40.0, p.y * 40.0));
   // longitudinal plate cracks on the flanks
   float plate = faLine(sin(ang * 7.0 + hv * 6.0), 0.04) * smoothstep(0.85, 0.3, top);
-  vec3 hide = mix(vec3(0.07, 0.052, 0.04), vec3(0.15, 0.11, 0.075), hv) * (0.7 + 0.45 * nz2) * (0.85 + 0.3 * nz3);
+  // hide value drifts slowly along the body (not per ring: no banded hose)
+  float nzS = faNoise(vec3(s * 70.0, p.x * 1.5, p.y * 1.5));
+  vec3 hide = mix(vec3(0.075, 0.056, 0.043), vec3(0.15, 0.112, 0.078), nzS) * (0.78 + 0.32 * nz2) * (0.88 + 0.24 * nz3) * (0.94 + 0.12 * hv);
   // dust settles on the upper armour (soft, uniform), sand packs into the seams (bright, granular)
   vec3 dust = vec3(0.36, 0.26, 0.16) * (0.85 + 0.3 * nz);
   vec3 sand = vec3(0.42, 0.3, 0.18) * (0.8 + 0.4 * nz3);
   float dusty = smoothstep(0.55, 1.0, top) * (0.15 + 0.35 * nz) * smoothstep(0.2, 0.9, f);
   vec3 c = mix(hide, dust, dusty);
-  c = mix(c, sand, seam * (0.35 + 0.35 * top));
-  c *= 1.0 - 0.4 * plate;
+  c = mix(c, sand, seam * (0.16 + 0.2 * top));
+  c *= 1.0 - 0.3 * plate;
+  // the body surges up caked in sand: a thick granular coat near the dune surface, streaming off higher up
+  float streak = faNoise(vec3(s * 40.0, ang * 3.0, 0.0));
+  float caked = 1.0 - smoothstep(0.0, uRad * (1.4 + 1.2 * streak), vWormY + (nz - 0.5) * uRad * 0.6);
+  vec3 caked3 = vec3(0.5, 0.35, 0.21) * (0.8 + 0.35 * nz3) * (0.85 + 0.25 * nz2);
+  c = mix(c, caked3, clamp(caked * 0.95, 0.0, 1.0));
   col = c; glow = 0.0;
 }
 `;
@@ -183,9 +200,10 @@ void main() {
     c.x += side * age * uRad * 0.6;
     c.y -= 4.9 * age * age * life * life * 0.35;
     float above = c.y;
-    size = uScale * (0.15 + age * 0.5);
-    vStretch = 1.5 + age * 1.3;
-    vA = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.6, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 10.0, above) * 0.45;
+    // tumbling clumps that shed into soft veils as they fall (no stretched streak curtain)
+    size = uScale * (0.12 + age * 0.55) * (0.6 + aSeed.y * 0.8);
+    vStretch = 1.0 + age * 0.35;
+    vA = smoothstep(0.0, 0.3, age) * (1.0 - smoothstep(0.45, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 15.0, above) * 0.3;
   }
   vH = clamp(c.y / (uScale * 3.0), 0.0, 1.0);
   vUv = position.xy;
@@ -203,12 +221,47 @@ void main() {
   float r = length(vUv);
   // billowing edge: a little noise eats the disc so puffs overlap into a curtain, not circles
   float e = dn(vUv * 2.5 + vA * 7.0) * 0.45 + dn(vUv * 6.0 - vA * 3.0) * 0.2;
-  float d = smoothstep(1.0, 0.25, r + e * 0.6 - 0.15);
-  float lit = 0.55 + 0.45 * (vUv.y * 0.5 + 0.5);
+  float d = smoothstep(1.0, 0.0, r + e * 0.7 - 0.1);
+  d *= d;
+  float lit = 0.5 + 0.5 * (vUv.y * 0.5 + 0.5);
   vec3 col = uSand * (uKeyColor * 0.7 * lit + uSky * 0.45) * mix(0.7, 1.0, vH);
   gl_FragColor = vec4(col, d * vA * 0.8);
 }
 `;
+
+/** Sand berm ring (local xz plane, elongated along z where the body crosses the dune obliquely). */
+function buildBerm(rIn, rng) {
+  const A = 56, Rn = 14, pos = [], col = [], idx = [];
+  const lip = new THREE.Color('#c99466'), churn = new THREE.Color('#6a472d'), dune = new THREE.Color('#c08a5c');
+  const ph = [rng.range(0, 9), rng.range(0, 9), rng.range(0, 9)];
+  for (let i = 0; i <= Rn; i++) {
+    const t = i / Rn; // 0 inner edge .. 1 outer feather
+    for (let j = 0; j <= A; j++) {
+      const a = (j / A) * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      const wob = 1 + 0.12 * Math.sin(a * 3 + ph[0]) + 0.07 * Math.sin(a * 7 + ph[1]);
+      const r = rIn * (0.92 + t * 2.6 * wob);
+      // profile: drops into the hole, a heaved lip ~0.35 r high, then a long slump into the dune
+      const lipH = rIn * 0.38 * (0.75 + 0.5 * vnoise(ca * 2 + ph[2], sa * 2, 0.5));
+      const h = t < 0.18 ? lerp(-rIn * 0.12, lipH, smooth(0, 0.18, t)) : lipH * (1 - smooth(0.18, 1, t)) ** 1.6;
+      const lump = (vnoise(ca * r * 0.12, sa * r * 0.12, 3.3) - 0.5) * rIn * 0.12 * (1 - t);
+      pos.push(ca * r, h + lump, sa * r * 1.22);
+      const k = smooth(0.0, 0.35, t), v = 0.88 + 0.2 * vnoise(ca * r * 0.3, sa * r * 0.3, 7.1);
+      const c0 = [lerp(churn.r, lip.r, k), lerp(churn.g, lip.g, k), lerp(churn.b, lip.b, k)];
+      const m = smooth(0.5, 1, t);
+      col.push(lerp(c0[0], dune.r, m) * v, lerp(c0[1], dune.g, m) * v, lerp(c0[2], dune.b, m) * v, 1 - smooth(0.62, 1, t));
+    }
+  }
+  for (let i = 0; i < Rn; i++) for (let j = 0; j < A; j++) {
+    const a = i * (A + 1) + j, b = a + A + 1;
+    idx.push(a, a + 1, b, a + 1, b + 1, b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
 
 // ---------------------------------------------------------------------------------
 const COLOSSUS_RIG = /* glsl */ `
@@ -297,7 +350,7 @@ export class Giants {
       const geo = buildWormGeo(fauna.q.pick(160, 240, 320, 400), fauna.q.pick(18, 24, 32, 36));
       const uni = {
         uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color('#ff6a2a').multiplyScalar(1.2) },
-        uHead: { value: 0 }, uArcR: { value: 260 }, uDepth: { value: 95 }, uBodyLen: { value: 620 }, uRad: { value: 30 },
+        uHead: { value: 0 }, uArcR: { value: 210 }, uDepth: { value: 118 }, uBodyLen: { value: 620 }, uRad: { value: 40 },
       };
       const mats = rigMaterial({ roughness: 0.9, side: THREE.DoubleSide }, WORM_RIG, uni, 'worm', { surface: WORM_SURFACE, bounce: 0.5, aoMin: 0.55 });
       const mesh = new THREE.Mesh(geo, mats.mat);
@@ -314,15 +367,22 @@ export class Giants {
       dg.instanceCount = n;
       const du = {
         uE0: { value: new THREE.Vector3() }, uE1: { value: new THREE.Vector3() }, uDir0: { value: new THREE.Vector3(0, 0, 1) }, uDir1: { value: new THREE.Vector3(0, 0, -1) },
-        uFTime: fauna.uniforms.uFTime, uScale: { value: 64 }, uOn0: { value: 1 }, uOn1: { value: 1 },
+        uFTime: fauna.uniforms.uFTime, uScale: { value: 70 }, uOn0: { value: 1 }, uOn1: { value: 1 },
         uKeyColor: { value: L?.keyColor || new THREE.Color(1, 1, 1) }, uSky: { value: L?.skyColor || new THREE.Color(0.4, 0.35, 0.3) }, uSand: { value: new THREE.Color('#b08a62') },
       };
       Object.assign(du, { uHead: uni.uHead, uArcR: uni.uArcR, uDepth: uni.uDepth, uBodyLen: uni.uBodyLen, uRad: uni.uRad });
       const dust = new THREE.Mesh(dg, new THREE.ShaderMaterial({ vertexShader: DUST_VERT, fragmentShader: DUST_FRAG, uniforms: du, transparent: true, depthWrite: false }));
       dust.frustumCulled = false; dust.renderOrder = 3;
       group.add(dust);
+      // sand berms heaved up where the body breaks the dune (a raised lip, a dark churned crater, feathered into the dune)
+      const berms = [];
+      for (let k = 0; k < 2; k++) {
+        const bm = new THREE.Mesh(buildBerm(k ? 46 : 34, new Random(seedFrom(fauna.seed, 'berm', k))), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, transparent: true, depthWrite: true }));
+        bm.receiveShadow = true; bm.frustumCulled = false; bm.renderOrder = 1; bm.visible = false;
+        group.add(bm); berms.push(bm);
+      }
       fauna.root.add(group);
-      this.worm = { group, mesh, uni, du, cycle: 0, dir: null, fwd: null, speed: 28, pause: 18 };
+      this.worm = { group, mesh, uni, du, berms, cycle: 0, dir: null, fwd: null, speed: 28, pause: 18 };
       this.items.push(this.worm);
     }
     if (colossus) {
@@ -392,6 +452,15 @@ export class Giants {
         W.du.uE1.value.set(0, 0, Ar * Math.sin(phi0)); W.du.uDir1.value.set(0, 0, 1);
         W.du.uOn0.value = W.mesh.visible && tail < -phi0 && phi > -phi0 ? 1 : smooth(0.4, 0, Math.abs(tail + phi0));
         W.du.uOn1.value = W.mesh.visible && phi > phi0 - 0.1 && tail < phi0 ? 1 : 0;
+        // berms sit on the real dune height at each crossing
+        for (let k = 0; k < 2; k++) {
+          const bm = W.berms[k], ez = (k ? 1 : -1) * Ar * Math.sin(phi0);
+          const on = k ? W.du.uOn1.value : W.du.uOn0.value;
+          bm.visible = on > 0.2;
+          if (!bm.visible) continue;
+          _f.copy(W.dir).multiplyScalar(R).addScaledVector(W.fwd, ez).normalize();
+          bm.position.set(0, w.heightAt(_f) - gh - ez * ez / (2 * R) - 1.5, ez);
+        }
         W.group.visible = true;
       } else W.group.visible = false;
     }

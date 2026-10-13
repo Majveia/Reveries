@@ -52,7 +52,7 @@ export default class Flora {
       // on the grass beneath bioluminescent crowns at night
       uGlowPts: { value: Array.from({ length: 16 }, () => new THREE.Vector4(1e9, 0, 0, 1)) },
     };
-    this.noiseScale = { patch: 1 / 9, color: 1 / 46, flower: 1 / 16, forest: 1 / 240 };
+    this.noiseScale = { patch: 1 / 9, color: 1 / 46, flower: 1 / 30, forest: 1 / 240 };
     // view cone for instance culling (grass cells, tree / rock instances): the
     // camera frustum's bounding cone + a margin larger than the re-pack trigger,
     // so turning the camera never reveals an empty edge before the next pack

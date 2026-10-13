@@ -29,9 +29,22 @@ export function rockLathe(B, cx, cz, profile, o = {}) {
       const ii = i % segs;
       const aa = (ii / segs) * TAU;
       const ys = o.yStretch ?? 1;
-      let n = noise.noise3(Math.cos(aa) * rmean * fq, y * fq * ys, Math.sin(aa) * rmean * fq) + 0.5 * noise.noise3(Math.cos(aa) * rmean * fq * 2.7, y * fq * 2.7 * ys + 9, Math.sin(aa) * rmean * fq * 2.7);
-      if (o.detail) n += o.detail * noise.noise3(Math.cos(aa) * rmean * fq * 7.3, y * fq * 7.3 * ys + 3, Math.sin(aa) * rmean * fq * 7.3);
-      const rr = Math.max(0.01, r * (1 + amp * n));
+      // iso: sample the noise at the true (r, y) point, not on a mean-radius cylinder (which
+      // squeezes every feature into vertical striations converging on the tip like a turned pot)
+      const rs = o.iso ? Math.max(r, rmean * 0.25) : rmean;
+      const nx = Math.cos(aa) * rs, nz = Math.sin(aa) * rs;
+      let n = noise.noise3(nx * fq, y * fq * ys, nz * fq) + 0.5 * noise.noise3(nx * fq * 2.7, y * fq * 2.7 * ys + 9, nz * fq * 2.7);
+      if (o.detail) n += o.detail * noise.noise3(nx * fq * 7.3, y * fq * 7.3 * ys + 3, nz * fq * 7.3);
+      let k = 1 + amp * n;
+      // big asymmetric lobes: the mass is not a body of revolution
+      if (o.lobes) k *= 1 + o.lobes * noise.noise3(nx * fq * 0.3 + 31, y * fq * 0.3, nz * fq * 0.3 - 17);
+      // sediment strata: stacked, slightly tilted and warped layers, each lipped at its top (shadow line beneath)
+      if (o.strata) {
+        const st = o.strata.step, warp = noise.noise3(nx * fq * 0.5 - 5, y * fq * 0.2, nz * fq * 0.5 + 5) * st * 0.9 + (nx * 0.04 + nz * 0.025);
+        const fl = ((y + warp) / st) % 1, f = fl < 0 ? fl + 1 : fl;
+        k *= 1 + o.strata.amp * (Math.pow(f, 2.2) - 0.35) * (0.6 + 0.4 * noise.noise3(nx * fq * 2.0, y * 0.05, nz * fq * 2.0) + 0.4);
+      }
+      const rr = Math.max(0.01, r * k);
       const yy = y + ampY * n * (o.ampYScale ?? 1);
       row.push(new THREE.Vector3(cx + Math.cos(aa) * rr, yy, cz + Math.sin(aa) * rr));
       void ca; void sa;
@@ -85,14 +98,15 @@ export function floatingIsland(ctx, x, z, alt, R) {
   // (dense lathe: at hero scale the silhouette and the light must stay smooth, never faceted)
   B.mat(M.ROCK, 0.31, 0, 3).color(rock).ext(1, 0, F.NOWIN, 0);
   const prof = [];
-  const depth = R * 1.25;
+  const depth = R * 1.45;
   const N = 72;
   for (let j = 0; j <= N; j++) {
     const t = j / N; // 0 bottom … 1 top
-    const r = R * (t < 0.9 ? Math.pow(t / 0.9, 0.42) * 1.03 : 1.03 - (t - 0.9) * 0.3);
+    // an inverted cone (ice-cream scoop), not a bowl: the mass tapers to a keel far below
+    const r = R * (t < 0.9 ? Math.pow(t / 0.9, 0.66) * 1.03 : 1.03 - (t - 0.9) * 0.3);
     prof.push([Math.max(0.5, r), -depth * Math.pow(1 - t, 1.15) - 3]);
   }
-  rockLathe(B, 0, 0, prof, { segs: 220, amp: 0.2, fq: 0.032, ampY: 6, seed: 11, yStretch: 0.3, detail: 0.22 });
+  rockLathe(B, 0, 0, prof, { segs: 220, amp: 0.14, fq: 0.03, ampY: 4, seed: 11, iso: true, detail: 0.3, lobes: 0.2, strata: { step: 8.5, amp: 0.1 } });
   // smooth a coarse profile into many rows (Catmull-Rom) so lobes read as rounded rock, not facets
   const smoothProf = (P, per = 4) => {
     const out = [];
@@ -110,8 +124,15 @@ export function floatingIsland(ctx, x, z, alt, R) {
   for (let k = 0; k < 16; k++) {
     const a = rng.range(0, TAU), rr = R * rng.range(0.3, 0.82);
     const lx = Math.cos(a) * rr, lz = Math.sin(a) * rr, lr = R * rng.range(0.16, 0.3);
-    const ld = depth * rng.range(0.55, 0.98);
-    rockLathe(B, lx, lz, smoothProf([[0.3, -ld], [lr * 0.3, -ld * 0.93], [lr * 0.55, -ld * 0.8], [lr * 0.8, -ld * 0.62], [lr, -ld * 0.45], [lr * 1.05, -ld * 0.25], [lr * 1.05, -10], [lr * 0.9, -2]]), { segs: 48, amp: 0.28, fq: 0.06, seed: 20 + k, yStretch: 0.35, detail: 0.2 });
+    const ld = depth * rng.range(0.45, 0.9) * (1 - (rr / R) * 0.35);
+    rockLathe(B, lx, lz, smoothProf([[0.3, -ld], [lr * 0.3, -ld * 0.93], [lr * 0.55, -ld * 0.8], [lr * 0.8, -ld * 0.62], [lr, -ld * 0.45], [lr * 1.05, -ld * 0.25], [lr * 1.05, -10], [lr * 0.9, -2]]), { segs: 48, amp: 0.24, fq: 0.06, seed: 20 + k, iso: true, detail: 0.25, lobes: 0.2, strata: { step: 6.5, amp: 0.1 } });
+  }
+  // a debris field: broken chunks drifting around and below the island (they sell the levitation)
+  for (let k = 0; k < 14; k++) {
+    const a = rng.range(0, TAU), cr = R * rng.range(0.025, 0.08) * (k < 3 ? 2.0 : 1), rr = R * rng.range(1.0, 1.7) + cr;
+    const cx = Math.cos(a) * rr, cz = Math.sin(a) * rr, cyy = -depth * rng.range(0.05, 0.75) + rng.range(-10, 25);
+    rockLathe(B, cx, cz, smoothProf([[0.3, cyy - cr * 1.6], [cr * 0.5, cyy - cr * 1.2], [cr * 0.9, cyy - cr * 0.5], [cr, cyy], [cr * 0.85, cyy + cr * 0.35], [cr * 0.3, cyy + cr * 0.5]], 2), { segs: 14, amp: 0.3, fq: 0.25 / Math.max(1, cr * 0.2), seed: 60 + k, iso: true, lobes: 0.35, strata: { step: cr * 0.5, amp: 0.08 } });
+    if (k < 3) { B.mat(M.GRASS, 0.2, 0, 3).color(moss).ext(1, 0, F.NOWIN, 0); B.disc(cx, cyy + cr * 0.36, cz, cr * 0.8, 10, 1); B.mat(M.ROCK, 0.31, 0, 3).color(rock).ext(1, 0, F.NOWIN, 0); }
   }
   // grass rim
   const moss2 = moss.clone().multiplyScalar(1.1);
@@ -218,14 +239,18 @@ export function floatingIsland(ctx, x, z, alt, R) {
   }
   // hanging roots below the island: tapered, branching, some very long
   B.mat(M.WOOD, 0.4, 0, 3).color(col('#4a3a2c'));
-  for (let k = 0; k < 40; k++) {
-    const a = rng.range(0, TAU), r0 = R * Math.sqrt(rng.range(0.01, 0.8));
-    const tProf = Math.pow(Math.min(1, r0 / (R * 1.03)), 1 / 0.42) * 0.9;
+  // clumped, not a uniform ring: 5 root clusters with a long-tailed length distribution
+  const clumps = Array.from({ length: 5 }, () => [rng.range(0, TAU), R * Math.sqrt(rng.range(0.02, 0.6))]);
+  for (let k = 0; k < 34; k++) {
+    const [ca, cr] = clumps[k % clumps.length];
+    const a = ca + rng.range(-0.35, 0.35), r0 = Math.max(R * 0.05, cr * rng.range(0.7, 1.3));
+    const tProf = Math.pow(Math.min(1, r0 / (R * 1.03)), 1 / 0.66) * 0.9;
     const ytop = -depth * Math.pow(1 - tProf, 1.15) - 3 + 4;
-    const len = rng.range(20, 110) * (1.2 - r0 / R * 0.6);
+    const len = (rng.chance(0.2) ? rng.range(60, 120) : rng.range(8, 40)) * (1.2 - r0 / R * 0.6);
+    const sw = rng.range(2, 9), ph = rng.range(0, TAU);
     const pts = [];
-    for (let i = 0; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 5 + k) * 3 * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 4 + k) * 3 * t)); }
-    const rad = rng.range(0.8, 2.2);
+    for (let i = 0; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 3 + ph) * sw * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 2.4 + ph) * sw * t)); }
+    const rad = rng.range(0.5, 1.8) * (len > 60 ? 1.3 : 0.8);
     B.tube(pts, (t) => rad * Math.pow(1 - t, 0.7) + 0.06, 7);
     if (rng.chance(0.65)) {
       const s0 = rng.int(2, 5);

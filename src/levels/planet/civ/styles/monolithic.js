@@ -13,7 +13,8 @@ export function palette(A, rng) {
   const P = A?.palette || {};
   void rng;
   return {
-    concrete: ['#97938a', '#8a877f', '#a09c92', '#7f7c76', '#a8a398', '#76736d'].map(col),
+    // sand-stained, wind-scoured concrete: warm grey-umber, a full value range so slabs separate in the dust
+    concrete: ['#8a8172', '#7b7366', '#958b7b', '#6c665c', '#9c917f', '#625c53'].map(col),
     adobe: ['#c49a72', '#b88c66', '#cfa77e', '#a98060'].map(col),
     dark: col('#3a332c'), black: col('#0c0b0a'),
     stone: col('#a2927a'), stoneDark: col('#7d6e5a'), wood: col('#5a4430'), trim: col('#c8b89a'), iron: col('#1c1a18'),
@@ -33,8 +34,8 @@ export const gradeRoads = 45;
 export const plazaMat = () => G.SANDSTONE;
 /** The capital rides a graded podium above the dune field, its rim a battered dam wall (Settlement._podium). */
 export const podium = { r: 0.82, maxR: 48, blur: 110, lift: 0.7, raise: 1.5 };
-export const shotSun = 0.24; // low raking late-afternoon light through the dust: slabs split into lit and shadow planes
-export const shot = { dist: 1.0, height: 50, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.6, maxDown: 0.15, skyTop: 0.1 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
+export const shotSun = 0.09; // dusk through the dust: slabs split into a hot rim and deep shadow planes, slit windows coming on
+export const shot = { dist: 2.0, height: 18, sunAngle: 1.75, lmLift: 0.25, minFov: 24, maxFov: 36, sunPref: 1.45, maxDown: 0.06, skyTop: 0.16, fgOcc: 3 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
 
 function slab(ctx, lot, w, d, H) {
   const { rng, pal } = ctx, B = ctx.B;
@@ -113,6 +114,13 @@ function colossalSlab(ctx, w, d, H, c) {
   B.mat(M.EMISSIVE, 0.2, 0, 3).color(pal.lamp.clone().multiplyScalar(0.55));
   B.box(-0.9, 0.4, dz - 0.6, 0.9, 3.2, dz + 0.02, { base: 0.4, top: false, sides: [true, false, false, false] });
   glow(ctx, 0, 2.4, dz + 0.8, pal.lamp, 0.9, rng.float());
+  // a colossal house banner hung from a steel bracket under the crown, moving in the wind
+  if (H > 60 && rng.chance(0.75)) {
+    const drop = H * rng.range(0.24, 0.34), bw = Math.min(w * 0.2, 7.5), bz = faceZ(H - drop) + 0.7;
+    B.mat(M.METAL, 0.3, 0, 3).color(pal.iron).ext(0.8, 0, F.NOWIN, 0);
+    B.box(-bw / 2 - 0.4, H - 1.6, faceZ(H) - 0.5, bw / 2 + 0.4, H - 0.9, bz + 0.3, { base: H - 1.6 });
+    flag(ctx, -bw / 2, H - 1.6, bz, drop, bw, rng.pick([pal.cloth[0], pal.cloth[2], pal.cloth[0]]), 0, true);
+  }
   // cantilevered crown slab with a deep shadow gap
   const tw = faceX(H) + rng.range(2, 5), td = faceZ(H) + rng.range(2, 5);
   B.mat(M.CONCRETE, 0.2, 0, 3).color(pal.dark).ext(0.5, 0, F.NOWIN, 0);
@@ -333,8 +341,16 @@ function citadel(ctx, x, z, yaw) {
   }
   y += h2;
   const h1 = 24;
-  // ramp/stair up the front face
-  stair(ctx, -6, 6, S / 2 + 34, S / 2 - 4, -1, h1 - 2, M.CONCRETE, c.clone().multiplyScalar(0.92));
+  // monumental stair up the front face (0.42 m risers read at distance), flanked by stepped cheek walls
+  const sc0 = S / 2 + 34, sc1 = S / 2 - 4, sTop = h1 - 2;
+  stair(ctx, -6, 6, sc0, sc1, -1, sTop, M.CONCRETE, c.clone().multiplyScalar(0.92), 0.42);
+  B.mat(M.CONCRETE, rng.float(), 0, 3).color(c.clone().multiplyScalar(0.8)).ext(0.85, 0, F.NOWIN, 0);
+  for (let i = 0; i < 6; i++) {
+    const za = sc0 + (sc1 - sc0) * (i / 6), zb = sc0 + (sc1 - sc0) * ((i + 1) / 6);
+    const yt = -1 + sTop * ((i + 1) / 6) + 1.4;
+    for (const sx of [-1, 1]) B.box(sx * 6 - (sx > 0 ? 0 : 1.6), -2, Math.min(za, zb), sx * 6 + (sx > 0 ? 1.6 : 0), yt, Math.max(za, zb), { base: -2 });
+  }
+  for (const sx of [-1, 1]) glow(ctx, sx * 6.8, 1.2, sc0 - 0.5, pal.lamp, 0.9, rng.float());
   // monumental portico: colossal square pillars along the front
   B.mat(M.CONCRETE, 0.3, 0, 3).color(c).ext(1, 0, F.NOWIN, 0);
   for (let i = 0; i < 8; i++) {
@@ -363,7 +379,8 @@ export function reserve(ctx, radius) {
       const rr = plazaR + 120 + i * 70;
       return { x: center[0] + Math.cos(b) * rr, z: center[1] + Math.sin(b) * rr, w: 46 + i * 10, d: 30 + i * 6, H: i ? 230 : 300 };
     });
-    return [{ x: ctx._citadel.x, z: ctx._citadel.z, w: 136, d: 136, yaw: 0 }, ...ctx._heroes.map((h) => ({ x: h.x, z: h.z, w: h.w + 14, d: h.d + 14, yaw: 0 }))];
+    const sr = r - 64 - 18; // the citadel's monumental stair runs out toward the plaza: keep lots off it
+    return [{ x: ctx._citadel.x, z: ctx._citadel.z, w: 136, d: 136, yaw: 0 }, { x: center[0] + Math.cos(a) * sr, z: center[1] + Math.sin(a) * sr, w: 34, d: 34, yaw: 0 }, ...ctx._heroes.map((h) => ({ x: h.x, z: h.z, w: h.w + 14, d: h.d + 14, yaw: 0 }))];
   };
 }
 

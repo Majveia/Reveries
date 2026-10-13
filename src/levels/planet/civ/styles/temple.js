@@ -33,9 +33,9 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.17; // late golden hour: high enough to clear the karst and rake the roofs
+export const shotSun = 0.13; // late dusk: low enough for lanterns and windows, high enough (sunVis fallback) to clear the karst
 export const lightsEarly = 0.34; // lanterns lit in the mist of the late afternoon
-export const shot = { dist: 0.56, height: 60, sunAngle: 1.7, lmLift: 0.3, sunPref: 1.8 };
+export const shot = { dist: 0.72, height: 32, sunAngle: 1.7, lmLift: 0.3, sunPref: 1.8, maxDown: 0.12, skyTop: 0.12 };
 
 /** A timber hall: terrace, columns, lattice screens, curved roof (1–2 eaves). */
 function hall(ctx, w, d, lot, o = {}) {
@@ -116,11 +116,46 @@ export function building(ctx, lot) {
   let r;
   const big = lot.w * lot.d > 130;
   if (big && (core || lot.plaza) && rng.chance(0.7)) return compound(ctx, lot);
+  // bell / drum towers punctuate the roofscape (verticality: the town gets a skyline, not a carpet)
+  if (!lot.plaza && lot.zone < 0.8 && Math.min(w, d) > 5.5 && rng.chance(core ? 0.09 : 0.05)) {
+    r = drumTower(ctx, w, d, lot);
+    ctx.collider(0, r.H / 2, 0, r.s / 2 + 0.6, r.H / 2, r.s / 2 + 0.6, false);
+    ctx.footprints.push({ lot, h: r.top });
+    return;
+  }
   if (lot.plaza) r = hall(ctx, w, d, lot, { big: true, peristyle: rng.chance(0.6), double: rng.chance(0.4), lacquer: true, terrace: 1.2 });
   else if (core && rng.chance(0.25)) r = hall(ctx, w, d, lot, { big: true, peristyle: rng.chance(0.5), double: rng.chance(0.3), lacquer: rng.chance(0.6), terrace: 0.9 });
   else r = huiHouse(ctx, w, d, lot, core);
   ctx.collider(0, r.H / 2, 0, w / 2 + 0.8, r.H / 2 + 0.5, d / 2 + 0.8, false);
   ctx.footprints.push({ lot, h: r.top });
+}
+
+/** Bell / drum tower: a stone base, two timber storeys, three stacked sweeping eaves. */
+function drumTower(ctx, w, d, lot) {
+  const { rng, pal } = ctx, B = ctx.B;
+  const sz = Math.min(w, d, 9) * 0.85;
+  plinth(ctx, sz + 1.2, sz + 1.2, lot, 0.4, M.STONE, pal.stone, 0.05);
+  // battered stone base with an arched passage glow
+  const bh = rng.range(4.5, 6.5);
+  B.mat(M.STONE, rng.float(), 0, 3).color(pal.stoneDark).ext(1, 0, F.NOWIN, 0);
+  B.frustumBox(-sz / 2, -sz / 2, sz / 2, sz / 2, 0.4, bh, 0.35, { base: 0.4 });
+  glow(ctx, 0, 1.8, sz / 2 + 0.2, pal.lamp, 0.5, rng.float());
+  let y = bh, s = sz * 0.82, top = y;
+  const roofC = rng.pick(pal.roofs);
+  for (let k = 0; k < 2; k++) {
+    const fh = k ? 2.6 : 3.2;
+    B.mat(M.WOOD, rng.float(), W.LATTICE, fh).color(k ? pal.wood : pal.lacquer).ext(1, 0, 0, 0);
+    B.box(-s / 2, y, -s / 2, s / 2, y + fh, s / 2, { top: false, base: y, front: F.FRONT });
+    B.mat(M.LACQUER, rng.float(), 0, 3).color(pal.lacquer2).ext(1, 0, F.NOWIN, 0);
+    for (const sx of [-1, 1]) for (const sz2 of [-1, 1]) B.boxC(sx * s / 2, y, sz2 * s / 2, 0.3, fh, 0.3, { top: false });
+    y += fh;
+    const last = k === 1;
+    top = B.curvedRoof(-s / 2, -s / 2, s / 2, s / 2, y, last ? s * 0.62 : s * 0.3, { over: 1.3, curve: 1.8, flare: 1.1, segS: 7, segR: 4, thick: 0.24, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.lacquer2, ridgeColor: roofC.clone().multiplyScalar(0.8), ridge: last, hipK: last ? 0.9 : 0.5 });
+    for (const [sx, sz2] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) paperLantern(ctx, sx * (s / 2 + 1.1), y - 0.9, sz2 * (s / 2 + 1.1), pal.lantern, 0.28);
+    y += last ? 0 : s * 0.22;
+    s *= 0.8;
+  }
+  return { top, H: y, s: sz };
 }
 
 /** Walled temple compound: white wall with tile coping, roofed gate, hall inside. */
@@ -193,9 +228,20 @@ function huiHouse(ctx, w, d, lot, core) {
   }
   const roofC = rng.pick(pal.roofs);
   const yE = y0 + H;
-  const rise = d * 0.34;
+  const rise = d * rng.range(0.27, 0.42); // pitch varies house to house
+  // an upper gallery on two-storey houses: a deep wooden balcony with a lattice rail and a lantern
+  if (floors >= 2 && rng.chance(0.5)) {
+    const by = y0 + fh, bd = rng.range(0.9, 1.4);
+    B.mat(M.WOOD, rng.float(), 0, 3).color(pal.woodDark).ext(0.8, 0, F.NOWIN, 0);
+    B.box(-w / 2 + 0.3, by - 0.2, d / 2, w / 2 - 0.3, by + 0.05, d / 2 + bd, { base: by - 0.2 });
+    B.mat(M.WOOD, rng.float(), W.LATTICE, 1.0).color(pal.wood).ext(1, 0, 0, 0);
+    B.box(-w / 2 + 0.3, by + 0.05, d / 2 + bd - 0.08, w / 2 - 0.3, by + 1.0, d / 2 + bd, { top: true, base: by + 0.05 });
+    B.mat(M.WOOD, rng.float(), 0, 3).color(pal.woodDark).ext(1, 0, F.NOWIN, 0);
+    for (const sx of [-1, 1]) B.boxC(sx * (w / 2 - 0.45), y0, d / 2 + bd - 0.1, 0.2, by - y0, 0.2, { top: false });
+    if (rng.chance(0.7)) paperLantern(ctx, rng.range(-w / 3, w / 3), by + 1.9, d / 2 + bd - 0.3, rng.chance(0.5) ? pal.lantern : pal.lamp, 0.26);
+  }
   // dual-pitch curved roof (hip with long ridge), modest flare
-  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 1.15, curve: 1.8, flare: 0.95, sweep: 0.5, segS: 7, segR: 4, thick: 0.22, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().lerp(col('#b4b0a4'), 0.45), ridgeW: 0.36, ridgeH: 0.4, hipK: 0.25, ornaments: false });
+  const top = B.curvedRoof(-w / 2, -d / 2, w / 2, d / 2, yE, rise, { over: 1.15, curve: 1.8, flare: rng.range(0.6, 1.3), sweep: 0.5, segS: 7, segR: 4, thick: 0.22, roofMat: [M.TEMPLE_TILE, rng.float(), 0, 3], roofColor: roofC, trimMat: [M.WOOD, 0.3, 0, 3], trimColor: pal.woodDark, ridgeColor: roofC.clone().lerp(col('#b4b0a4'), 0.45), ridgeW: 0.36, ridgeH: 0.4, hipK: rng.chance(0.3) ? 0.6 : 0.25, ornaments: core && rng.chance(0.4) });
   // stepped horse-head firewalls on both gable ends
   if (rng.chance(core ? 0.75 : 0.45)) {
     for (const sx of [-1, 1]) {

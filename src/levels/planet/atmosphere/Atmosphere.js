@@ -125,7 +125,8 @@ void main(){
     float s = cloudShadow(P, uSunDir);
     // shadowed ground keeps its sky fill: darken less in blue so cloud shadows read cool, not black
     // (a soft, desaturated cool tint: the shadowed ground keeps most of its skylight)
-    col *= mix(vec3(1.0), vec3(s) + (1.0 - s) * vec3(0.34, 0.40, 0.52), uGroundShadow);
+    // (neutral, mostly scalar: from altitude a cloud shadow is a subtle darkening, never a navy decal)
+    col *= mix(vec3(1.0), vec3(s) + (1.0 - s) * vec3(0.6, 0.63, 0.7), uGroundShadow);
   }
 #endif
   gl_FragColor = vec4(col * T + L, 1.0);
@@ -220,7 +221,9 @@ export default class Atmosphere {
       const elF = upF.dot(this.world.sunDir);
       const sunVis = L ? L.sunVisible : 1;
       const elK = THREE.MathUtils.smoothstep(elF, 0.02, 0.15);
-      u.uGroundShadow.value = sunKey ? 0.34 * Math.min(1, cov) * sunVis * elK : 0;
+      const altG = ctx.cameraPosition.length() - m.Rb;
+      const hiK = 1 - 0.75 * THREE.MathUtils.smoothstep(altG, 6000, 20000); // fade from altitude
+      u.uGroundShadow.value = sunKey ? 0.34 * Math.min(1, cov) * sunVis * elK * hiK : 0;
       // in-scatter shadow (crepuscular shafts) only from below the deck: seen from above, the
       // shadowed air column under every cloud extrudes into a dark blot beside it. Capped.
       const altF = ctx.cameraPosition.length() - m.Rb;
@@ -236,7 +239,7 @@ export default class Atmosphere {
     }
     // dust storms: a strong aerosol forward lobe keeps the sun's position readable through the haze
     const ws = this.level.weatherState;
-    const aTarget = ws && (ws.kind === 'dust' || ws.kind === 'ash') ? 0.6 : 0.22;
+    const aTarget = ws?.kind === 'dust' ? 1.15 : ws?.kind === 'ash' ? 0.6 : 0.22;
     u.uAureole.value += (aTarget - u.uAureole.value) * (this.engine.shotMode ? 1 : 0.05);
     ctx.fullscreen(this.mat, output);
   }

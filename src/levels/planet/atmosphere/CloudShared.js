@@ -257,14 +257,17 @@ float cloudLayer2D(vec3 P, vec3 wx){
   float wa = a.g * 0.625 + a.b * 0.25 + a.a * 0.125;
   float n1 = clamp(cRemap(a.r, wa - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
   float n2 = b.r * 0.6 + b.g * 0.4;
-  float n3 = dn.r * 0.5 + dn.g * 0.3 + dn.b * 0.2;
+  // a second, finer detail octave (rotated) breaks the magnified-texture smear seen from orbit
+  vec3 dn2 = cTex3D(tCloudDetail, q.zxy * (uCloudDetailScale * 1.7) - uCloudWind * 2.6 + 0.61, uCloud3DInfo.y).rgb;
+  float n3 = (dn.r * 0.5 + dn.g * 0.3 + dn.b * 0.2) * 0.62 + (dn2.r * 0.55 + dn2.g * 0.45) * 0.38;
   float fr = n1 * 0.35 + n2 * 0.3 + n3 * 0.35;
   // the weather map draws the systems (swirls, fronts, clear subtropics); the noise only
   // frays their margins. Narrow window: crisp fractal edges, never a blurred camo decal
   // (wide, soft window: margins fray into thin veils that the slice integration and
   // Beer-Lambert opacity turn into soft edges, cores still build up to full opacity)
   float e = cov * cov * 1.25 - 0.12 - (1.0 - fr) * 0.7;
-  float c = smoothstep(-0.16, 0.42, e) * (0.3 + 0.7 * smoothstep(-0.02, 0.55, e));
+  // (Nubis-style remap: a wide, graded ramp → thin translucent veils at the margins)
+  float c = smoothstep(-0.3, 0.5, e) * (0.15 + 0.85 * smoothstep(-0.05, 0.6, e));
   // popcorn / cloud-street texture inside the decks
   c *= 0.55 + 0.45 * smoothstep(0.25, 0.8, n3 * 0.7 + n2 * 0.3);
   return c * (1.0 + wx.b * 0.6);

@@ -36,9 +36,10 @@ void main() {
     float t = aRig.y;
     float w = sin(t * 7.0 - uFTime * 1.7 - aRig.z * 3.0 + aAnim.w * 10.0);
     float w2 = cos(t * 4.0 - uFTime * 1.1 + aRig.z * 5.0);
-    float amp = t * t * (aRig.x > 1.5 ? 0.25 : 0.55);
-    p.x += (w * 0.6 + w2 * 0.4) * amp;
-    p.z += (w2 * 0.6 - w * 0.4) * amp;
+    float amp = t * t * (aRig.x > 1.5 ? 0.25 : 0.7);
+    // helical curl, and the tentacles stream back behind the drift instead of hanging like plumb lines
+    p.x += (w * 0.6 + w2 * 0.4) * amp + sin(t * 5.0 + aRig.z * 2.0 + uFTime * 0.6) * t * 0.25;
+    p.z += (w2 * 0.6 - w * 0.4) * amp - t * t * (aRig.x > 1.5 ? 0.35 : 1.1);
     // tentacles bunch with the pulse and trail upward drift
     p.xz *= 1.0 - 0.25 * pulse * (1.0 - t);
     p.y += pulse * 0.25 * t;
@@ -91,9 +92,13 @@ void main() {
   } else {
     float bead = smoothstep(0.82, 1.0, sin(vRig.y * (vRig.x > 1.5 ? 14.0 : 34.0) - vPulse * 4.0 - uFTime * 0.8) * 0.5 + 0.5);
     glow = gcol * (0.12 + bead * 1.6) * (1.0 - vRig.y * 0.6);
-    alpha = (vRig.x > 1.5 ? 0.18 : 0.32) * (0.6 + bead * 0.4) * (1.0 - smoothstep(0.55, 1.0, vRig.y));
+    // fade toward the tips, and with distance (far jellies are glowing bells only)
+    float dc = length(cameraPosition - vW);
+    alpha = (vRig.x > 1.5 ? 0.18 : 0.3) * (0.6 + bead * 0.4) * (1.0 - smoothstep(0.25, 1.0, vRig.y)) * (1.0 - smoothstep(70.0, 160.0, dc));
   }
-  gl_FragColor = vec4(lit * alpha + glow * glowI * (vRig.x < 0.5 ? 1.0 : alpha * 2.5), alpha);
+  // no huge blown-out bells grazing the lens
+  float nearF = smoothstep(14.0, 30.0, length(cameraPosition - vW));
+  gl_FragColor = vec4(lit * alpha + glow * glowI * (vRig.x < 0.5 ? 1.0 : alpha * 2.5), alpha) * nearF;
 }
 `;
 
@@ -144,10 +149,10 @@ function buildJelly(rng) {
     g.setAttribute('aGlow', new THREE.Float32BufferAttribute(new Float32Array(verts.length / 3), 1));
     return g;
   };
-  const nt = 12;
+  const nt = 8;
   for (let i = 0; i < nt; i++) {
-    const a = (i / nt) * TAU + rng.range(-0.1, 0.1);
-    parts.push(ribbon(Math.sin(a) * 0.9, Math.cos(a) * 0.9, rng.range(4.0, 6.5), 0.013, 1, a));
+    const a = (i / nt) * TAU + rng.range(-0.15, 0.15);
+    parts.push(ribbon(Math.sin(a) * 0.85, Math.cos(a) * 0.85, rng.range(1.6, 2.8), 0.035, 1, a));
   }
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * TAU + 0.4;
@@ -304,7 +309,9 @@ export class Floaters {
       const geo = buildWhale(style);
       const uni = { uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color(style.glow || '#000000') }, uLen: { value: 1 } };
       // living wet hide: a rough skin under a thin clear coat (no brushed-metal sheen)
-      const mats = rigMaterial({ roughness: 0.55 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.22, aoMin: 0.6, surface: whaleSurface(style), physical: { clearcoat: 0.45, clearcoatRoughness: 0.35 } });
+      // matte leathery hide (no chrome clear coat) + aerial perspective: at 1.5–2 km the leviathan sinks into the sky haze
+      this.wHaze = { value: new THREE.Color(0.5, 0.6, 0.75) };
+      const mats = rigMaterial({ roughness: 0.78 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.3, aoMin: 0.6, surface: whaleSurface(style), haze: { color: this.wHaze, dist: 2600, max: 0.6 } });
       mats.mat.side = THREE.DoubleSide;
       const { mesh, anim } = makeInstanced(geo, mats, 8, { shadow: true });
       mesh.receiveShadow = true;
@@ -421,6 +428,8 @@ export class Floaters {
       this.wMesh.count = n;
       this.wMesh.instanceMatrix.needsUpdate = true; this.wAnim.needsUpdate = true;
       this.wU.uGlowColor.value.copy(this.wGlow).multiplyScalar(0.05 + 2.5 * fa.night);
+      const lt = fa.level.lighting;
+      if (lt) this.wHaze.value.setRGB(lt.skyColor.r * 2.0 + lt.keyColor.r * 0.03, lt.skyColor.g * 2.0 + lt.keyColor.g * 0.03, lt.skyColor.b * 2.0 + lt.keyColor.b * 0.03);
     }
   }
 

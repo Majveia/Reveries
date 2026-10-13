@@ -80,7 +80,7 @@ function barkMaterial(U, depth = false) {
     sh.vertexShader = 'attribute vec3 aWind;\nvarying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nvarying vec3 vBWP;\nuniform vec2 uFade;\nuniform float uHueVar;\n' + WIND_GLSL + sh.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_APPLY + FADE_V + '\nvBUv = uv; vBGlow = aWind.z * (1.0 - uHueVar * 0.5 * (0.5 + 0.5 * sin(uTime * 0.6 - dot(flBase, vec3(0.031, 0.017, 0.023)))));\nvBWP = (modelMatrix * flIM * vec4(transformed, 1.0)).xyz;');
     if (depth) return;
-    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nvarying vec3 vBWP;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + IGN_GLSL + CLEAR_GLSL + BARK_FRAG + sh.fragmentShader
+    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nvarying vec3 vBWP;\nuniform float uNight;\nuniform vec3 uGlowCol;\nuniform float uMoss;\nuniform vec3 uMossCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + IGN_GLSL + CLEAR_GLSL + BARK_FRAG + sh.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
   if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
   if (fl_keep(vBWP) < 0.5) discard;
@@ -91,12 +91,20 @@ function barkMaterial(U, depth = false) {
   float flF = mix(0.5, fl_vn(vec2(vBUv.x * 3.0, vBUv.y * 0.9)), flAA2) * 0.6 + mix(0.5, fl_vn(vec2(vBUv.x * 9.0, vBUv.y * 2.7)), flAA) * 0.4;
   float flRidge = smoothstep(0.25, 0.65, flF);
   diffuseColor.rgb *= mix(mix(0.8, 0.55, flAA2), mix(0.9, 1.12, flAA2), flRidge) * (0.9 + 0.2 * fl_vn(vBUv * vec2(1.0, 0.2)));
-  float flSpot = smoothstep(0.6, 0.82, fl_vn(vBUv * vec2(1.6, 0.7) + 7.3)) * flAA2 + 0.12;`)
+  float flSpot = smoothstep(0.6, 0.82, fl_vn(vBUv * vec2(1.6, 0.7) + 7.3)) * flAA2 + 0.12;
+  // moss and lichen on the up-facing limbs and one weather side (wet worlds)
+  {
+    vec3 flNW = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
+    vec3 flUpW = normalize(vBWP);
+    vec3 flSd = normalize(cross(flUpW, vec3(0.0, 0.0, 1.0)) + vec3(1e-4));
+    float flMs = uMoss * smoothstep(0.25, 0.75, dot(flNW, flUpW) * 0.9 + dot(flNW, flSd) * 0.4 + (flF - 0.5) * 0.9 + (fl_vn(vBUv * vec2(0.7, 0.35) + 3.1) - 0.5) * 0.6);
+    diffuseColor.rgb = mix(diffuseColor.rgb, uMossCol * (0.55 + 0.6 * flF), flMs * 0.85);
+  }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
   // bark relief: furrows bump the shading normal (screen-space derivative bump)
   {
     vec3 flP = -vViewPosition; vec3 flDx = dFdx(flP), flDy = dFdy(flP);
-    float flHt = (flF * 0.75 + flRidge * 0.25) * 0.05 * flAA2;
+    float flHt = (flF * 0.75 + flRidge * 0.25) * 0.08 * flAA2;
     vec3 flR1 = cross(flDy, normal), flR2 = cross(normal, flDx);
     float flDet = dot(flDx, flR1);
     vec3 flGr = sign(flDet) * (dFdx(flHt) * flR1 + dFdy(flHt) * flR2);
@@ -111,7 +119,7 @@ function leafMaterial(U, map, depth = false) {
     ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.42 })
     : new THREE.MeshStandardMaterial({ vertexColors: true, map, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
-    sh.vertexShader = 'attribute vec3 aWind;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec2 uFade;\nuniform float uHueVar;\n' + WIND_GLSL + sh.vertexShader
+    sh.vertexShader = 'attribute vec3 aWind;\nattribute float aAO;\nvarying float vLAO;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec2 uFade;\nuniform float uHueVar;\n' + WIND_GLSL + sh.vertexShader
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 ${WIND_APPLY}
 ${FADE_V}
@@ -120,9 +128,10 @@ ${FADE_V}
   vLHue = fl_hash2(flBase.xz * 0.0713 + flBase.y * 0.0131);
   vec3 flWP = (modelMatrix * flIM * vec4(transformed, 1.0)).xyz;
   vLWP = flWP;
+  vLAO = aAO;
   vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 2.5);`);
     if (depth) return;
-    sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec3 uKeyColor;\nuniform vec3 uKeyDir;\nuniform float uNight;\nuniform vec3 uGlowCol;\nuniform float uHueVar;\n' + IGN_GLSL + CLEAR_GLSL + sh.fragmentShader
+    sh.fragmentShader = 'varying float vLAO;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec3 uKeyColor;\nuniform vec3 uKeyDir;\nuniform float uNight;\nuniform vec3 uGlowCol;\nuniform float uHueVar;\n' + IGN_GLSL + CLEAR_GLSL + sh.fragmentShader
       .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
   if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
   // clear the lens and the camera -> player sightline (narrow dithered rim, no stipple veil)
@@ -130,9 +139,19 @@ ${FADE_V}
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
       .replace('#include <opaque_fragment>', `// warm sunlit rims, cool blue-green shade side (depth inside the crown)
   float flNdl = dot(normal, normalize((viewMatrix * vec4(uKeyDir, 0.0)).xyz));
-  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), smoothstep(-0.35, 0.65, flNdl));
-  // backlit translucency: sun shining through the crown, warmer and more saturated
-  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.95 * vLBack) * 0.6;
+  float flShell = smoothstep(-0.45, 0.6, flNdl);
+  // crown self-occlusion: the shade side and the deep core fall to ~45%, the
+  // sunlit shell stays bright (each lobe gets its own terminator)
+  float flAO = clamp(vLAO, 0.0, 1.0);
+  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), flShell) * mix(0.45, 1.05, flShell * 0.55 + flAO * 0.45);
+  // backlit translucency (per pixel, wrapped): thin crown rims and outer leaves
+  // glow when looking toward the sun; the dense core stays dark
+  vec3 flV = normalize(vLWP - cameraPosition);
+  float flB = clamp(dot(flV, uKeyDir) * 0.72 + 0.28, 0.0, 1.0); flB *= flB * flB;
+  vec3 flNW = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+  float flRim = 1.0 - abs(dot(flNW, flV));
+  float flT = (0.03 + flB) * (0.3 + 0.7 * flRim * flRim) * (0.15 + 0.85 * flAO * flAO);
+  outgoingLight += diffuseColor.rgb * vec3(1.1, 1.12, 0.68) * uKeyColor * flT * 1.25;
   // bioluminescence follows the leaf texture (veins, bright leaflets, strand
   // beads) instead of flooding whole cards: luminance-keyed mask with falloff
   vec3 flTx = texture2D(map, vMapUv).rgb;
@@ -240,7 +259,7 @@ vec2 fl_impUV(float a, float e) {
   // warm sunlit rims, cool shade side, light through the crown
   float iNdl = dot(normal, normalize((viewMatrix * vec4(uKeyDir, 0.0)).xyz));
   outgoingLight *= mix(vec3(0.86, 0.95, 1.08), vec3(1.06, 1.0, 0.9), smoothstep(-0.3, 0.6, iNdl));
-  outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.6 * vIBack) * 0.45;
+  outgoingLight += diffuseColor.rgb * vec3(1.1, 1.12, 0.68) * uKeyColor * (0.04 + 0.95 * vIBack) * 0.55;
   // bioluminescence: soft baked mask (veins, leaflets, strands), HDR so it blooms
   vec3 iGC = uGlowCol;
   if (uHueVar > 0.5) iGC = vIHue < 0.5 ? uGlowCol : vIHue < 0.78 ? vec3(0.62, 0.38, 1.0) : vec3(0.36, 1.0, 0.7);
@@ -290,6 +309,7 @@ export class Trees {
       uFade: { value: new THREE.Vector2(this.meshRange - q.pick(12, 16, 22, 22), this.meshRange + q.pick(12, 16, 22, 22)) },
       uPlayer: fl.uniforms.uPlayer, uDitherT: fl.uniforms.uDitherT,
       uHueVar: { value: fl.profile.glowPools ? 1 : 0 },
+      uMoss: { value: fl.profile.rocks?.moss ?? 0 }, uMossCol: { value: new THREE.Color(fl.profile.rocks?.mossCol || '#4e6e2c') },
     };
     this.U = U;
     this.barkMat = barkMaterial(U); this.barkDepth = barkMaterial(U, true);

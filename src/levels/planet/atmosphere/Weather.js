@@ -28,7 +28,7 @@ const KINDS = {
   storm: { clouds: 'storm', fog: 0.0004, fogH: 300, dust: 0.0, overcast: 0.8, particles: 'rain', wet: 1 },
   fog: { clouds: 'fog', fog: 0.0004, fogH: 170, dust: 0.0, overcast: 0.08, particles: null, wet: 0.3 },
   snow: { clouds: 'snow', fog: 0.0003, fogH: 220, dust: 0.0, overcast: 0.3, particles: 'snow' },
-  dust: { clouds: 'dust', fog: 0.0005, fogH: 140, dust: 0.2, particles: 'dust' }, // low, dense, bright: the zenith stays clearer than the horizon, the mid-ground dissolves
+  dust: { clouds: 'dust', fog: 0.0008, fogH: 180, dust: 0.2, particles: 'dust' }, // low, dense, bright: the zenith stays clearer than the horizon, the mid-ground dissolves
   ash: { clouds: 'ash', fog: 0.00016, fogH: 320, dust: 0.3, particles: 'ash' },
   spores: { clouds: 'spores', fog: 0.0002, fogH: 160, dust: 0.0, particles: 'spores' },
   aurora: { clouds: 'aurora', fog: 0.0, fogH: 120, dust: 0.0, particles: 'snowlight', aurora: 1 },
@@ -84,7 +84,7 @@ uniform sampler2D tDepth;
 uniform vec2 uRes;
 uniform float uNear, uFar, uRev;
 uniform vec3 uColor, uGlow;
-uniform float uAlpha, uGlowAmt, uShape, uTime;
+uniform float uAlpha, uGlowAmt, uShape, uTime, uOcc;
 varying vec2 vUv;
 varying float vFade;
 varying float vSeed;
@@ -108,7 +108,8 @@ void main(){
   float glowSel = step(1.0 - uGlowAmt, fract(vSeed * 13.7));
   float flick = 0.6 + 0.4 * sin(uTime * (3.0 + vSeed * 9.0) + vSeed * 50.0);
   vec3 col = mix(uColor, uGlow * flick, glowSel);
-  gl_FragColor = vec4(col * a, a * (1.0 - glowSel * 0.85));
+  // uOcc < 1: mostly additive (sunlit airborne grains glow; they never print as dark dashes)
+  gl_FragColor = vec4(col * a, a * (1.0 - glowSel * 0.85) * uOcc);
 }`;
 
 const COPY_FRAG = /* glsl */ `uniform sampler2D tInput; varying vec2 vUv; void main(){ gl_FragColor = texture2D(tInput, vUv); }`;
@@ -173,7 +174,7 @@ export default class Weather {
       uCam: { value: new THREE.Vector3() }, uEast: { value: new THREE.Vector3(1, 0, 0) }, uUp: { value: new THREE.Vector3(0, 1, 0) }, uNorth: { value: new THREE.Vector3(0, 0, 1) },
       uTime: { value: 0 }, uBox: { value: 30 }, uSize: { value: 0.02 }, uStretch: { value: 0 }, uFall: { value: 1 }, uSwirl: { value: 0 }, uWind: { value: new THREE.Vector3() },
       tDepth: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 0.1 }, uFar: { value: 1e7 }, uRev: { value: 1 },
-      uColor: { value: new THREE.Vector3(1, 1, 1) }, uGlow: { value: new THREE.Vector3() }, uAlpha: { value: 0.5 }, uGlowAmt: { value: 0 }, uShape: { value: 1 },
+      uColor: { value: new THREE.Vector3(1, 1, 1) }, uGlow: { value: new THREE.Vector3() }, uAlpha: { value: 0.5 }, uOcc: { value: 1 }, uGlowAmt: { value: 0 }, uShape: { value: 1 },
     };
     this.pmat = new THREE.ShaderMaterial({
       vertexShader: PART_VERT, fragmentShader: PART_FRAG, uniforms: this.pu,
@@ -219,7 +220,7 @@ export default class Weather {
     if (look) {
       const p = this.pu;
       p.uBox.value = look.box; p.uSize.value = look.size; p.uStretch.value = look.stretch; p.uFall.value = look.fall; p.uSwirl.value = look.swirl;
-      p.uShape.value = look.shape; p.uAlpha.value = look.alpha; p.uGlowAmt.value = look.glow;
+      p.uShape.value = look.shape; p.uAlpha.value = look.alpha; p.uOcc.value = look.skyLit ? 0.2 : 1; p.uGlowAmt.value = look.glow;
       const glow = this.level.aesthetic?.palette?.glow;
       if (kind === 'ash') p.uGlow.value.set(3.2, 0.9, 0.18);
       else if (glow) { const g = new THREE.Color(glow[0]); p.uGlow.value.set(g.r * 2.2, g.g * 2.2, g.b * 2.2); }
@@ -297,7 +298,7 @@ export default class Weather {
       // airborne sand sits at (or just under) the sky luminance: fog colour × sky + a little sun
       const fc = this.fogColor, kc = lt.keyColor, sky = lt.skyColor;
       // (brighter than the sky behind them: backlit grains forward-scatter, never dark specks)
-      p.uColor.value.set(fc.r * (sky.r * 4.2 + kc.r * 0.16), fc.g * (sky.g * 4.2 + kc.g * 0.16), fc.b * (sky.b * 4.2 + kc.b * 0.16));
+      p.uColor.value.set(fc.r * (sky.r * 5.0 + kc.r * 0.3), fc.g * (sky.g * 5.0 + kc.g * 0.3), fc.b * (sky.b * 5.0 + kc.b * 0.3));
     } else if (lt && this.look) {
       const c = this.look.color;
       const kc = lt.keyColor, sky = lt.skyColor;

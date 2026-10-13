@@ -34,7 +34,7 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   const mat = opts.physical
     ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...opts.physical, ...params })
     : opts.sheen
-    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, sheen: 1, sheenRoughness: 0.42, sheenColor: opts.sheen, ...params })
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, sheen: opts.sheenK ?? 0.35, sheenRoughness: 0.7, sheenColor: opts.sheen, ...params })
     : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...params });
   const head = GLSL_COMMON + (uniforms.__decl || '') + rigGLSL;
   const U = { ...uniforms }; delete U.__decl;
@@ -44,8 +44,14 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   // armpits and the insides of limbs so animals keep their own colour and plant.
   const bounce = (opts.bounce ?? 0.4).toFixed(3), aoMin = (opts.aoMin ?? 0.45).toFixed(3);
   const surf = opts.surface || '';
+  // opts.haze: { color: {value: Color}, dist, max } — aerial perspective for creatures kilometres away
+  const hz = opts.haze;
+  if (hz) { U.uFaHaze = hz.color; U.uFaHazeDist = { value: hz.dist ?? 2500 }; U.uFaHazeMax = { value: hz.max ?? 0.85 }; }
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
+    if (hz) sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uFaHaze; uniform float uFaHazeDist; uniform float uFaHazeMax;')
+      .replace('#include <fog_fragment>', '#include <fog_fragment>\n{ float faD = length(vFaUp - cameraPosition); gl_FragColor.rgb = mix(gl_FragColor.rgb, uFaHaze, (1.0 - exp(-faD / uFaHazeDist)) * uFaHazeMax); }');
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\n' + head + '\nvarying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;')
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\nvec3 faPos = position;\nvFaObj = position; vFaObjN = normal;\nvFaAO = mix(' + aoMin + ', 1.0, smoothstep(-0.85, 0.45, normal.y));\nrig(faPos, objectNormal);\nvGlow = aGlow;')
@@ -53,7 +59,7 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
       .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec4 faW = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nfaW = instanceMatrix * faW;\n#endif\nvFaUp = (modelMatrix * faW).xyz; }');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nuniform float uFTime;\nvarying float vGlow; varying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;\n' + FRAG_NOISE + surf)
-      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat faGlow = vGlow;\n' + (surf ? 'faSurface(vFaObj, normalize(vFaObjN), diffuseColor.rgb, faGlow);\n' : ''))
+      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat faGlow = vGlow;\n' + (surf ? 'faSurface(vFaObj, normalize(vFaObjN), diffuseColor.rgb, faGlow);\n' : '') + (opts.surfaceMain || ''))
       .replace('#include <lights_fragment_end>', `{
   vec3 faWN = inverseTransformDirection(geometryNormal, viewMatrix);
   vec3 faUpN = normalize(vFaUp);

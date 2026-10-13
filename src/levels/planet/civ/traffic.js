@@ -63,20 +63,26 @@ function airship(rng, pal) {
 
 function ornithopter(rng, pal) {
   const B = new MeshBuilder(1024);
-  const L = rng.range(9, 13);
-  B.mat(M.METAL, rng.float(), 0, 3).color(col('#8a7a62')).ext(1, 0, F.NOWIN, 0);
+  const L = rng.range(11, 15);
+  // dark weathered hull: reads as a crisp silhouette against the dust-lit sky
+  B.mat(M.METAL, rng.float(), 0, 3).color(col('#4a4036')).ext(1, 0, F.NOWIN, 0);
   zLathe(B, [[0.05, -L * 0.5], [L * 0.06, -L * 0.3], [L * 0.1, 0], [L * 0.09, L * 0.25], [L * 0.05, L * 0.42], [0.05, L * 0.5]], 10);
   B.mat(M.GLASS, 0.3, 0, 3).color(col('#0a0c10'));
   B.box(-L * 0.06, L * 0.04, L * 0.12, L * 0.06, L * 0.1, L * 0.38);
   B.mat(M.METAL, 0.3, 0, 3).color(col('#3a3028'));
   B.box(-0.15, -L * 0.12, -L * 0.48, 0.15, L * 0.1, -L * 0.35);
   for (const s of [-1, 1]) B.box(s * L * 0.04, -L * 0.13, -L * 0.2, s * L * 0.06, -L * 0.1, L * 0.25);
+  // running lights: red tail, warm belly lamp (they read as moving points at dusk)
+  B.mat(M.EMISSIVE, 0.2, 0, 3).color(col('#ff2a14').multiplyScalar(1.6)).ext(1, 0, F.NOWIN, 0);
+  B.boxC(0, L * 0.08, -L * 0.48, 0.5, 0.5, 0.5);
+  B.mat(M.EMISSIVE, 0.2, 0, 3).color(col('#ffb060').multiplyScalar(1.4));
+  B.boxC(0, -L * 0.12, L * 0.3, 0.6, 0.35, 0.6);
   const body = B.toGeometry();
   const Wb = new MeshBuilder(256);
-  Wb.mat(M.METAL, 0.5, 0, 3).color(col('#b8ac94')).ext(1, 0, F.NOWIN, 0);
+  Wb.mat(M.METAL, 0.5, 0, 3).color(col('#6e6354')).ext(1, 0, F.NOWIN, 0);
   // one wing, hinged at x = 0, extends +x
-  Wb.box(0, -0.04, -L * 0.07, L * 0.55, 0.04, L * 0.07);
-  Wb.box(L * 0.1, -0.03, -L * 0.1, L * 0.5, 0.03, -L * 0.07);
+  Wb.box(0, -0.04, -L * 0.07, L * 0.62, 0.04, L * 0.07);
+  Wb.box(L * 0.1, -0.03, -L * 0.1, L * 0.56, 0.03, -L * 0.07);
   void pal;
   return { geo: body, wing: Wb.toGeometry(), len: L };
 }
@@ -254,7 +260,8 @@ export class Traffic {
       it.mesh.matrix.copy(_m); it.mesh.matrixWorldNeedsUpdate = true;
       if (it.wings) {
         for (const w of it.wings) {
-          const a = Math.sin(t * 22 + w.ph) * 0.45 * w.sx;
+          // (shots: wings held at a gentle dihedral — a 22 Hz beat smears into a giant fan under motion blur)
+          const a = (this.s.level.engine.shotMode ? 0.12 + 0.1 * Math.sin(w.ph * 3.0) : Math.sin(t * 22 + w.ph) * 0.45) * w.sx;
           _s.makeTranslation(0, 0.6, w.z).multiply(_w1.makeRotationZ(a)).multiply(_w2.makeScale(w.sx, 1, 1));
           w.mesh.matrix.multiplyMatrices(_m, _s); w.mesh.matrixWorldNeedsUpdate = true;
         }

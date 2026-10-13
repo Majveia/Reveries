@@ -481,10 +481,21 @@ export class MeshBuilder {
     const rise = y1 - y0, run = z1 - z0;
     const n = Math.max(1, Math.round(Math.abs(rise) / (o.step ?? 0.2)));
     const dy = rise / n, dz = run / n;
+    // solid stairs with side faces: thin treads + one sloped cheek per side. (Full-height solid boxes
+    // stacked their coplanar side faces, z-fighting into a sawtooth comb along the whole flight.)
+    const cheek = o.solid && o.sideFaces;
+    const fl = o.floor ?? y0 - 1;
     for (let i = 0; i < n; i++) {
       const za = z0 + dz * i, zb = z0 + dz * (i + 1);
       const yt = y0 + dy * (i + 1);
-      this.box(x0, (o.solid ? (o.floor ?? y0 - 1) : yt - Math.abs(dy) - 0.05), Math.min(za, zb), x1, yt, Math.max(za, zb), { base: o.base ?? y0, sides: [true, !!o.sideFaces, i === 0, !!o.sideFaces] });
+      const yb = o.solid ? (cheek && i > 0 ? yt - Math.abs(dy) * 1.3 - 0.02 : fl) : yt - Math.abs(dy) - 0.05;
+      this.box(x0, yb, Math.min(za, zb), x1, yt, Math.max(za, zb), { base: o.base ?? y0, sides: [true, !!o.sideFaces, i === 0, !!o.sideFaces] });
+    }
+    if (cheek) {
+      for (const [x, s] of [[x0, -1], [x1, 1]]) {
+        const p0 = new THREE.Vector3(x, fl, z0), p1 = new THREE.Vector3(x, fl, z1), p2 = new THREE.Vector3(x, y1 - Math.max(0, dy) - 0.01, z1), p3 = new THREE.Vector3(x, y0 + Math.min(0, dy) - 0.01, z0);
+        this.quadP(p0, p1, p2, p3, [z0, fl], [z1, fl], [z1, y1], [z0, y0], new THREE.Vector3(s, 0, 0));
+      }
     }
   }
 

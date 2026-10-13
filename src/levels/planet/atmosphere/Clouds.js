@@ -81,23 +81,24 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float mu = max(abs(dot(rd, n)), 0.06);
   // three slices through the shell, each with its own height profile
   float tauSum = 0.0; float cMid = 0.0; float hW = 0.0;
-  for (int k = 0; k < 3; k++) {
-    float h = 0.18 + 0.32 * float(k);
+  for (int k = 0; k < 5; k++) {
+    float h = 0.1 + 0.2 * float(k);
     float Rk = uCloudBase + shellH * h;
     vec2 tk = raySphere(ro, rd, Rk);
     float ts = tk.x > 0.0 ? tk.x : tk.y;
     if (ts <= 0.0 || ts > sceneDist + 1500.0) continue;
     vec3 Pk = ro + rd * ts;
     float ck = cloudLayer2D(Pk, wx);
-    if (k == 1) cMid = ck;
-    float dk = ck * cProf2D(h, ck);
+    if (k == 2) cMid = ck;
+    float dk = ck * cProf2D(h, ck) * 0.6;
     tauSum += dk; hW += dk * h;
   }
   if (tauSum <= 0.002) { dOut = t; return vec4(0.0, 0.0, 0.0, 1.0); }
   float hMean = hW / tauSum;
   // optical depth: linear in density × slice thickness, path-lengthened toward the limb
   float tau = tauSum * (1.2 + 1.5 * wx.g) * (0.7 + 0.6 * wx.b) / mu;
-  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.18, abs(dot(rd, n)));
+  // soft Beer-Lambert opacity: margins fade over kilometres instead of a decal cut
+  float alpha = (1.0 - exp(-tau * 0.6)) * smoothstep(0.0, 0.18, abs(dot(rd, n)));
   // sunward self-shadow: sample the deck a little toward the light along the surface
   vec3 kT = uKeyDir - n * dot(uKeyDir, n);
   float kl = length(kT);
@@ -249,7 +250,8 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     // ground bounce reaches the bases desaturated (a green/ochre world must not tint the deck)
     gndA = mix(vec3(dot(gndA, vec3(0.3333))), gndA, 0.35) + uCityGlow;
     // tops see the whole (blue) sky dome, bases a cool blue-grey mix of sky and a little bounce
-    vec3 Sa = (skyA * (0.5 + 0.7 * sqrt(hl)) + gndA * 0.35 * (1.0 - hl)) * (0.55 + 0.45 * ambOcc) * PI * 0.36;
+    vec3 Sa = (skyA * (0.5 + 0.7 * sqrt(hl)) + gndA * 0.35 * (1.0 - hl)) * (0.7 + 0.3 * ambOcc) * PI * 0.36
+      + skyA * PI * 0.05; // sky-coloured multiple-scattering floor: thick bases read blue-grey, never navy holes
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -473,7 +475,7 @@ export default class Clouds {
     mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 3.6);
     const nightK = light ? light.night : 0;
     // starlight + airglow + scattered moonlight: unlit clouds read as dark blue-grey shapes over the stars
-    mu.uNightAmb.value.set(7e-4, 1.0e-3, 1.6e-3).multiplyScalar(nightK);
+    mu.uNightAmb.value.set(1.4e-3, 1.9e-3, 2.9e-3).multiplyScalar(nightK); // starlit/airglow decks read slate-blue against the band, not black paper
     // curvature compression fades out with altitude (from high up the true terminator shows)
     const altK = ctx.cameraPosition.length() - m.Rb;
     mu.uCurveK.value = 0.65 * (1 - THREE.MathUtils.smoothstep(altK, this.topH, this.topH * 2.4));

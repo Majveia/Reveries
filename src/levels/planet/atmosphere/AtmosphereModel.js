@@ -471,7 +471,7 @@ export class AtmosphereModel {
   _computeCoefficients() {
     const A = this.params;
     const T = this.thickness;
-    const HR = 0.21 * T, HM = 0.085 * T;
+    const HR = 0.16 * T, HM = 0.08 * T; // thin, layered limb from orbit (not a fat halo)
     const topR = Math.exp(-T / HR), topM = Math.exp(-T / HM);
     const normR = 1 / (1 - topR), normM = 1 / (1 - topM);
     // Column integrals of the normalised density profiles.

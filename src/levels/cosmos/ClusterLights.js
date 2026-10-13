@@ -28,10 +28,10 @@ void main(){
   float L = pow(10.0, 0.75 * m) * uGain * tr * tw * nearF;
   vCore = px / max(1.6 * uPxK, 1.0);                       // sprite radius in core units
   vIcl = clamp(pxR * 2.0 / px, 0.05, 1.0);                 // R200 relative to the sprite
-  vSpike = smoothstep(0.6, 2.0, m);
+  vSpike = smoothstep(1.4, 2.4, m);   // only the few richest clusters carry a (faint) PSF
   // point-like BCG nucleus (fixed ~2 px): flux falls with distance, capped in the near field so a
   // halo beside the camera never becomes a giant disc
-  vCol = mix(vec3(1.0, 0.80, 0.55), vec3(1.0, 0.93, 0.82), fract(aSeed * 7.31)) * L * 40.0 / max(dist, 15.0);
+  vCol = mix(vec3(1.0, 0.80, 0.55), vec3(1.0, 0.93, 0.82), fract(aSeed * 7.31)) * L * 75.0 / max(dist, 15.0);
   // intracluster light is an extended source: its SURFACE BRIGHTNESS does not depend on distance
   // (old: ∝ 1/d², which blew close halos into flat cream plateaus); it fades out once the sprite is
   // clamped (truncated R200)
@@ -51,7 +51,7 @@ void main(){
   float core = 1.6 * exp(-rq * rq * 3.0) + 0.10 * exp(-rq * 1.1);
   // intracluster light: de Vaucouleurs envelope truncated at R200, so voids stay true black
   float ri = sqrt(r2) / vIcl;
-  float icl = 0.05 * exp(-pow(ri, 0.5) * 5.0) * exp(-ri * ri) * (1.0 - smoothstep(0.6, 1.0, sqrt(r2)));
+  float icl = 0.08 * exp(-pow(ri, 0.5) * 5.5) * exp(-ri * ri * 1.5) * (1.0 - smoothstep(0.35, 1.0, sqrt(r2)));
   float sp = 0.0;                                          // hexagonal (JWST) diffraction pattern
   for (int k = 0; k < 3; k++) {
     float an = 1.5707963 + float(k) * 1.0471976;
@@ -84,7 +84,7 @@ void main(){
   vPx = px;
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float area = max(1.0, sz * sz * 2.0);
-  float b = uGain * tr * aLum * 2400.0 / max(dist * dist, 25.0) * min(4.0, area) / area * (px * px / max(px * px, 1.0));
+  float b = uGain * tr * aLum * 3000.0 / max(dist * dist, 25.0) * min(4.0, area) / area * (px * px / max(px * px, 1.0));
   vCol = mix(vec3(1.0, 0.72, 0.46), vec3(1.0, 0.9, 0.78), aShape.z) * b;
   vShape = aShape;
 }`;
@@ -100,7 +100,7 @@ void main(){
   float v = exp(-sqrt(r2) * 5.0) * 1.6 + 0.25 * exp(-r2 * 3.0);
   gl_FragColor = vec4(vCol * v, 1.0);
 }`;
-const NMEM = 40;
+const NMEM = 96;
 
 export class ClusterLights {
   constructor(max = 96) {
@@ -126,7 +126,7 @@ export class ClusterLights {
     this.points.renderOrder = 6;
 
     // resolved cluster members of the top halos
-    this.nTop = Math.min(max, 28);
+    this.nTop = Math.min(max, 32);
     const nm = this.nTop * NMEM;
     this.mOff = new Float32Array(nm * 3);
     const mg = new THREE.BufferGeometry();
@@ -181,11 +181,16 @@ export class ClusterLights {
     for (let i = 0; i < nt; i++) {
       const lm = this.mass[i];
       const R = 1.63 * Math.pow(10, (lm - 2) / 3);
-      const rich = Math.max(0, Math.min(1, (lm + 0.3) / 2.2));
+      const rich = Math.max(0, Math.min(1, (lm + 0.6) / 2.4));
       const cx = this.pos[i * 3], cy = this.pos[i * 3 + 1], cz = this.pos[i * 3 + 2];
       for (let j = 0; j < NMEM; j++) {
         const k = i * NMEM + j;
-        this.mPos[k * 3] = cx + this.mOff[k * 3] * R; this.mPos[k * 3 + 1] = cy + this.mOff[k * 3 + 1] * R; this.mPos[k * 3 + 2] = cz + this.mOff[k * 3 + 2] * R;
+        // members orbit inside the potential well (σ_v shimmer): faster near the core
+        const ox = this.mOff[k * 3], oy = this.mOff[k * 3 + 1], oz = this.mOff[k * 3 + 2];
+        const rr = Math.max(0.08, Math.hypot(ox, oy, oz));
+        const th = time * (0.035 / Math.sqrt(rr)) * (j & 1 ? 1 : -1) + j * 0.37;
+        const c = Math.cos(th), sn = Math.sin(th);
+        this.mPos[k * 3] = cx + (c * ox + sn * oz) * R; this.mPos[k * 3 + 1] = cy + oy * R; this.mPos[k * 3 + 2] = cz + (-sn * ox + c * oz) * R;
         this.mLum[k] = j < NMEM * rich ? this.mLumBase[k] : 0;
       }
     }

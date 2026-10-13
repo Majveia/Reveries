@@ -37,7 +37,7 @@ export default class CosmosLevel {
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
       blackPoint: 0.008, blackToe: 0.03, vignette: 0.2, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.45, bloomRadius: 0.7, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
+      bloomStrength: 0.6, bloomRadius: 0.75, bloomThreshold: 0.7, bloomKnee: 0.3, streak: 0.04,
     };
     this.L = BOX;
     this.halos = [];
@@ -299,9 +299,13 @@ export default class CosmosLevel {
     p.lattice = p.early;
     // inside, the fog-integrated column of the whole periodic box forms a uniform floor: raise the
     // black floor with it so voids stay true black and only discrete structure reads
-    p.floor = 0.4 + 0.75 * inside;
+    // (the WHIM veil keeps the high floor; the web itself uses a lower, soft-toed floor so faint
+    // violet sheets survive and no hard iso-contour edges appear)
+    p.veilFloor = 0.4 + 0.75 * inside;
+    p.floor = 0.4 + 0.4 * inside;
+    p.envK = 0.42; p.detail = 1.6; p.latticeK = 1.6; p.veil = 0.8; p.heatK = 1;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
-    p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 4 + 1.5 * p.early;
+    p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 2.6 + 1.5 * p.early;
     p.dim = 1; p.lights = 1;
     // seen whole, the box projects 200 Mpc of web per pixel: a lower gain keeps a tonal ladder
     // (violet sheets → cyan filaments → gold nodes) instead of a saturated cyan ball
@@ -488,8 +492,8 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, gain: 0.5, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 3.2, galaxies: 0.25, lights: 0, veil: 0.3, lattice: 1 };
-        this._pose(this.home, this._heroOffset((o.ed ?? 0.5) * this.L, HERO.yaw + 0.4, 0.22), o.ef ?? 55, 0.0, 0);
+        this._shotP = { floor: 0.05, gain: 0.75, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.35, lights: 0, veil: 0.5, lattice: 1, latticeK: 1.0, envK: 0.5, detail: 1.4, heatK: 0.85, hi: 0.0, cap: 0.6 };
+        this._pose(this.home, this._heroOffset((o.ed ?? 0.34) * this.L, HERO.yaw + 0.4, 0.22), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
@@ -504,22 +508,22 @@ export default class CosmosLevel {
       node: async () => {
         // far enough that particle resolution never shows: the cluster's luminous gold heart (BCG +
         // ICL + members) with the cyan filaments that feed it converging from every side
-        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.08, a0: 110 };
+        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.14, a0: 110, cap: 1.1, envK: 0.36 };
         const o = this._dbg || {};
-        this._pose(this.home, this._heroOffset(o.nd ?? 70, HERO.yaw + (o.ny ?? 2.2), 0.22), o.nf ?? 40, -0.1, 0);
+        this._pose(this.home, this._heroOffset(o.nd ?? 70, HERO.yaw + (o.ny ?? 2.2), 0.22), o.nf ?? 40, o.ns ?? -0.16, 0.04);
       },
       // inside the web: a few Mpc off the spine of the richest filament leaving home, looking down
       // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
-        this._shotP = { near: 22, clampK: 2.0, gain: 0.24, cap: 0.62 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
+        this._shotP = { near: 16, clampK: 2.5, gain: 0.18, cap: 0.55, heatK: 0.9, hi: 0.06, lights: 0.3 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
         const o = this._dbg || {};
         const { A, d } = this._filamentPair();
         const B = A.clone().add(d);
         const side = new THREE.Vector3(0, 1, 0).cross(d).normalize();
         const up = new THREE.Vector3().crossVectors(d, side).normalize();
         if (up.y < 0) up.negate();
-        const cam = A.clone().addScaledVector(d, o.wt ?? 0.3).addScaledVector(side, o.ws ?? 8).addScaledVector(up, o.wu ?? 5);
+        const cam = A.clone().addScaledVector(d, o.wt ?? 0.3).addScaledVector(side, o.ws ?? 5).addScaledVector(up, o.wu ?? 3);
         this._pose(B, cam.sub(B), o.wf ?? 62, o.wsh ?? 0.12, o.wl ?? -0.3);
       },
     };

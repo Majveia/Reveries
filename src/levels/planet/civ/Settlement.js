@@ -468,7 +468,7 @@ export class Settlement {
     this.shadow.update(sunL, this.level.engine.shotMode && !this._shotShadowDone);
     if (this.level.engine.shotMode) this._shotShadowDone = true;
     // phones: city tiles beyond the tier's draw distance drop out (the far glow LOD keeps the lights)
-    const tileR = this.level.engine.quality.pick(950, 1600, Infinity, Infinity);
+    const tileR = this.level.engine.quality.pick(700, 1150, Infinity, Infinity);
     if (tileR < Infinity && this.archMeshes) {
       for (const m of this.archMeshes) {
         if (!m.userData.civCull) continue;

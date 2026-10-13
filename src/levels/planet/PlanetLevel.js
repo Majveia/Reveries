@@ -304,8 +304,25 @@ export default class PlanetLevel {
         const spot = this.scenicSpot(0, 400, 2);
         w.setTimeOfDay(0.02, spot.dir);
         const up = spot.dir.clone();
-        const tgt = spot.position.clone().addScaledVector(up, 900).add(spot.lookAt.clone().sub(spot.position).setLength(600));
+        // sky-first framing (atmosphere): face the galactic centre (the band's bulge), clear a
+        // cone of trees along the view, explorer small in the lower third, ~70% of the frame sky
+        let fw = spot.lookAt.clone().sub(spot.position);
+        const gC = this.sky?.celestial?.galCentre;
+        if (gC) { const g = gC.clone().applyMatrix4(new THREE.Matrix4().makeRotationY(w.dayAngle || 0)); if (g.dot(up) > -0.05) fw = g; }
+        fw.addScaledVector(up, -fw.dot(up)).normalize();
+        if (this.floraClear) for (const [d, r] of [[-8, 9], [0, 10], [14, 15], [34, 24], [64, 34], [104, 46], [160, 60]]) this.floraClear(spot.position.clone().addScaledVector(fw, d), r);
+        const tgt = spot.position.clone().addScaledVector(up, 900).addScaledVector(fw, 600);
         if (!(await delegate('night', { ...spot, lookAt: tgt }))) free(spot.position.clone().addScaledVector(up, 1.7), tgt);
+        else {
+          const feet = this.player?.position?.clone() || spot.position.clone();
+          const cp = feet.clone().addScaledVector(fw, -6.5).addScaledVector(up, 1.25);
+          const gr = w.surfaceRadius(cp.clone().normalize()) + 0.9;
+          if (cp.length() < gr) cp.setLength(gr);
+          // pitch up so the explorer's chest sits ~0.6 of the half-frame below centre (lower third)
+          const ec = Math.atan2(cp.clone().sub(feet).dot(up) - 1.0, 6.5); // chest below the eye line
+          const pitch = Math.max(0.12, THREE.MathUtils.degToRad(this.camera.fov) * 0.5 * 0.36 - ec);
+          free(cp, cp.clone().addScaledVector(fw, 100).addScaledVector(up, 100 * Math.tan(pitch)));
+        }
       },
       ocean: async () => {
         // find a coastline

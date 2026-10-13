@@ -177,7 +177,8 @@ export class UI {
     this._loadSettings();
     this._buildSettings();
     const ink = (el, cls = '') => ({ el, ink: h('i', 'rvu-ink ' + cls, this.inkLayer), L: 0 });
-    this._regions = [ink(this.crumbs), ink(this.toasts), ink(this.compass, 'is-wide'), ink(this.arrivalEl, 'is-big'), ink(this.stack, 'is-wide'), ink(this.lockEl), ink(this.tele)];
+    this._regions = [ink(this.crumbs), ink(this.toasts), ink(this.compass, 'is-wide'), ink(this.arrivalEl, 'is-big'), ink(this.stack, 'is-wide'), ink(this.tele)];
+    try { document.body.dataset.quality = engine.quality?.tier || 'high'; } catch { /* ignore */ }
     document.body.dataset.device = this.device;
     document.body.dataset.mode = 'map';
     if (engine.shotMode) document.body.classList.add('rvu-shot');
@@ -348,6 +349,20 @@ export class UI {
     // map scales keep the centred upper-third title card
     a.classList.toggle('is-plaque', this.mode !== 'map' || this.engine.levelName === 'planet');
     a.classList.toggle('is-long', String(text || '').length > 70);
+    a.style.maxWidth = '';
+    if (a.classList.contains('is-plaque') && window.innerWidth > 640) {
+      try { // keep ≥ 24 px between the lore plaque and the hero's projected silhouette
+        const L = this.engine.level, P = L?.player, cam = L?.camera;
+        if (P?.position && cam) {
+          const q = P.position.clone().project(cam);
+          if (q.z < 1) {
+            const hx = (q.x * 0.5 + 0.5) * window.innerWidth - window.innerHeight * 0.12;
+            const room = hx - a.getBoundingClientRect().left - 24;
+            if (room > 200 && room < 440) a.style.maxWidth = room.toFixed(0) + 'px';
+          }
+        }
+      } catch { /* ignore */ }
+    }
     a.classList.add('is-on');
     document.body.classList.add('rvu-arriving');
     // phones: a short caption that gets out of the way
@@ -427,7 +442,7 @@ export class UI {
     const word = 'REVERIES';
     // optical kerning for the display cut (R-E, V-E, E-R pairs close up; I opens)
     const KERN = { RE: -0.035, EV: -0.05, VE: -0.05, ER: -0.02, RI: 0.01, IE: 0.01, ES: 0 };
-    const letters = [...word].map((c, i) => `<span style="--i:${i};--k:${KERN[c + (word[i + 1] || '')] || 0}em">${c}</span>`).join('');
+    const letters = [...word].map((c, i) => `<span${c === 'I' ? ' class="is-i"' : ''} style="--i:${i};--k:${KERN[c + (word[i + 1] || '')] || 0}em">${c}</span>`).join('');
     const t = h('div', 'rvu-title' + (opts.static ? ' is-static' : ''), document.body, `
       <div class="rvu-title-vignette"></div>
       <div class="rvu-title-inner">
@@ -481,7 +496,8 @@ export class UI {
     if (L.quiet !== quiet) { L.quiet = quiet; L.e.classList.toggle('is-quiet', quiet); }
     L.pri = hov ? 3 : quiet ? 1 : 2;
     // preferred side; the declutter pass may flip it (right → left → under) before hiding
-    L.align0 = opts.align || (x > window.innerWidth - 180 ? 'left' : 'right');
+    // quiet map names sit centred just above their anchor (no ring/leader floating in space)
+    L.align0 = opts.align || (quiet ? 'top' : x > window.innerWidth - 180 ? 'left' : 'right');
     L.fixed = !!opts.align;
     if (this._labels.size <= 1 && L.align !== L.align0) { L.align = L.align0; L.e.dataset.align = L.align0; }
     if (opts.color && L.color !== opts.color) { L.color = opts.color; L.e.style.setProperty('--c', opts.color); }
@@ -504,6 +520,25 @@ export class UI {
     const cw = pe[3] * vx + pe[7] * vy + pe[11] * vz + pe[15];
     p.x = (cx / cw * 0.5 + 0.5) * window.innerWidth; p.y = (-cy / cw * 0.5 + 0.5) * window.innerHeight;
     if (p.x < -40 || p.y < -40 || p.x > window.innerWidth + 40 || p.y > window.innerHeight + 40) { this.unlabel(id, true); return null; }
+    // limb anchoring: with { radius } (world units; v = body centre, or opts.center) the anchor
+    // sits on the projected limb at 45° (NE, or NW for left-aligned names), so the ring
+    // touches the body instead of floating in space; opts.radiusPx gives the radius directly
+    let rpx = opts.radiusPx || 0;
+    if (!rpx && opts.radius > 0) {
+      const c = opts.center || v;
+      const cz = e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14];
+      if (cz < -1e-6) rpx = opts.radius * pe[5] * 0.5 * window.innerHeight / -cz;
+      if (opts.center && rpx) {
+        const ccx = e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12], ccy = e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13];
+        const kx = pe[0] * ccx + pe[8] * cz, ky = pe[5] * ccy + pe[9] * cz, kw = -cz;
+        p.x = (kx / kw * 0.5 + 0.5) * window.innerWidth; p.y = (-ky / kw * 0.5 + 0.5) * window.innerHeight;
+      }
+    }
+    if (rpx > 3) {
+      const left = (opts.align || (p.x > window.innerWidth - 180 ? 'left' : 'right')) === 'left';
+      const k = Math.min(rpx, 400) * 0.72;
+      return this.label(id, p.x + (left ? -k : k), p.y - k, text, opts);
+    }
     return this.label(id, p.x, p.y, text, opts);
   }
   unlabel(id, soft = false) {
@@ -714,8 +749,12 @@ export class UI {
       if (!vis) return;
       m.style.transform = `translate3d(${(W / 2 + c.rel * 180 / Math.PI * this._ppd).toFixed(1)}px,0,0)`;
       m.className = 'rvu-cmark is-' + (c.s.kind || 'site');
-      if (Math.abs(c.rel) < 0.14 && (!best || c.dist < best.dist)) best = c;
+      if (Math.abs(c.rel) < 0.6 && (!best || (Math.abs(best.rel) < 0.14) < (Math.abs(c.rel) < 0.14) || c.dist < best.dist)) best = c;
     });
+    if (best) {
+      const off = clamp(best.rel * 180 / Math.PI * this._ppd, -W / 2 + 54, W / 2 - 54);
+      this.compassCap.style.transform = `translate3d(${off.toFixed(1)}px,0,0)`;
+    }
     const cap = best ? `${best.s.name || best.s.kind} · ${best.dist < 1000 ? Math.round(best.dist) + ' m' : (best.dist / 1000).toFixed(1) + ' km'}` : '';
     if (cap !== this._cap) { this._cap = cap; this.compassCap.textContent = cap; this.compassCap.classList.toggle('is-on', !!cap); }
   }
@@ -792,6 +831,7 @@ export class UI {
     const W = window.innerWidth;
     const boxOf = (L, al) => al === 'left' ? [L.x - 16 - L.w, L.y - 28, L.x - 4, L.y + 2]
       : al === 'center' ? [L.x - L.w / 2, L.y + 6, L.x + L.w / 2, L.y + 26]
+      : al === 'top' ? [L.x - L.w / 2 + 8, L.y - 20, L.x + L.w / 2 - 8, L.y - 3]
       : [L.x + 4, L.y - 28, L.x + 16 + L.w, L.y + 2];
     const free = (b, self) => {
       if (b[0] < 6 || b[2] > W - 6 || b[1] < 4) return false;
@@ -799,7 +839,7 @@ export class UI {
       return true;
     };
     for (const L of list) {
-      const prefs = L.fixed ? [L.align0] : L.align0 === 'left' ? ['left', 'right', 'center'] : ['right', 'left', 'center'];
+      const prefs = L.fixed ? [L.align0] : L.align0 === 'top' ? ['top', 'right', 'left', 'center'] : L.align0 === 'left' ? ['left', 'right', 'center'] : ['right', 'left', 'center'];
       let al = null;
       for (const c of prefs) if (free(boxOf(L, c), L)) { al = c; break; }
       const hit = !al && L.pri < 3; // a hovered name always shows
@@ -912,7 +952,10 @@ export class UI {
       const { g, r, vis } = j;
       const L = vis ? lumOf(j) : 0;
       g.L = snap ? L : g.L + (L - g.L) * 0.5;
-      const a = clamp((g.L - 0.08) / 0.3, 0, 1);
+      // compass over a bright sky flips to dark ink (Death Stranding-style) instead of a grey scrim
+      const onLight = g.el === this.compass && vis && g.L > (g.el.classList.contains('is-onlight') ? 0.42 : 0.5);
+      if (g.el === this.compass) g.el.classList.toggle('is-onlight', onLight);
+      const a = onLight ? 0 : clamp((g.L - 0.1) / 0.36, 0, 1) * 0.9;
       if (vis) {
         const f = g.ink.classList.contains('is-big') ? 56 : 30;
         const s = g.ink.style;
