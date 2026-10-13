@@ -165,7 +165,7 @@ export default class Ocean {
       const k = TAU / lam;
       const spread = (i < 2 ? 0.12 : 0.28) + 0.95 * f;
       const ang = wa + (i % 2 ? 1 : -1) * spread * rng.range(0.15, 1.0) + rng.range(-0.1, 0.1);
-      const s = lam >= lamP ? Math.exp(-Math.pow(Math.log(lam / lamP), 2) / 0.45) : 0.4 + 0.6 * Math.pow(lam / lamP, 0.35);
+      const s = (lam >= lamP ? Math.exp(-Math.pow(Math.log(lam / lamP), 2) / 0.45) : 0.4 + 0.6 * Math.pow(lam / lamP, 0.35)) * (!lava && i < 3 ? 1.7 : 1);
       ssum += s;
       const omega = Math.sqrt(w.gravity * k) * (lava ? 0.16 : 1);
       waves.push({ dx: Math.cos(ang), dz: Math.sin(ang), k, s, omega, base: rng.float() * TAU });
@@ -564,10 +564,10 @@ export default class Ocean {
           if (hb > sea + 0.2 && hb < sea + 2.5) { back = bd; break; }
         }
         if (!back) back = up.clone().multiplyScalar(R).addScaledVector(sh, s0 - 4).normalize();
-        up = back; position = back.clone().multiplyScalar(R + Math.max(sea + 0.3, w.heightAt(back)) + 3.6);
+        up = back; position = back.clone().multiplyScalar(R + Math.max(sea + 0.3, w.heightAt(back)) + 4.8);
       }
     }
-    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -48);
+    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -44);
     return { position, target, dir: up, time: best.c.t };
   }
 

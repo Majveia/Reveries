@@ -66,6 +66,7 @@ export default class Terrain {
     // same tier values as play)
     this.pixelError = q.pick(56, 36, 20, 12); // low/medium: coarser mid/far terrain (frame budgets: 1.2M / 2.5M tris)
     this.refLines = 720;
+    this.errPx = q.pick(14, 10, 6, 5); // allowed projected geometric error (px, 720-line reference)
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
     this.relief = w.terrainParams.relief;
@@ -279,6 +280,7 @@ export default class Terrain {
     m.updateMatrix(); m.updateMatrixWorld(true);
     node.chunk = { mesh: m };
     node.minH = d.minH; node.maxH = d.maxH;
+    node.err = d.maxDelta || 0; // geometric error vs the parent grid (geomorph delta)
     node.center.set(d.center[0] + d.origin[0], d.center[1] + d.origin[1], d.center[2] + d.origin[2]);
     node.radius = d.radius;
     // near chunks cast shadows into the engine's near shadow map
@@ -336,7 +338,10 @@ export default class Terrain {
     if (!_frustum.intersectsSphere(_sphere)) d = d * 12 + n.radius * 2; // off-screen: much coarser
     // projected vertex spacing in pixels
     const px = (n.spacing * this.pxPerRadLod) / Math.max(d, 1e-3);
-    if (px <= this.pixelError) return false;
+    // geometric error: knife-edge dune brinks, crests and cliffs refine before the
+    // flats do (their silhouettes/terminators would otherwise kink into a sawtooth)
+    const ex = n.err ? (n.err * this.pxPerRadLod) / Math.max(d, 1e-3) : 0;
+    if (px <= this.pixelError && !(ex > this.errPx && px > this.pixelError * 0.5)) return false;
     return this._splitBudget-- > 0;
   }
 

@@ -82,6 +82,15 @@ export default class GalaxyLevel {
       this.overlay2.add(this.nebStars);
     }
     this.overlayPass2 = new OverlayPass(this.overlay2);
+    // the unresolved nucleus: a crisp warm HDR point at the very centre (M31's pin-sharp nucleus);
+    // the half-res volume alone can only paint it as a soft blur
+    if (g.type !== 'irregular') {
+      const ng = new THREE.BufferGeometry();
+      ng.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+      ng.setAttribute('aCol', new THREE.BufferAttribute(new Uint8Array([255, 214, 160, 255]), 4, true));
+      this.nucleus = this.stars.addPoints(ng, 16 * (0.5 + P.bulgeAmp * 0.5));
+      this.nucleus.material.uniforms.uMaxPx.value = 4.8;   // (below the spike threshold: a nucleus has no diffraction cross)
+    }
 
     this.deepSky = new DeepSky(E, g);
     this.scene.add(this.deepSky.points);
@@ -101,8 +110,8 @@ export default class GalaxyLevel {
     });
 
     this.grade = {
-      exposure: 1.0, agxPunch: 0.6, contrast: 1.16, saturation: 1.12, blackPoint: 0.0,
-      vignette: 0.3, grain: 0.01, bloomStrength: 0.16, bloomRadius: 0.85, chroma: 0.0012, temperature: 0.0,
+      exposure: 1.0, agxPunch: 0.6, contrast: 1.16, saturation: 1.12, blackPoint: 0.003,
+      vignette: 0.3, grain: 0.01, bloomStrength: 0.16, bloomRadius: 0.6, chroma: 0.0012, temperature: 0.0,
       // no aperture ghosts / streaks: they landed inside the black-hole shadow (true black)
       flare: 0, streak: 0,
     };
@@ -228,6 +237,13 @@ export default class GalaxyLevel {
     this.volume.march.uniforms.uInside.value = inside;
     this.gu.uKappa.value = THREE.MathUtils.lerp(6.5, 9.0, inside);
     this.volume.march.uniforms.uEmit.value = THREE.MathUtils.lerp(1.0, 1.8, inside);
+    if (this.nucleus) this.nucleus.material.uniforms.uFade.value = THREE.MathUtils.smoothstep(coreD, 0.02, 0.25) * (1 - inside);
+    // near the hole: tight bloom, crushed black floor (the shadow and space must stay OLED black)
+    const nearBH = this.blackHole.enabled && coreD < this.blackHole.rs * 400;
+    if (nearBH !== this._nearBH) {
+      this._nearBH = nearBH;
+      E.postfx?.setGrade?.(nearBH ? { bloomRadius: 0.45, blackPoint: 0.005 } : { bloomRadius: this.grade.bloomRadius, blackPoint: this.grade.blackPoint }, E.shotMode ? 0 : 1.2);
+    }
     // emission within ~1.5 kpc resolves into the point-star layers; dust keeps absorbing → rifts
     this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 0.3, inside);
     // inside the disk the HII / cluster-haze sprites would read as blurry blobs: the volume + nebulae carry them
@@ -235,6 +251,8 @@ export default class GalaxyLevel {
     const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
     // grazing views: the midplane lane must read as an opaque silhouette (NGC 891 / Sombrero)
     this.gu.uKappa.value *= 1 + 0.9 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
+    // grazing views integrate the disk light along a long chord: keep the band luminous against the lane
+    this.volume.march.uniforms.uEmit.value *= 1 + 0.8 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.14)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value)
       // seen edge-on the bulge must stand above and below the lane as a compact luminous core
@@ -328,12 +346,15 @@ export default class GalaxyLevel {
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.78, 0.55, 0.6); },
+      // near face-on 3/4 view (NGC 1300): bar at ~35° to the horizontal, disk filling ~80% of the width,
+      // target pulled toward the near side so the foreshortened disk sits centred in frame
+      hero: async () => { this._pose(new THREE.Vector3(Math.sin(0.75), 0, Math.cos(0.75)).multiplyScalar(P.R * 0.08), P.R * 1.62, 0.75, 0.86, 46); },
       // long lens from outside the disk (no near-side disk "floor" under the camera): the disk spans
       // the frame, a 1° tilt bends the black midplane lane across the luminous bulge
       edge: async () => {
         // whole disk in frame (tapered needle ends) with a ~2° tilt: the lane crosses the bulge front (Sombrero / NGC 891)
-        this._pose(new THREE.Vector3(0, P.R * 0.001, 0), P.R * 1.9, 1.1, 0.035, 36);
+        // longer lens, closer: the bulge sits on the left third and the disk tapers out of frame
+        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.2).setY(P.R * 0.001), P.R * 1.45, 1.1, 0.02, 24);
         this.engine.postfx?.setGrade?.({ exposure: 1.15 }, 0);
       },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },

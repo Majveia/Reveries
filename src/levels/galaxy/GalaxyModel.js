@@ -163,7 +163,13 @@ void main(){
     float ph2 = (tq - uK * 1.18 * lr + 1.1) * (uArms * 2.0) / TAU;
     float phi2 = (ph2 - floor(ph2 + 0.5)) * TAU / (uArms * 2.0);
     float spur = exp(-phi2 * phi2 / (2.0 * 0.07 * 0.07)) * smoothstep(0.25 * uR, 0.5 * uR, r);
-    young += (spur * 0.35 * frag + flocY * flocY * 0.9) * exp(-r / (0.38 * uR)) * inner * edge * uSF;
+    young += (spur * 0.35 * frag + flocY * flocY * 0.45) * exp(-r / (0.38 * uR)) * inner * edge * uSF;
+    // resolved OB associations: compact power-law knots strung along the arm ridges (NGC 1300 / M51)
+    vec2 qo = q + 0.12 * vec2(fbm2(q * 3.0 + 1.0, 2), fbm2(q * 3.0 + 6.0, 2));
+    float ob = knots(qo * 3.2, 0.55, uSeed + 23.0) * 0.6 + knots(qo * 7.5, 0.5, uSeed + 61.0) * 0.45;
+    young += ob * pow(arm, 1.5) * (0.3 + 0.7 * frag) * exp(-r / (0.45 * uR)) * inner * edge * (0.5 + 0.5 * uSF);
+    // inter-arm: velvet dark (arm/interarm contrast)
+    young *= 0.55 + 0.45 * smoothstep(0.02, 0.5, arm + spur * 0.5);
     // dust: lane on the inner (concave) side of each arm, filamentary + feathered spurs
     float dOff = 0.17 + 0.05 * fbm2(vec2(lr * 3.0, armId * 5.0), 2);
     float dSig = 0.044 + 0.03 * max(0.0, fbm2(q * 0.5 + 3.0, 3));
@@ -184,7 +190,7 @@ void main(){
     float feather = pow(sp, 3.5) * exp(-pow(phi - dOff * 0.2, 2.0) / (2.0 * 0.4 * 0.4)) * 1.6;
     float floc = max(0.0, fbm2(q * 1.4 + 7.0, 5) + 0.15);
     dust = (laneD * 3.4 + feather * 2.2 + floc * 0.45 * arm) * exp(-r / (0.5 * uR)) * inner * edge;
-    dust += 0.18 * floc * disk * edge;
+    dust += 0.18 * floc * disk * edge * smoothstep(0.03 * uR, 0.12 * uR, r);   // the bulge stays smooth
     // a web of thin filaments over the whole inner disk (M101 / M51 look)
     dust += pow(flocD, 4.0) * 0.9 * exp(-r / (0.35 * uR)) * inner * edge;
     // HII knots strung along the arm, just outside the dust lane
@@ -282,7 +288,7 @@ void main(){
   old *= exp(-dd * 0.9);
   hii *= exp(-dd * 0.8);
   // diffuse dust disk with a longer scale length than the starlight (edge-on lanes span the disk)
-  if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0) * (1.0 - 0.7 * sweptK) * (1.0 - 0.8 * barMask);
+  if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD * smoothstep(0.04 * uR, 0.14 * uR, r)) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0) * (1.0 - 0.7 * sweptK) * (1.0 - 0.8 * barMask);
   o = vec4(young, old, dust * uDust, hii);
   gl_FragColor = max(o, 0.0);
 }`;

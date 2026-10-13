@@ -23,7 +23,7 @@ ${GAL_GLSL}
 uniform sampler3D uNoise;
 uniform mat4 uProjInv, uViewInv;
 uniform vec3 uCam;
-uniform float uStretch, uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail, uYoungGain, uThick, uNucleus, uInside;
+uniform float uCoreR, uStretch, uBulgeDim, uSteps, uR, uBulgeQ, uBulgeScale, uBulgeAmp, uEmit, uNearFade, uPixAngle, uFrame, uDetail, uYoungGain, uThick, uNucleus, uInside;
 uniform vec3 uColYoung, uColOld, uColHII, uColBulge, uColDustGlow;
 uniform vec2 uRes;
 varying vec2 vUv;
@@ -120,7 +120,9 @@ void main(){
       float wy = 0.014 * uR * smoothstep(0.55 * uR, 1.15 * uR, rr) * sin(atan(pm.z, pm.x) - 0.7);
       vec4 nsh = texture(uNoise, pm * 0.31 + 0.11);
       float ay = abs(pm.y - wy);
-      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * 1.6;
+      // bulge/bar: smooth unresolved light (M31, NGC 1300) - no shear, no cloud modulation
+      float gC = smoothstep(uCoreR * 0.55, uCoreR * 1.25, rr);
+      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * 1.6 * gC;
       vec4 m = galMap(pmS, max(lod + 1.7 * log2(1.0 + ay / uHYoung), 0.0));
       vec4 mS = galMap(pmS, max(lod + 3.0, 0.0));
       // dust is sampled sharper than the light (no height LOD bias, one level finer) and given a
@@ -135,7 +137,7 @@ void main(){
       if (uDetail > 0.0 && tm < 3.0) {
         vec4 n1 = texture(uNoise, pm * 1.7);
         vec4 n2 = texture(uNoise, pm * 9.0 + n1.xyz * 0.15);
-        det = mix(1.0, (0.35 + 1.3 * n1.r) * (0.4 + 1.2 * n2.b), uDetail * (1.0 - smoothstep(0.8, 3.0, tm)));
+        det = mix(1.0, (0.35 + 1.3 * n1.r) * (0.4 + 1.2 * n2.b), uDetail * (1.0 - smoothstep(0.8, 3.0, tm)) * gC);
       }
       float pY = galSeg(ya, yb, uHYoung), pO = galSeg(ya, yb, uHOld), pD = galSeg(ya, yb, hDv);
       float pT = galSeg(ya, yb, uHOld * 2.6);
@@ -162,7 +164,7 @@ void main(){
         float xn = texture(uNoise, pm * vec3(0.22, 0.6, 0.22) + 0.31).b;
         float xn2 = texture(uNoise, pm * vec3(0.9, 1.8, 0.9) + 0.57).r;
         float exB = smoothstep(max(uBulgeScale * 0.8, 0.09 * uR), max(uBulgeScale * 2.2, 0.3 * uR), length(pm.xz));   // keep bulge + bar light smooth (no smoke)
-        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 4.0) * (0.4 + xn2) * 1.1 * exB;
+        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 2.8) * (0.4 + xn2) * 1.5 * exB;
       }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
       vec3 cY = mix(uColYoung, vec3(0.8, 0.88, 1.0), smoothstep(0.3, 1.6, m.r) * 0.6 * (1.0 - uInside));   // white-blue arm ridges
@@ -170,7 +172,7 @@ void main(){
       // since both profiles integrate to 1), so edge-on a luminous bulge stands above and below the lane
       float pk = (1.0 - uInside) * 0.7 * exp(-pow(length(pm.xz) / (0.2 * uR), 2.0));
       float pOk = mix(pO, galSeg(ya, yb, uHOld * 1.7), pk);
-      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, 0.6 * (1.0 - uInside)) * cOld * (pOk + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
+      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, mix(0.85, 0.6, gC) * (1.0 - uInside)) * cOld * (pOk + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit * grazeK;
       j *= rTap;   // (no glow at grazing angles: the lane must absorb, not paint orange)
       float near = smoothstep(0.0, uNearFade, tm);
@@ -244,7 +246,7 @@ export class GalaxyVolume {
     this.enabled = true;
     this.P = P;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.85 : q.pick(0.33, 0.4, 0.5, 0.6);
+    this.scale = engine.shotMode ? 1.0 : q.pick(0.33, 0.4, 0.5, 0.6);
     this.baseScale = this.scale;
     this.steps = engine.shotMode ? 88 : q.pick(32, 44, 60, 80);
     const mapSize = mapRT.width;
@@ -256,8 +258,8 @@ export class GalaxyVolume {
         uKappa: { value: 2.4 }, uMapTexel: { value: (2 * P.extent) / mapSize },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
         uSteps: { value: this.steps }, uR: { value: P.R }, uBulgeQ: { value: P.bulgeQ }, uBulgeScale: { value: P.bulgeScale },
-        uBulgeDim: { value: 1 }, uStretch: { value: 2.0 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
-        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 0.95 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 16.0 },
+        uCoreR: { value: Math.max(P.bulgeScale * 2.2, P.R * (P.bar || 0) * 0.56 * 1.15) }, uBulgeDim: { value: 1 }, uStretch: { value: 1.6 }, uBulgeAmp: { value: P.bulgeAmp }, uEmit: { value: 1.0 }, uNearFade: { value: 0.12 }, uPixAngle: { value: 0.001 },
+        uFrame: { value: 0 }, uDetail: { value: 1.0 }, uRes: { value: new THREE.Vector2() }, uYoungGain: { value: 1.3 }, uInside: { value: 0 }, uThick: { value: 0.1 }, uNucleus: { value: 16.0 },
         uColYoung: { value: new THREE.Color(0.33, 0.53, 1.0) }, uColOld: { value: new THREE.Color(1.0, 0.8, 0.6) },
         uColHII: { value: new THREE.Color(1.0, 0.2, 0.24) }, uColBulge: { value: new THREE.Color(1.0, 0.78, 0.52) },
         uColDustGlow: { value: new THREE.Color(0.0013, 0.00095, 0.0009) },

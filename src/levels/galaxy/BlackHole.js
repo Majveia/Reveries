@@ -75,16 +75,16 @@ vec3 background(vec3 dir){
   vec4 en2 = texture(uNoise, dir * 4.5 + en.xyz * 0.3);
   float lane = 1.0 - 0.9 * exp(-pow((sb - 0.012 + (en.r - 0.5) * 0.05) / (0.03 + 0.03 * en2.g), 2.0)) * smoothstep(0.25, 0.6, en2.b + 0.2);
   lane *= 1.0 - 0.55 * smoothstep(0.55, 0.8, en2.r) * band;                                  // dark globules
-  vec3 env = vec3(1.0, 0.62, 0.34) * (0.0008 + 0.032 * band * band * band + 0.006 * band) * (0.4 + 1.0 * en.g * en.g) * lane;
+  vec3 env = vec3(1.0, 0.62, 0.34) * (0.02 * band * band * band * band) * (0.4 + 1.0 * en.g * en.g) * lane;   // (no flat floor: space stays OLED black)
   env += vec3(1.0, 0.82, 0.62) * starLayer(dir, 520.0, 0.004 + 0.022 * band * band, uPix) * 0.5 * lane;
   sky += env;
   // the frame behind the hole contains the (unlensed) nucleus itself: mask it out so it is not
   // self-lensed into a hard graphic Einstein ring; its light is the broad lensed glow instead
   float toHole = acos(clamp(dot(dir, uHoleDir), -1.0, 1.0));
   // (wide, soft mask: a hard edge would itself be lensed into a ghost Einstein ring)
-  float mask = smoothstep(uHoleAng * 2.0, uHoleAng * 18.0, toHole);
-  mask *= mask;
-  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 5.0, 1e-4)) * 0.04;
+  float mask = smoothstep(uHoleAng * 1.5, uHoleAng * 40.0, toHole);
+  mask = 0.5 - 0.5 * cos(3.14159265 * mask);
+  vec3 glow = uCoreCol * exp(-toHole / max(uHoleAng * 2.5, 1e-4)) * 0.004;
   if (clip.w > 1e-5) {
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float inside = smoothstep(0.0, 0.04, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
@@ -102,13 +102,14 @@ vec4 plasma(float r, float a, float z){
   // large trailing-spiral clumps (angular frequency 3-8, pitch via u - a·0.25)
   float sp = a * 5.0 / TAU + u * 2.2;
   float n1 = texture(uNoise, vec3(u * 0.9 + 0.2 * s.x, sp * 0.33, 0.37 + z)).r;
-  float n2 = texture(uNoise, vec3(u * 2.1 + n1 * 0.25, a / TAU * 9.0 + u * 1.2 + n1 * 0.2, 0.71 + z)).b;
-  float n3 = texture(uNoise, vec3(u * 5.0 + n2 * 0.3, a / TAU * 16.0 + u * 2.0 + n2 * 0.25, 0.13 + z)).g;
-  float n4 = texture(uNoise, vec3(u * 3.2 + n2 * 0.3, a / TAU * 11.0 + u * 1.6, 0.53 + z)).a;
+  float n2 = texture(uNoise, vec3(u * 2.1 + n1 * 0.25, a / TAU * 4.0 + u * 1.2 + n1 * 0.2, 0.71 + z)).b;
+  float n3 = texture(uNoise, vec3(u * 5.0 + n2 * 0.3, a / TAU * 7.0 + u * 2.0 + n2 * 0.25, 0.13 + z)).g;
+  float n4 = texture(uNoise, vec3(u * 3.2 + n2 * 0.3, a / TAU * 5.0 + u * 1.6, 0.53 + z)).a;
   // isotropic (cartesian, disk-plane) turbulent clumps: breaks the azimuthal streaking
   float n5 = texture(uNoise, vec3(r * s * 0.19 + n1 * 0.12, 0.29 + z)).r;
-  n4 = mix(n4, n5, 0.55);
-  n2 = mix(n2, texture(uNoise, vec3(r * s * 0.47 + n5 * 0.1, 0.83 + z)).b, 0.4);
+  n4 = mix(n4, n5, 0.8);
+  n2 = mix(n2, texture(uNoise, vec3(r * s * 0.47 + n5 * 0.1, 0.83 + z)).b, 0.6);
+  n3 = mix(n3, texture(uNoise, vec3(r * s * 1.1 + n2 * 0.1, 0.47 + z)).r, 0.6);
   return vec4(n1, n2, n3, n4);
 }
 vec4 diskSample(vec3 hit, vec3 v){
@@ -138,7 +139,7 @@ vec4 diskSample(vec3 hit, vec3 v){
   dens *= 0.4 + 1.1 * smoothstep(0.3, 0.72, n4);                  // clumps and dark gaps
   dens *= 0.35 + 0.65 * smoothstep(0.28, 0.55, n1);               // a few dark spiral lanes
   float edge = (r < uIn ? 0.55 * plunge * plunge : max(smoothstep(0.0, 0.035, x), 0.55)) * (1.0 - smoothstep(0.5, 1.0, x));
-  float alpha = clamp(pow(dens, 1.6) * edge * 2.0, 0.0, 1.0);
+  float alpha = clamp(pow(dens, 1.25) * edge * 3.2, 0.0, 1.0);
   // temperature profile (Novikov–Thorne shape), peak normalized to 1
   float tp = pow(uIn / max(r, uIn), 0.75) * pow(max(1.0 - sqrt(uIn / max(r, uIn)), 0.0), 0.25) / 0.488;
   tp = max(tp, 0.62 * plunge * (1.0 - smoothstep(uIn, uIn * 1.35, r)));   // bridge the zero-torque edge
@@ -154,7 +155,7 @@ vec4 diskSample(vec3 hit, vec3 v){
   // emissivity: Novikov–Thorne flux shape with a sharp ISCO peak; HDR so the inner edge blooms
   float em = tp * tp * (0.35 + 0.65 * tp * tp) * (1.0 + 4.0 * exp(-x * 13.0));
   vec3 bb = blackbody(T);
-  bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.2), 0.0);   // photographic saturation
+  bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.5), 0.0);   // photographic saturation (blue approaching / red receding side)
   vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.88 + 0.24 * n3);
   return vec4(c * alpha, alpha);
 }
@@ -230,7 +231,7 @@ vec3 trace(vec2 uv){
     vec3 perp = v * cosE - pn;
     float bb = rr * sqrt(max(1.0 - cosE * cosE, 0.0));
     if (bb > 1e-3) v = bend(v, normalize(perp - v * dot(perp, v)), (1.0 / bb) * (1.0 - cosE));
-    col += T * background(v);
+    col += T * T * background(v);
   }
   // photon ring: the n>=2 images of the disk pile up exponentially close to the critical impact
   // parameter b_c = 3√3/2 Rs (Lyapunov exponent π per half-orbit); the step budget cannot resolve
@@ -240,12 +241,12 @@ vec3 trace(vec2 uv){
     float bI = sqrt(h2);
     float db = bI - 2.598;
     if (db > -0.01) {
-      float ring = exp(-max(db, 0.0) / 0.022) + 0.35 * exp(-max(db, 0.0) / 0.09);
+      float ring = exp(-max(db, 0.0) / 0.012) * 2.2 + 0.3 * exp(-max(db, 0.0) / 0.06);
       vec3 Lh = normalize(cross(p, v) + 1e-6);
       float dop = clamp(-Lh.y, -1.0, 1.0) * uDoppler;
       float gR = 1.0 + 0.38 * dop;
-      vec3 rc = blackbody(uTmax * 0.62 * gR);
-      col += T * rc * pow(gR, 3.0) * ring * uGain * 0.55 * (0.35 + 0.65 * abs(Lh.y));
+      vec3 rc = blackbody(uTmax * 0.95 * gR);
+      col += T * rc * pow(gR, 3.0) * ring * uGain * 1.3 * (0.45 + 0.55 * abs(Lh.y));
     }
   }
   if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
@@ -286,7 +287,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.5 }, uTmax: { value: 7600 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 1.5 }, uTmax: { value: 8800 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

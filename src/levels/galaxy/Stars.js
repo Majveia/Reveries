@@ -276,7 +276,7 @@ export class Stars {
     const P = this.P;
     const n = E.shotMode ? 600000 : q.pick(150000, 320000, 600000, 950000);
     const rng = new Random(seedFrom(g.seed, 'stars'));
-    const nClusters = q.pick(250, 500, 900, 1200);
+    const nClusters = E.shotMode ? 3600 : q.pick(500, 1200, 3200, 4200);
     const perCluster = 28;
     const total = n + nClusters * perCluster;
     const pos = new Float32Array(total * 3);
