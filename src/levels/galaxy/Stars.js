@@ -59,7 +59,7 @@ const STAR_VERT = /* glsl */ `
 ${GAL_GLSL}
 ${CLOUD_GLSL}
 attribute vec4 aCol;          // linear color (rgb) + log2 luminosity code (a)
-uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade, uOldFade, uUnres;
+uniform float uBright, uMinPx, uMaxPx, uPxScale, uSat, uTauSteps, uFade, uOldFade, uUnres, uNoExt;
 varying vec3 vColor; varying float vSharp, vRc;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -76,11 +76,12 @@ void main(){
   flux *= mix(1.0, mix(smoothstep(24.0, 60.0, L) * 0.6 * (1.0 - 0.6 * uUnres), hotK, hot), uOldFade);
   flux = uSat * (1.0 - exp(-flux / uSat));
   float lod = log2(max(sqrt(d2) * 0.002, uMapTexel) / uMapTexel);
-  float sTau = starTau(cameraPosition, position, int(uTauSteps), lod);
+  // (uNoExt: stars embedded in a nebula, whose own volume does the extinction; unset = 0)
+  float sTau = starTau(cameraPosition, position, int(uTauSteps), lod) * (1.0 - uNoExt);
   flux *= exp(-sTau);
-  vec3 redden = exp(-min(sTau, 6.0) * vec3(-0.3, 0.0, 0.35));   // dust reddens what it does not hide
+  vec3 redden = exp(-min(sTau, 6.0) * vec3(-0.12, 0.0, 0.2));   // (mild: a whole field reddened to one orange read as monochrome)   // dust reddens what it does not hide
   // stars embedded in a lane are dimmed by the column around them (screen term, matches the volume)
-  flux *= exp(-galMap(position, 1.0).b * 1.1);
+  flux *= exp(-galMap(position, 1.0).b * 1.1 * (1.0 - uNoExt));
   float px = clamp(1.0 + sqrt(flux) * uPxScale, uMinPx, uMaxPx);
   gl_PointSize = px;
   vSharp = px;

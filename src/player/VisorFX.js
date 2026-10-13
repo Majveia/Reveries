@@ -40,12 +40,22 @@ export class VisorFX {
           float edge = smoothstep(-0.05, 0.42, box);
           col *= 1.0 - 0.32 * edge * uAmount;
           // helmet shell: a soft, out-of-focus curved rim just entering the far corners
-          float rimD = length((p - vec2(0.0, -0.08)) * vec2(0.78, 1.02));
-          float shell = smoothstep(1.05, 1.32, rimD) * (0.65 + 0.35 * smoothstep(0.2, 1.0, abs(p.x)));
-          col = mix(col, col * 0.18 + uSheen * 0.006, shell * 0.85 * uAmount);
+          // (biased up: the chin / cheek guards enter the lower corners more than the brow does,
+          // the diegetic cue that you are inside a helmet — still never across the view)
+          float rimD = length((p - vec2(0.0, 0.1)) * vec2(0.8, 1.0));
+          float shell = smoothstep(1.08, 1.36, rimD) * (0.6 + 0.4 * smoothstep(0.2, 1.0, abs(p.x)));
+          col = mix(col, col * 0.12 + uSheen * 0.005, shell * 0.9 * uAmount);
+          // glass smudges / micro-scratches only show where bright light crosses them
+          vec2 sp = vUv * vec2(uAspect, 1.0) * 7.0;
+          vec2 si = floor(sp), sf = fract(sp); sf = sf * sf * (3.0 - 2.0 * sf);
+          float h00 = fract(sin(dot(si, vec2(127.1, 311.7))) * 43758.55), h10 = fract(sin(dot(si + vec2(1, 0), vec2(127.1, 311.7))) * 43758.55);
+          float h01 = fract(sin(dot(si + vec2(0, 1), vec2(127.1, 311.7))) * 43758.55), h11 = fract(sin(dot(si + vec2(1, 1), vec2(127.1, 311.7))) * 43758.55);
+          float smudge = smoothstep(0.55, 0.95, mix(mix(h00, h10, sf.x), mix(h01, h11, sf.x), sf.y)) * smoothstep(0.3, 1.0, r);
+          float lumC = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          col += vec3(1.0, 0.97, 0.92) * smudge * min(lumC, 4.0) * 0.035 * uAmount;
           // inner edge of the glass catches the sky: a thin luminous lip along the shell boundary
-          float lip = exp(-pow((rimD - 1.12) / 0.09, 2.0)) * smoothstep(0.0, 0.6, p.y + 0.4);
-          col += uSheen * lip * 0.012 * uAmount;
+          float lip = exp(-pow((rimD - 1.15) / 0.08, 2.0)) * smoothstep(0.0, 0.6, p.y + 0.4);
+          col += uSheen * lip * 0.03 * uAmount;
           // sky sheen reflected on the upper glass + a slow drifting glint
           float sheen = smoothstep(0.35, 1.0, p.y) * (0.6 + 0.4 * sin(p.x * 1.7 + 0.6)) * 0.022;
           float glint = exp(-pow((p.x * 0.7 + p.y * 0.45 - 0.55 - 0.05 * sin(uTime * 0.2)) / 0.035, 2.0)) * smoothstep(0.1, 0.8, p.y) * 0.02;

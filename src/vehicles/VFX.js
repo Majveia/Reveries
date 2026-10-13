@@ -141,7 +141,7 @@ export class Particles {
           float size = mix(aMeta.z, aMeta.w, sqrt(t));
           gl_PointSize = clamp(size * uScale / max(0.1, -mv.z), 0.0, uMaxPx);
           // near-lens fade: no out-of-focus blobs sweeping past the camera
-          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (0.6 + 0.4 * (1.0 - t)) * smoothstep(1.5, 6.0, -mv.z);
+          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (0.6 + 0.4 * (1.0 - t)) * smoothstep(1.5, 6.0, -mv.z) * smoothstep(size * 0.45, size * 1.3, -mv.z); // big sprites fade well before the lens (no foreground smears)
           vC = vec4(aCol.rgb, abs(aCol.w) * fade); vT = t;
         }`,
       fragmentShader: /* glsl */`
@@ -349,22 +349,23 @@ export class Streaks {
       vertexShader: /* glsl */`
         attribute vec3 aS; attribute vec3 aT;
         uniform float uTime, uSpeed;
-        varying float vE; varying float vZ;
+        varying float vE; varying float vZ; varying float vX;
         void main(){
+          vX = aS.x;
           float z = fract(aS.z - uTime*aT.y*uSpeed*0.6);
           float depth = mix(-60.0, -2.0, z);
           float len = aT.x * (4.0 + uSpeed*10.0);
           vec3 p = vec3(position.xy * (1.0 + (1.0-z)*0.6), depth - aS.y*len);
           vec2 tang = vec2(-sin(aT.z), cos(aT.z));
-          p.xy += tang * aS.x * 0.012;
+          p.xy += tang * aS.x * 0.03; // soft-edged ribbons (gaussian cross-section), not hairlines
           gl_Position = projectionMatrix * vec4(p, 1.0);
           vE = aS.y; vZ = z;
         }`,
       fragmentShader: /* glsl */`
         uniform float uI; uniform vec3 uColor;
-        varying float vE; varying float vZ;
+        varying float vE; varying float vZ; varying float vX;
         void main(){
-          float a = (1.0 - vE) * vE * 4.0 * smoothstep(0.0, 0.3, vZ) * smoothstep(1.0, 0.7, vZ);
+          float a = exp(-vX*vX*4.0) * (1.0 - vE) * vE * 4.0 * smoothstep(0.0, 0.3, vZ) * smoothstep(1.0, 0.7, vZ);
           gl_FragColor = vec4(uColor * a * uI * 0.9, 1.0);
         }`,
     });

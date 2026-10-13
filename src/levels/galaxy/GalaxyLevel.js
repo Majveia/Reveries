@@ -78,6 +78,7 @@ export default class GalaxyLevel {
       this.nebStars = this.stars.addPoints(this.nebulae.clusterGeo, 0.0022);
       // the O stars of the young cluster: big PSFs with JWST 6+2 diffraction spikes
       this.nebStars.material.uniforms.uMaxPx.value = 34; this.nebStars.material.uniforms.uPxScale.value = 3.6;
+      this.nebStars.material.uniforms.uNoExt = { value: 1 };   // the nebula volume does their extinction
       this.stars.group.remove(this.nebStars);
       this.overlay2.add(this.nebStars);
     }
@@ -255,7 +256,7 @@ export default class GalaxyLevel {
     this.volume.march.uniforms.uEmit.value *= 1 + 0.8 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.14)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
     // (a nebula in view carries the frame: the diffuse volume behind it drops resolution, keeping software renders in budget)
-    if (this.nebulae.enabled) this.volume.scale = Math.min(this.volume.scale, this.engine.shotMode ? 0.6 : 0.45);
+    if (this.nebulae.enabled) this.volume.scale = Math.min(this.volume.scale, this.engine.shotMode ? 0.5 : 0.45);
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value)
       // seen edge-on the bulge must stand above and below the lane as a compact luminous core
       * (1 + 1.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
@@ -328,7 +329,7 @@ export default class GalaxyLevel {
   }
 
   // ---- shots ----------------------------------------------------------------------
-  _pose(target, distance, yaw, pitch, fov = 50) {
+  _pose(target, distance, yaw, pitch, fov = 50, roll = 0) {
     const r = this.rig;
     if (this.camera.fov !== fov) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
     if (this.engine.shotMode) this.engine.postfx?.setGrade?.({ exposure: this.grade.exposure }, 0);
@@ -336,6 +337,7 @@ export default class GalaxyLevel {
     r.target.copy(target); r._targetGoal.copy(target);
     r.distance = distance; r._logDistTarget = Math.log(distance);
     r.yaw = yaw; r.pitch = pitch; r._yawV = 0; r._pitchV = 0; r.autoRotate = 0; r._idle = 0;
+    r.roll = roll;
     r.apply();
     // shots start clean: no selection / labels left over from a previous preset
     if (this.engine.shotMode && this.engine.params.get('ui') !== '1') {
@@ -375,7 +377,7 @@ export default class GalaxyLevel {
         // stars of the lower disk fill the foreground (a midplane camera sees only black dust)
         const s = this.stars.systems[0];
         const yaw = Math.atan2(s.pos.x, s.pos.z);
-        this._pose(s.pos, 0.035, yaw + 0.32, 0.06, 64);
+        this._pose(s.pos, 0.035, yaw + 0.32, 0.06, 64, -0.36);   // rolled: the band crosses the frame diagonally
         this._ownLabels = true;
         this.hoverEl.style.display = ''; this.homeEl.style.display = '';
         this.select(0);

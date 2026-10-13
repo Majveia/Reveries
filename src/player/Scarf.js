@@ -79,13 +79,12 @@ export class Scarf {
 
   _makeMesh(rb, material) {
     const R = (rb.rows - 1) * UP_SAMPLE + 1, C = rb.cols;
-    const n = R * C;
+    const n0 = R * C, n = n0 * 2; // front sheet + a back sheet a few mm behind it (cloth thickness)
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage));
     const cl = new Float32Array(n * 4);
-    for (let r = 0; r < R; r++) for (let q = 0; q < C; q++) {
-      const i = r * C + q;
+    for (let r = 0; r < R; r++) for (let q = 0; q < C; q++) for (const i of [r * C + q, n0 + r * C + q]) {
       const along = (r / (R - 1)) * rb.length;
       cl[i * 4] = q / (C - 1);
       cl[i * 4 + 1] = along;
@@ -97,13 +96,23 @@ export class Scarf {
     for (let r = 0; r < R - 1; r++) for (let q = 0; q < C - 1; q++) {
       const a = r * C + q, b = a + 1, c = a + C, d = c + 1;
       idx.push(a, c, b, b, c, d);
+      // back sheet: same winding, so from behind it is a back face (darker reverse-side tint)
+      idx.push(n0 + a, n0 + c, n0 + b, n0 + b, n0 + c, n0 + d);
+    }
+    // hems: the two long edges close the sheets into a thin band (wound outward), so the
+    // ribbon reads as real woven cloth with thickness at grazing angles, not a paper strip
+    for (let r = 0; r < R - 1; r++) {
+      let a = r * C, c = a + C;
+      idx.push(a, n0 + a, c, c, n0 + a, n0 + c);
+      a = r * C + C - 1; c = a + C;
+      idx.push(a, c, n0 + a, c, n0 + c, n0 + a);
     }
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 3);
     const m = new THREE.Mesh(g, material);
     m.castShadow = true; m.receiveShadow = true;
     m.frustumCulled = false;
-    m.userData.R = R;
+    m.userData.R = R; m.userData.n0 = n0;
     return m;
   }
 
@@ -266,7 +275,7 @@ export class Scarf {
   updateGeometry(origin) {
     for (let k = 0; k < this.ribbons.length; k++) {
       const rb = this.ribbons[k], mesh = this.meshes[k];
-      const R = mesh.userData.R, C = rb.cols;
+      const R = mesh.userData.R, C = rb.cols, n0 = mesh.userData.n0;
       const pos = mesh.geometry.attributes.position.array;
       const p = rb.p;
       for (let q = 0; q < C; q++) {
@@ -284,6 +293,9 @@ export class Scarf {
           const qq = (q / (C - 1)) * 2 - 1, cup = (1 - qq * qq) * 0.011 * (1 - 0.5 * r / (R - 1));
           const ni = Math.min(rb.rows - 1, Math.round(s)) * C + q;
           pos[o] += rb.nrm[ni * 3] * cup; pos[o + 1] += rb.nrm[ni * 3 + 1] * cup; pos[o + 2] += rb.nrm[ni * 3 + 2] * cup;
+          // back sheet (thickness tapers from the knot to the tip)
+          const th = 0.0048 * (1 - 0.45 * r / (R - 1)), ob = o + n0 * 3;
+          pos[ob] = pos[o] - rb.nrm[ni * 3] * th; pos[ob + 1] = pos[o + 1] - rb.nrm[ni * 3 + 1] * th; pos[ob + 2] = pos[o + 2] - rb.nrm[ni * 3 + 2] * th;
         }
       }
       mesh.geometry.attributes.position.needsUpdate = true;

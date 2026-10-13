@@ -130,7 +130,10 @@ void main(){
   if (t1 <= t0) discard;
   float N = uSteps;
   float dt = (t1 - t0) / N;
-  float jit = fract(ign(gl_FragCoord.xy + 5.588238 * uFrameN) + 0.5 * uFrameJ * step(64.0, uFrameN));
+  // white-noise jitter + golden-ratio temporal offset: residual noise reads as fine grain that the
+  // compositor's 3x3 tent absorbs (IGN left a regular crosshatch at the few frames a shot accumulates)
+  vec2 fq = floor(gl_FragCoord.xy);
+  float jit = fract(fract(sin(dot(fq, vec2(12.9898, 78.233))) * 43758.5453) + uFrameJ);
   vec3 col = vec3(0.0);
   float T = 1.0;
   vec3 cHa = vec3(1.0, 0.09, 0.07), cOIII = vec3(0.05, 0.62, 1.0), cSII = vec3(1.0, 0.36, 0.08);
@@ -173,9 +176,9 @@ void main(){
       float limb = clamp(stepU * 1.2 / max(dHG, 1e-4), 1.0, 7.0);
       float wL = pow((limb - 1.0) / 6.0, 0.8);                    // silhouettes / skyline glow, faces stay modest
       float knR = nz(RT * x * 3.7 + SP * 0.7).b;
-      col += T * I * (0.02 + 0.34 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.88, 0.7), wL);
+      col += T * I * (0.03 + 0.8 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.9, 0.74), wL);
     }
-    e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.5) * 9.5;               // ionization front
+    e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.55) * 14.0;               // ionization front
     float sigD = dust * 88.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
     e += sigD * I * vec3(1.0, 0.55, 0.26) * 0.12 * (0.25 + hg);
@@ -206,9 +209,13 @@ const COMP = /* glsl */ `
 uniform sampler2D tInput, tNeb; uniform vec2 uTexel;
 varying vec2 vUv;
 void main(){
-  vec4 n = texture2D(tNeb, vUv + uTexel * vec2(-0.5, -0.5)) + texture2D(tNeb, vUv + uTexel * vec2(0.5, -0.5))
-         + texture2D(tNeb, vUv + uTexel * vec2(-0.5, 0.5)) + texture2D(tNeb, vUv + uTexel * vec2(0.5, 0.5));
-  n *= 0.25;
+  // 3x3 tent (bilinear taps at ±0.75 texel): removes the per-pixel jitter grain of the reduced-res march
+  vec4 n = texture2D(tNeb, vUv) * 4.0;
+  n += (texture2D(tNeb, vUv + uTexel * vec2(0.75, 0.0)) + texture2D(tNeb, vUv - uTexel * vec2(0.75, 0.0))
+      + texture2D(tNeb, vUv + uTexel * vec2(0.0, 0.75)) + texture2D(tNeb, vUv - uTexel * vec2(0.0, 0.75))) * 2.0;
+  n += texture2D(tNeb, vUv + uTexel * vec2(0.75, 0.75)) + texture2D(tNeb, vUv + uTexel * vec2(-0.75, 0.75))
+     + texture2D(tNeb, vUv + uTexel * vec2(0.75, -0.75)) + texture2D(tNeb, vUv + uTexel * vec2(-0.75, -0.75));
+  n /= 16.0;
   vec3 c = texture2D(tInput, vUv).rgb;
   gl_FragColor = vec4(c * (1.0 - n.a) + n.rgb, 1.0);
 }`;

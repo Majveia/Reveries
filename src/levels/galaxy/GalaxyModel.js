@@ -169,7 +169,7 @@ void main(){
     float ob = knots(qo * 3.2, 0.55, uSeed + 23.0) * 0.6 + knots(qo * 7.5, 0.5, uSeed + 61.0) * 0.45;
     young += ob * pow(arm, 1.5) * (0.3 + 0.7 * frag) * exp(-r / (0.45 * uR)) * inner * edge * (0.5 + 0.5 * uSF);
     // inter-arm: velvet dark (arm/interarm contrast)
-    young *= 0.55 + 0.45 * smoothstep(0.02, 0.5, arm + spur * 0.5);
+    young *= 0.32 + 0.68 * smoothstep(0.02, 0.5, arm + spur * 0.5);
     // dust: lane on the inner (concave) side of each arm, filamentary + feathered spurs
     float dOff = 0.17 + 0.05 * fbm2(vec2(lr * 3.0, armId * 5.0), 2);
     float dSig = 0.044 + 0.03 * max(0.0, fbm2(q * 0.5 + 3.0, 3));

@@ -47,6 +47,7 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 
 // ---- palette (sRGB hex → linear) ---------------------------------------------------
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+const HELM_REAR = lin('#8f877a');
 export const PALETTE = {
   ivory: lin('#e3d9c4'),
   signal: lin('#c4632a'),
@@ -403,10 +404,17 @@ function makePieces(spec, body) {
     {
       const c = add(sh, [s * 0.026, 0.03, -0.006]);
       const out = norm([s * 1, 0.25, 0]);
-      const big = s > 0 ? 1.3 : 1.2;
+      const big = s > 0 ? 1.16 : 1.1;
+      const facetN = norm([s * 0.42, 1, 0.08]), facetB = norm([s * 0.2, 0.35, -1]), facetF = norm([s * 0.2, 0.35, 1]);
       const f = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.079 * big, 0.072 * big, 0.083 * big), 0.012, 0.015);
+        // hard-surface cap, not a ball: a flattened ellipsoid cut by bevelled top / fore / aft facets
+        let e = sdEllipsoid(x, y, z, c[0], c[1], c[2], 0.082 * big, 0.066 * big, 0.09 * big);
+        const q = sub(p, c);
+        e = smax(e, dot(q, facetN) - 0.056 * big, 0.022);
+        e = smax(e, dot(q, facetB) - 0.072 * big, 0.02);
+        e = smax(e, dot(q, facetF) - 0.074 * big, 0.02);
+        const d = shell(e, 0.012, 0.015);
         const rel = sub(p, sh);
         let region = dot(rel, dA) - 0.066 * big; // only the cap near the joint
         region = Math.max(region, -dot(rel, out) - 0.012); // open toward the neck
@@ -636,8 +644,8 @@ function makePieces(spec, body) {
       const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
       // side pods (asymmetric: a sensor block on the left, a comms disc on the right)
-      d = smin(d, sdRoundBox(x, y, z, [0.124, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.02, 0.036, 0.05, 0.01), 0.012); // flush sensor pod (no lens: it read as a second goggle)
-      d = smin(d, sdRoundBox(x, y, z, [-0.122, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.018, 0.034, 0.046, 0.01), 0.014); // comms pod: low, shell-coloured (a dark inset face read as a second goggle)
+      d = smin(d, sdRoundBox(x, y, z, [0.118, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.016, 0.034, 0.048, 0.012), 0.026); // flush sensor pod (no lens: it read as a second goggle)
+      d = smin(d, sdRoundBox(x, y, z, [-0.118, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.016, 0.032, 0.046, 0.012), 0.026); // comms pod: low, shell-coloured (a dark inset face read as a second goggle)
       // chin / rebreather block under the visor
       d = smin(d, sdRoundBox(x, y, z, [0, 1.575, 0.104], [1, 0, 0], norm([0, 1, -0.35]), norm([0, 0.35, 1]), 0.052, 0.03, 0.034, 0.013), 0.012);
       for (const s of [1, -1]) d = smin(d, sdCylinder(x, y, z, s * 0.044, 1.566, 0.118, s * 0.05, 1.56, 0.142, 0.016, 0.004), 0.004); // filters
@@ -651,12 +659,15 @@ function makePieces(spec, body) {
         const ax = Math.abs(x);
         if (y < 1.598 && z > 0.07) return graphite;
         if (ax < 0.0105 && y > 1.73) return PALETTE.signal;
-        if (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6) return graphite;
+        // rear neck guard: a mid warm-grey panel (a graphite one + its glow line read as a
+        // second dark 'goggle' from the 3/4-rear hero camera)
+        if (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6) return HELM_REAR;
         return ivory;
       },
       mat: (x, y, z) => {
         const ax = Math.abs(x);
-        if ((y < 1.598 && z > 0.07) || (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6)) return [0.42, 0.5];
+        if (y < 1.598 && z > 0.07) return [0.42, 0.5];
+        if (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6) return [0.36, 0.15];
         return [0.28, 0.0];
       },
       split: (x, y, z) => {
@@ -670,7 +681,7 @@ function makePieces(spec, body) {
       line: (x, y, z) => {
         if (x > 0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // status LED at the rear of the pod
         if (x < -0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // small status LED at the rear of the pod
-        if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
+        // (no rear glow line: under the neck guard it read as a second visor 'eye')
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
         return FAR;
       },

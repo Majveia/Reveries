@@ -159,14 +159,18 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       bumpH += weave * 0.00005 * rvAA(0.0026, px);
       if (pat > 0.5 && pat < 1.5) { // ribbed
         float r = abs(sin(bp.y * 3.14159 / 0.0105));
-        bumpH += sqrt(r) * 0.0016 * rvAA(0.0105, px);
-        diffuseColor.rgb *= 0.86 + 0.14 * r;
+        float aaR = rvAA(0.0105, px);
+        bumpH += sqrt(r) * 0.0016 * aaR;
+        diffuseColor.rgb *= mix(0.93, 0.86 + 0.14 * r, aaR); // unresolvable ribs -> their mean, no moire
       } else if (pat > 1.5 && pat < 2.5) { // quilted
         float a = abs(fract((bp.y + bp.z * 0.7 + abs(bp.x) * 0.7) / 0.034) - 0.5);
         float b = abs(fract((bp.y - bp.z * 0.7 - abs(bp.x) * 0.7) / 0.034) - 0.5);
-        float st = smoothstep(0.0, 0.12, min(a, b));
-        bumpH += st * 0.0022 * rvAA(0.034, px);
-        diffuseColor.rgb *= 0.8 + 0.2 * st;
+        // stitch line width never below ~1 px (a 0.12-period line aliased into a block checker)
+        float sw = max(0.12, 1.2 * px / 0.034);
+        float st = smoothstep(0.0, sw, min(a, b));
+        float aaQ = rvAA(0.034, px * 1.6);
+        bumpH += st * 0.0022 * aaQ;
+        diffuseColor.rgb *= mix(0.95, 0.84 + 0.16 * st, aaQ);
       } else if (pat > 2.5 && pat < 3.5) { // glove grip
         bumpH += (rvNoise(bp * 900.0) - 0.5) * 0.0005 * rvAA(0.002, px);
       } else if (pat > 3.5) { // boot tread / sole

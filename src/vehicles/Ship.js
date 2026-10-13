@@ -52,7 +52,7 @@ export class Ship {
     this.manualRollT = 0;
     // VFX
     this.flames = model.nozzles.map((n, i) => {
-      const f = new Flame({ radius: n.r * 1.08, length: n.len * 1.45, core: i ? [0.8, 0.9, 1.0] : [1.0, 0.86, 0.7], edge: i ? [0.35, 0.5, 1.0] : [1.0, 0.38, 0.1] });
+      const f = new Flame({ radius: n.r * 1.08, length: n.len * 1.45, core: i ? [0.62, 0.8, 1.0] : [1.0, 0.66, 0.34], edge: i ? [0.25, 0.42, 1.0] : [1.0, 0.3, 0.06] });
       f.mesh.position.copy(n.pos);
       model.group.add(f.mesh);
       return f;
@@ -64,7 +64,7 @@ export class Ship {
       model.group.add(g.mesh);
       return g;
     });
-    this._coreA = new THREE.Color(1.0, 0.86, 0.7); this._edgeA = new THREE.Color(1.0, 0.38, 0.1);
+    this._coreA = new THREE.Color(1.0, 0.66, 0.34); this._edgeA = new THREE.Color(1.0, 0.3, 0.06); // saturated afterburner: orange through ACES, not a white puff
     this._coreS = new THREE.Color(0.75, 0.9, 1.0); this._edgeS = new THREE.Color(0.25, 0.45, 1.0);
     this.shadow = new BlobShadow();
     this._sprayAcc = 0;

@@ -148,11 +148,13 @@ export function vehicleMaterials(engine) {
     metalness: 0.88, roughness: 1.15, envMapIntensity: 1.3,
   });
   // vehicle hero lighting: sun rim along silhouettes (also when backlit) + soft sky fill
-  const light = { vehRimDir: { value: new THREE.Vector3(0, 1, 0) }, vehRimCol: { value: new THREE.Color(0, 0, 0) }, vehFill: { value: new THREE.Color(0, 0, 0) } };
+  const light = { vehRimDir: { value: new THREE.Vector3(0, 1, 0) }, vehRimCol: { value: new THREE.Color(0, 0, 0) }, vehFill: { value: new THREE.Color(0, 0, 0) },
+    // in space: the lit atmosphere's limb below wraps a thin blue rim around the hull's planet-facing edges
+    vehLimbDir: { value: new THREE.Vector3(0, -1, 0) }, vehLimbCol: { value: new THREE.Color(0, 0, 0) } };
   const hero = (m) => {
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, light);
-      sh.fragmentShader = 'uniform vec3 vehRimDir; uniform vec3 vehRimCol; uniform vec3 vehFill;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      sh.fragmentShader = 'uniform vec3 vehRimDir; uniform vec3 vehRimCol; uniform vec3 vehFill; uniform vec3 vehLimbDir; uniform vec3 vehLimbCol;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
           vec3 hN = normalize(normal);
           totalEmissiveRadiance += diffuseColor.rgb * vehFill * (0.75 + 0.25 * hN.y);
@@ -162,6 +164,9 @@ export function vehicleMaterials(engine) {
           // a meadow's green bounce must not turn cream paint lime (direct sun keeps its colour)
           const vec3 hL3 = vec3(0.2126, 0.7152, 0.0722);
           reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, hL3)), reflectedLight.indirectDiffuse, 0.4);
+          // the env probe sees a saturated cyan sea / green meadow under the hull: keep the reflection's
+          // value and most of the warm sky, but not enough chroma to tint cream paint lime
+          reflectedLight.indirectSpecular = mix(vec3(dot(reflectedLight.indirectSpecular, hL3)), reflectedLight.indirectSpecular, 0.6);
         }
         {
           // sun rim, masked by the sun's actual visibility here (shadow maps): direct diffuse
@@ -174,6 +179,9 @@ export function vehicleMaterials(engine) {
           float hRef = dot(material.diffuseColor * vehRimCol, hLum) * hNL * 0.579;
           float hVis = hRef > 1e-6 ? smoothstep(0.1, 0.7, dot(reflectedLight.directDiffuse, hLum) / hRef) : 0.0;
           totalEmissiveRadiance += vehRimCol * hF * hNL * hBack * hVis;
+          // atmospheric limb rim (space only; zero colour elsewhere)
+          float hLimb = max(dot(hN, vehLimbDir), 0.0);
+          totalEmissiveRadiance += vehLimbCol * pow(1.0 - clamp(dot(hN, hV), 0.0, 1.0), 3.0) * hLimb * hLimb;
         }`);
     };
     m.customProgramCacheKey = () => 'vehHero';

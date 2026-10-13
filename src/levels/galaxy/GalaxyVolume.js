@@ -122,13 +122,16 @@ void main(){
       float ay = abs(pm.y - wy);
       // bulge/bar: smooth unresolved light (M31, NGC 1300) - no shear, no cloud modulation
       float gC = smoothstep(uCoreR * 0.55, uCoreR * 1.25, rr);
-      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * mix(0.9, 1.6, uInside) * gC;
-      vec4 m = galMap(pmS, max(lod + 1.7 * log2(1.0 + ay / uHYoung), 0.0));
+      // (outside the disk a mild shear only: strong shear brushed the face-on arms into fur)
+      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * mix(0.35, 1.6, uInside) * gC;
+      // light far off the midplane samples a strongly smoothed map: seen obliquely, a sharp map
+      // extruded through the layer's thickness projects into short parallel streaks ("fur")
+      vec4 m = galMap(pmS, max(lod + mix(2.0, 1.7, uInside) * log2(1.0 + ay / (uHYoung * mix(0.5, 1.0, uInside))), 0.0));
       vec4 mS = galMap(pmS, max(lod + 3.0, 0.0));
       // dust is sampled sharper than the light (no height LOD bias, one level finer) and given a
       // contrast curve: hairline HST filaments go near-opaque, inter-lane disk stays clear
       float mD = galMap(pmS, max(lod - 1.0, 0.0)).b;
-      mD = pow(mD, 1.35) * 1.15;
+      mD = pow(mD, 1.55) * 1.3;
       float ya = pa.y - wy, yb = pb.y - wy;
       float rTap = 1.0 - smoothstep(0.78 * uExtent, 0.98 * uExtent, rr);   // the bounding cylinder is never visible
       // the lane swells and pinches; seen edge-on it stays one thin opaque slit (NGC 891)
@@ -139,7 +142,7 @@ void main(){
         vec4 n2 = texture(uNoise, pm * 9.0 + n1.xyz * 0.15);
         det = mix(1.0, (0.35 + 1.3 * n1.r) * (0.4 + 1.2 * n2.b), uDetail * (1.0 - smoothstep(0.8, 3.0, tm)) * gC);
       }
-      float pY = galSeg(ya, yb, uHYoung), pO = galSeg(ya, yb, uHOld), pD = galSeg(ya, yb, hDv);
+      float pY = galSeg(ya, yb, uHYoung * mix(0.55, 1.0, uInside)), pO = galSeg(ya, yb, uHOld), pD = galSeg(ya, yb, hDv);
       float pT = galSeg(ya, yb, uHOld * 2.6);
       // inside the disk the near dust condenses into discrete opaque clouds with clear gaps
       // between them: the band breaks into Great-Rift silhouettes instead of a smooth haze
