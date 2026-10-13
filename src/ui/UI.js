@@ -782,14 +782,17 @@ export class UI {
     const game = this.mode === 'onfoot' || this.mode === 'bike' || this.mode === 'ship';
     // device switch → re-render glyphs
     if (I.lastDevice !== this.device || I.padModel !== this._padModel) {
-      // a newly used controller (e.g. a DualSense Edge) switches the glyph set and says hello once
-      const newPad = I.padModel && I.padModel !== this._padModel;
+      // a newly used controller (e.g. a DualSense Edge) switches the glyph set
       this._padModel = I.padModel;
       this.device = I.lastDevice;
       document.body.dataset.device = this.device;
       this._renderHint(); this._renderPrompt(); this._syncTouchAction(); this._syncReticle();
       if (this.helpEl.classList.contains('is-open')) this._renderHelp();
-      if (newPad && this.device === 'gamepad' && I.padModel !== 'generic' && !this.engine.shotMode) this.toast('Controller', `${I.padName} connected`, 3200);
+    }
+    // greet each controller model once, when it first becomes the active input
+    if (this.device === 'gamepad' && I.padModel && I.padModel !== 'generic' && this._greetedPad !== I.padModel && !this.engine.shotMode) {
+      this._greetedPad = I.padModel;
+      this.toast('Controller', `${I.padName} connected`, 3200);
     }
     // title: begin with gamepad / keyboard actions too
     if (this.titleEl && !this._titleGone && this._beginTitle && (I.pressed('jump') || I.pressed('interact') || I.pressed('travel') || I.pressed('escape'))) this._beginTitle();
