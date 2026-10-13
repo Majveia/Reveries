@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { Random } from '../../core/Random.js';
 
+const _red = new THREE.Color(1.0, 0.42, 0.26);
+
 const VERT = /* glsl */ `
 attribute vec4 aShape;   // size(px), axis ratio, angle, bulge fraction
 attribute vec3 aColor;
@@ -47,11 +49,14 @@ export class DeepField {
       const ratio = rng.range(0.25, 1.0);
       const bulge = rng.range(0.15, 0.7);
       shape.set([size, ratio, rng.range(0, Math.PI), bulge], i * 4);
-      // colour: high-z galaxies are redshifted (amber/orange), nearby spirals bluer/whiter
+      // colour: observed galaxy mix — pale yellow-white ellipticals, warm orange, a few blue
+      // spirals; the faintest (most distant) are redshift-reddened
+      const kind = rng.float();
+      if (kind < 0.5) tmp.setRGB(1.0, 0.86, 0.66); else if (kind < 0.84) tmp.setRGB(1.0, 0.6, 0.34); else tmp.setRGB(0.62, 0.74, 1.0);
       const zr = 1 - near;
-      const hue = THREE.MathUtils.lerp(0.6, 0.07, Math.min(1, zr * rng.range(0.6, 1.2)));
-      tmp.setHSL(hue, rng.range(0.35, 0.85), 0.6);
-      const b = 0.02 + Math.pow(rng.float(), 5) * 0.5 + near * 1.6;
+      tmp.lerp(_red, 0.55 * zr * rng.float());
+      // steep luminosity function: nearly all sub-threshold on OLED, a rare few resolved
+      const b = 0.004 + Math.pow(rng.float(), 9) * 0.35 + near * 1.4;
       col.set([tmp.r * b, tmp.g * b, tmp.b * b], i * 3);
     }
     const g = new THREE.BufferGeometry();

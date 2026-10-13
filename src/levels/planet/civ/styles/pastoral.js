@@ -189,7 +189,7 @@ export function extras(ctx) {
   // street lamps along main roads in town
   for (const r of plan.roads) if (r.kind === 'main' || r.kind === 'avenue') roadLamps(ctx, r, 22, 'iron');
   // festival lights strung between the houses of the old town
-  for (const r of plan.roads) if (r.kind === 'street' || r.kind === 'main') lanternStrings(ctx, r, 26, [col('#ffc878'), col('#ffb060'), col('#ffd9a0')], { n: 9, h: 5.0, sag: 0.8, scale: 0.32, core: 0.5 });
+  for (const r of plan.roads) if (r.kind === 'street' || r.kind === 'main') lanternStrings(ctx, r, 26, [col('#ffc878'), col('#ffb060'), col('#ffd9a0')], { n: 5, h: 5.0, sag: 0.8, scale: 0.45, core: 0.5 });
   // bell tower over the main square
   const pz = plan.plazas[0];
   {

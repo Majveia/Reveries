@@ -42,14 +42,14 @@ void main(){
   for (int i = 0; i < N; i++) {
     vec3 p = uCam + dir * t;
     float rho = rhoAt(p);
-    float e = max(rho - uThresh, 0.0) * rho / (1.0 + rho / 60.0) * 0.04;          // two-body (bremsstrahlung-like) ∝ ρ²: hugs nodes and spines
+    float e = max(rho - uThresh, 0.0) * sqrt(rho) / (1.0 + rho / 40.0) * 0.04;   // ∝ ρ^1.5, saturating in cores: a faint sheath along filaments, never a blob on nodes
     if (e > 0.0) {
       float r = length(p - uCenter) / uRadius;
       float edge = 1.0 - smoothstep(0.75, 1.0, r);
       // depth-weighted tint: violet warm-hot medium far away, cyan near; gold intracluster plasma
       float tr = exp(-max(t - uFogNear, 0.0) / uFog);
       vec3 col = mix(vec3(0.16, 0.05, 0.62), vec3(0.12, 0.50, 1.0), smoothstep(5.0, 14.0, rho) * (0.4 + 0.6 * tr));
-      col = mix(col, vec3(1.45, 0.72, 0.30), smoothstep(16.0, 90.0, rho));
+      col = mix(col, vec3(1.2, 0.62, 0.32), 0.45 * smoothstep(20.0, 120.0, rho));
       acc += col * e * edge * tr;
     }
     t += dt;

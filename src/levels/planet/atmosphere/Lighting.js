@@ -59,7 +59,7 @@ void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix *
 
 // Moonlit sky scattering is kept below the physical ratio so nights stay OLED-deep
 // (the moon still keys the ground at full strength).
-const MOON_SKY = 0.2; // moonlit sky scattering: low, so the stars and the galaxy band own the night sky
+const MOON_SKY = 0.07; // moonlit sky scattering: low, so the stars and the galaxy band own the night sky
 
 export class PlanetLighting {
   constructor(level) {
@@ -233,7 +233,7 @@ export class PlanetLighting {
     } else m.moonE.set(0, 0, 0);
     this.night = 1 - THREE.MathUtils.smoothstep(sunElev, -0.14, 0.02);
     // airglow: faint green/blue emission so moonless nights keep a horizon line
-    m.uniforms.uNightGlow.value.set(0.0009, 0.0016, 0.0024).multiplyScalar(this.night * (m.present ? 1 : 0));
+    m.uniforms.uNightGlow.value.set(0.00045, 0.0008, 0.0012).multiplyScalar(this.night * (m.present ? 1 : 0));
     // bioluminescent worlds: the glowing forest lights the low haze (emissive → medium)
     if (this._bio === undefined) {
       const A = L.aesthetic, g = A?.palette?.glow?.[0];
@@ -252,6 +252,11 @@ export class PlanetLighting {
       this.keyDir.copy(moon.pos).sub(focus).normalize();
       const Tm = m.transmittance(probe, this.keyDir, _v3, 20);
       this.keyColor.setRGB(m.moonE.x * Tm.x, m.moonE.y * Tm.y, m.moonE.z * Tm.z).multiplyScalar(1 / MOON_SKY);
+      // scotopic shift: moonlight reads as a cool, desaturated silver (rod vision), not a
+      // dimmed daylight — desaturate toward luminance, tint blue, and keep it a soft key
+      const kl = 0.2126 * this.keyColor.r + 0.7152 * this.keyColor.g + 0.0722 * this.keyColor.b;
+      _c.setRGB(kl * 0.62, kl * 0.74, kl * 1.0);
+      this.keyColor.lerp(_c, 0.65).multiplyScalar(0.7);
     }
     const kI = Math.max(this.keyColor.r, this.keyColor.g, this.keyColor.b);
     sun.intensity = kI;

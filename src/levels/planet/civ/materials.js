@@ -784,8 +784,27 @@ CivS civSurface(){
     s.h = (1.0 - j) * 0.012 * (1.0 - far) + civN2(p * 3.0) * 0.004;
     s.rough = 0.8;
     if (id == 5) {
-      float drift = smoothstep(0.45, 0.75, civF2(p * 0.08 + seed));
-      s.alb = mix(s.alb, uCivSand, drift * 0.8);
+      // monumental causeway: 4 m slabs in staggered courses, sand packed into the joints and
+      // drifting in from the kerbs (edge mask), wind ripples in the drifts
+      vec2 q = p / vec2(4.2, 3.0);
+      float rw = floor(q.y);
+      vec2 cl = vec2(floor(q.x + civH12(vec2(rw, 3.1)) ), rw);
+      vec2 fq = vec2(fract(q.x + civH12(vec2(rw, 3.1))), fract(q.y));
+      float hv2 = civH12(cl + seed * 7.0);
+      float jx = min(fq.x, 1.0 - fq.x) * 4.2, jy = min(fq.y, 1.0 - fq.y) * 3.0;
+      float jd = min(jx, jy);
+      float far2 = smoothstep(0.05, 0.3, fwm);
+      float joint = (1.0 - smoothstep(0.04, 0.04 + max(fwm, 0.02), jd)) * (1.0 - far2);
+      vec3 slab = vColor.rgb * (0.86 + 0.22 * hv2) * (0.92 + 0.12 * civN2(p * 0.7 + hv2 * 9.0));
+      // chipped arrises: slab corners darken slightly
+      slab *= 0.94 + 0.06 * smoothstep(0.0, 0.5, jd);
+      s.alb = mix(slab, uCivSand * 0.92, joint);
+      float ed = abs(edge - 0.5) * 2.0;
+      float drift = smoothstep(0.62, 1.0, ed + (civF2(p * vec2(0.05, 0.3) + seed * 3.0) - 0.5) * 0.7);
+      float rip = 0.5 + 0.5 * sin(p.x * 2.4 + civN2(p * 0.4) * 3.0);
+      s.alb = mix(s.alb, uCivSand * (0.9 + 0.12 * rip), drift * 0.9);
+      s.h = (1.0 - joint) * 0.02 * (1.0 - far2) * (1.0 - drift) + drift * rip * 0.01;
+      s.rough = mix(0.82, 0.95, drift);
     }
   } else if (id == 2 || id == 6 || id == 8) {
     // packed dirt (2) / gravel (6) / tilled field (8)
@@ -963,7 +982,8 @@ if (civS.glass > 0.001) {
   float fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(normal, cv), 0.0, 1.0), 5.0);
   totalEmissiveRadiance += civS.glass * sky * fres;
 }`)
-      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      .replace('#include <lights_fragment_end>', `${ground ? '' : '{ const vec3 civLw = vec3(0.2126, 0.7152, 0.0722); irradiance = mix(vec3(dot(irradiance, civLw)), irradiance, 0.35); iblIrradiance = mix(vec3(dot(iblIrradiance, civLw)), iblIrradiance, 0.35); }'}
+#include <lights_fragment_end>
 {
   float civSh = ${dynamic ? '1.0' : 'civShadowAt(vLoc, normalize(vLocN))'};
   ${shadowNear ? 'civSh = mix(civSh, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}
@@ -1112,14 +1132,22 @@ export function makeCatcherMaterial(uniforms) {
         if (uCivShadowOn > 0.5 && ndl > 0.0) {
           vec3 sp = (uCivShadowM * vec4(vLoc + n * uCivShadowP.x * 1.5, 1.0)).xyz;
           if (sp.x > 0.0 && sp.y > 0.0 && sp.x < 1.0 && sp.y < 1.0) {
-            float bias = uCivShadowP.y * 3.0;
-            float t = uCivShadowP.z; float s = 0.0;
-            s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(-t, -t))));
-            s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(t, -t))));
-            s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(-t, t))));
-            s += step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy + vec2(t, t))));
-            s += 2.0 * step(sp.z - bias, civUnpack(texture2D(uCivShadow, sp.xy)));
-            sh = s / 6.0;
+            float bias = uCivShadowP.y * (2.0 + 1.5 * min(sqrt(max(1.0 - ndl * ndl, 0.0)) / max(ndl, 0.05), 6.0));
+            // 4x4 tent-filtered PCF: soft, stair-free shadow edges on the terrain
+            float t = uCivShadowP.z;
+            vec2 tc = sp.xy / t - 0.5;
+            vec2 b = floor(tc);
+            float s = 0.0, ws = 0.0;
+            for (int j = 0; j < 4; j++) {
+              for (int i = 0; i < 4; i++) {
+                vec2 o = vec2(float(i) - 1.0, float(j) - 1.0);
+                vec2 dd = abs(b + o - tc);
+                float w = max(0.0, 1.5 - dd.x) * max(0.0, 1.5 - dd.y);
+                s += w * step(sp.z - bias, civUnpack(texture2D(uCivShadow, (b + o + 0.5) * t)));
+                ws += w;
+              }
+            }
+            sh = s / max(ws, 1e-5);
           }
         }
         float near = smoothstep(uCivNearFade * 0.6, uCivNearFade, vDist);
@@ -1146,11 +1174,11 @@ export function makeGlowMaterial(uniforms, opts = {}) {
       uCivNight: uniforms.uCivNight, uCivTime: uniforms.uCivTime,
       uSize: { value: opts.size ?? 1.2 }, uMinPx: { value: opts.minPx ?? 2.0 }, uPxAngle: { value: 0.0015 },
       uGain: { value: opts.gain ?? 6.0 }, uDayVis: { value: opts.dayVis ?? 0.0 }, uFarOnly: { value: opts.farOnly ?? 0 },
-      uNearCut: { value: opts.nearCut ?? 0 },
+      uNearCut: { value: opts.nearCut ?? 0 }, uConserve: { value: opts.conserve ?? 0.75 }, uMaxI: { value: opts.maxI ?? 1e4 },
     },
     vertexShader: /* glsl */`
       attribute vec4 aGlow; // rgb color, w = phase/blink
-      uniform float uSize, uMinPx, uPxAngle, uCivNight, uCivTime, uGain, uDayVis, uFarOnly, uNearCut;
+      uniform float uSize, uMinPx, uPxAngle, uCivNight, uCivTime, uGain, uDayVis, uFarOnly, uNearCut, uConserve;
       varying vec3 vCol; varying vec2 vUv; varying float vA;
       void main(){
         vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
@@ -1173,16 +1201,22 @@ export function makeGlowMaterial(uniforms, opts = {}) {
         float nearK = uNearCut > 0.0 ? smoothstep(uNearCut * 0.5, uNearCut, d) : 1.0;
         // keep total energy ~constant when the sprite is clamped to a minimum pixel size
         float e = (uSize * sc) / s;
-        vA = vis * blink * flick * farK * nearK * mix(1.0, e * e, 0.75);
-        vCol = aGlow.rgb * uGain;
+        vA = vis * blink * flick * farK * nearK * mix(1.0, e * e, uConserve);
+        // lanterns are faint embers before full dark: no blown-out strings at golden hour
+        vCol = aGlow.rgb * uGain * mix(0.4, 1.0, smoothstep(0.3, 0.8, uCivNight));
       }`,
     fragmentShader: /* glsl */`
+      uniform float uMaxI;
       varying vec3 vCol; varying vec2 vUv; varying float vA;
       void main(){
         float r = length(vUv);
         if (r > 1.0) discard;
         float g = exp(-r * r * 9.0) + 0.25 * exp(-r * r * 2.5) * (1.0 - r);
-        gl_FragColor = vec4(vCol * g * vA, 1.0);
+        vec3 c = vCol * g * vA;
+        // hue-preserving clamp: a lantern core stays warm amber instead of tonemapping to white
+        float mx = max(c.r, max(c.g, c.b));
+        c *= min(1.0, uMaxI / max(mx, 1e-5));
+        gl_FragColor = vec4(c, 1.0);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
   });

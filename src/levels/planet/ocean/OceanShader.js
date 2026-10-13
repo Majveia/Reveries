@@ -20,9 +20,9 @@
 import { ATMO_PARS, ATMO_FUNCS, SKYVIEW_FUNCS } from '../atmosphere/AtmosphereModel.js';
 import { COLOR_GLSL } from '../../../core/glsl/common.js';
 
-export const NW = 16;
+export const NW = 20;
 
-const COMMON = /* glsl */ `
+export const OCEAN_COMMON = /* glsl */ `
 #define NW ${NW}
 uniform vec4 uWave[NW];      // dir.x, dir.z (anchor plane), k, amplitude
 uniform float uPhase[NW];    // phase offset incl. −ωt (wrapped on the CPU)
@@ -58,6 +58,15 @@ float shoreDist(vec2 xz, float depth){
   float far = depth * 14.0;
   if (m <= 0.0) return far;
   return mix(far, textureLod(tLocal, luv, 0.0).g, m);
+}
+// grazing near-field views: a rough sea mirrors a band of sky near the
+// horizon, not the dark zenith (no dark blotches in the foreground)
+vec3 compressR(vec3 R, vec3 n0, float cosV, float dist){
+  float el = dot(R, n0);
+  float g = (1.0 - smoothstep(0.08, 0.35, cosV)) * (1.0 - smoothstep(30.0, 400.0, dist));
+  float elc = mix(el, min(el, 0.42) * 0.75 + 0.02, g);
+  vec3 Rh = normalize(R - n0 * el + vec3(1e-6));
+  return normalize(Rh * sqrt(max(1.0 - elc * elc, 0.0)) + n0 * elc);
 }
 float shoalFactor(float depth){ return smoothstep(-0.4, 6.0, depth) * (0.55 + 0.45 * smoothstep(6.0, 40.0, depth)); }
 
@@ -105,7 +114,7 @@ float surf(vec2 xz, float depth, out vec4 o, out vec2 g){
 `;
 
 export const OCEAN_VERT = /* glsl */ `
-${COMMON}
+${OCEAN_COMMON}
 uniform vec3 uCapU, uCapE, uCapN;
 uniform float uCapD0, uCapDmax, uRings, uSegs;
 varying vec3 vWorld;
@@ -114,6 +123,10 @@ varying vec3 vUp;
 varying float vDepth;
 varying float vSpacing;
 varying float vLift;
+#ifdef LAVA
+uniform sampler2D tPlates;
+uniform vec4 uDetail, uLava;
+#endif
 
 void main(){
   float s = position.x, phi = position.y;
@@ -140,6 +153,21 @@ void main(){
     disp.y += a * sn;
   }
   disp *= amp;
+#ifdef LAVA
+  // crust relief: domed basalt rafts standing proud of the melt, cracks sunk
+  // into it, pressure ridges heaped along the rims of the major rifts
+  {
+    vec2 drift = uDetail.xy * uTime * uLava.y;
+    vec2 warp = vec2(textureLod(tDetail, xz / 330.0 + 0.31, 0.0).a, textureLod(tDetail, xz / 290.0 + 0.77, 0.0).a) - 0.5;
+    vec2 q = (xz - drift) / uLava.x + warp * 0.22;
+    vec4 plB = textureLod(tPlates, q * 0.31 + vec2(0.13, 0.71) + warp * 0.12, 0.0);
+    vec4 pl = textureLod(tPlates, q, 0.0);
+    float dome = smoothstep(0.0, 0.09, pl.r) * mix(0.45, 1.0, 1.0 - pl.b) * smoothstep(0.0, 0.06, plB.r);
+    float ridge = smoothstep(0.0, 0.025, plB.r) * exp(-max(plB.r - 0.025, 0.0) / 0.05);
+    float relief = (dome * 0.75 + ridge * 0.6) * (1.0 - smoothstep(0.8, 3.5, spacing)) * smoothstep(0.0, 2.0, depth);
+    disp.y += relief - 0.3;
+  }
+#endif
   // breakers: height + the crest pitching forward toward the beach
   vec4 so; vec2 sg;
   float sh = surf(xz, depth, so, sg);
@@ -161,7 +189,7 @@ ${ATMO_PARS}
 ${ATMO_FUNCS}
 ${SKYVIEW_FUNCS}
 ${COLOR_GLSL}
-${COMMON}
+${OCEAN_COMMON}
 uniform sampler2D tPlates;
 uniform vec4 uDetail;        // wind cos, sin, strength, time scroll
 uniform float uPixelAngle;
@@ -285,7 +313,7 @@ void main(){
   float gust = texture2D(tDetail, vXZ / 1300.0 + vec2(uDetail.w * 0.0011, 0.37)).a * 0.6
              + texture2D(tDetail, (mat2(0.6, -0.8, 0.8, 0.6) * vXZ) / 340.0 + vec2(0.71, uDetail.w * 0.0023)).a * 0.4;
   float gk = smoothstep(0.28, 0.72, gust);
-  float dk = uDetail.z * (0.8 + 0.2 * clamp(shoal, 0.0, 1.0)) * mix(0.5, 1.4, gk);
+  float dk = uDetail.z * (0.8 + 0.2 * clamp(shoal, 0.0, 1.0)) * mix(0.8, 1.15, gk);
   // finest capillaries (1.2 m tile) keep the near water crisp
   vec2 uv0 = (mat2(0.6, -0.8, 0.8, 0.6) * pw) / 1.23 + vec2(uDetail.w * 0.31, -uDetail.w * 0.07);
   vec2 d0 = dslope(uv0) * (1.0 - smoothstep(0.015, 0.07, foot));
@@ -360,7 +388,7 @@ void main(){
   vec2 pf = vec2(dot(vXZ, fd), dot(vXZ, vec2(-fd.y, fd.x))) + warp * vec2(30.0, 14.0);
   float stri = texture2D(tFoam, vec2((pf.x - uTime * fsp) / 95.0, pf.y / 8.5)).b
              + 0.6 * texture2D(tFoam, vec2((pf.x - uTime * fsp * 1.3) / 31.0, pf.y / 2.7 + 0.37)).b - 0.8;
-  Tm += stri * 190.0 * (1.0 - aa);
+  Tm += stri * 190.0 * (1.0 - smoothstep(0.5, 2.0, foot / (2.7 * max(cosV, 0.15))));
   // gas bubbles domes swelling through the open melt and bursting
   {
     vec2 bc = (vXZ - drift * 2.0) / 2.4;
@@ -410,7 +438,7 @@ void main(){
   float glassy = smoothstep(0.3, 0.9, nearC);
   float rough = mix(0.55, 0.18, glassy) + 0.15 * pl2.a;
   float ash = smoothstep(0.4, 0.9, pl.g * (1.0 - H)) * 0.6;
-  vec3 albedo = mix(vec3(0.022, 0.019, 0.018), vec3(0.07, 0.062, 0.058), ash) * (0.7 + 0.6 * pl2.a);
+  vec3 albedo = mix(vec3(0.022, 0.019, 0.018), vec3(0.07, 0.062, 0.058), ash) * (0.75 + 0.5 * texture2D(tDetail, vXZ / 5.1 + 0.37).a);
   vec3 col = albedo * (Es * NL + uSkyIrr) / 3.14159;
   col += Es * ggxD(max(dot(N, H2), 0.0), rough) * visSmith(NL, NV, rough) * fresnel(dot(V, H2), 0.05) * NL;
   vec3 R = reflect(-V, N); R -= n0 * 2.0 * min(dot(R, n0), 0.0);
@@ -472,6 +500,7 @@ void main(){
   vec3 R = reflect(-V, N);
   R -= n0 * 2.0 * min(dot(R, n0), 0.0);
   R = normalize(R + n0 * 0.02);
+  R = compressR(R, n0, cosV, dist);
   float F = fresnel(NV, 0.02) * mix(1.0, 0.9, smoothstep(0.05, 0.4, rough));
   vec3 sky = skyRadiance(R, n0);
 
@@ -499,9 +528,16 @@ void main(){
     // roughness: a dense twinkling glitter path under a low sun
     float cs = exp2(floor(log2(max(0.2, foot * 1.6))));
     vec2 cell = floor(vXZ / cs);
-    vec2 hh = hash22(cell + floor(uTime * 5.0 + hash12(cell) * 7.0));
-    vec3 Ng = normalize(N + (t1 * (hh.x - 0.5) + t2 * (hh.y - 0.5)) * (0.2 + rough));
-    float g = pow(max(dot(Ng, H), 0.0), 2600.0) * step(0.6, hash12(cell + 3.1));
+    vec2 cf = fract(vXZ / cs) - 0.5;
+    float g = 0.0;
+    for (int k = 0; k < 2; k++) {
+      vec2 ck = cell + float(k) * 41.7;
+      vec2 hh = hash22(ck + floor(uTime * 5.0 + hash12(ck) * 7.0));
+      vec3 Ng = normalize(N + (t1 * (hh.x - 0.5) + t2 * (hh.y - 0.5)) * (0.2 + rough));
+      vec2 off = hash22(ck + 9.1) - 0.5;
+      vec2 dr = cf - off * 0.7;
+      g += pow(max(dot(Ng, H), 0.0), 2600.0) * step(0.55, hash12(ck + 3.1)) * exp(-dot(dr, dr) / 0.02) * 1.6;
+    }
     spec += Es * g * 20.0 * uSparkle * (1.0 - smoothstep(900.0, 2500.0, dist)) * smoothstep(0.0, 0.2, NL);
   }
 
@@ -522,20 +558,21 @@ void main(){
   // seen from high up: continental shelves glow turquoise, deep basins go
   // navy, and slow plankton / current swirls mottle the open ocean
   float farW = smoothstep(2.0, 60.0, foot);
-  float shelf = exp(-max(depth, 0.0) / 9.0) * farW;
+  float shelf = exp(-max(depth, 0.0) / 55.0) * farW * smoothstep(-0.5, 2.0, depth);
   float swirl = texture2D(tDetail, vXZ / 23000.0 + vec2(0.3, 0.1)).a * 0.6 + texture2D(tDetail, vXZ / 7100.0 + vec2(0.7, 0.2)).a * 0.4;
   bodyAlb *= mix(1.0, mix(0.6, 1.35, swirl) * (1.0 - 0.35 * smoothstep(60.0, 600.0, depth)), farW);
-  bodyAlb = mix(bodyAlb, uShallow * 1.3 + uSSS * 0.05, shelf * 0.6);
+  bodyAlb = mix(bodyAlb, vec3(0.05, 0.35, 0.4) * 0.55 + uSSS * 0.03, shelf * 0.8);
   // surf zone: churned, sediment-milky turquoise
   float turb = clamp(so.w * 0.55 + (1.0 - smoothstep(0.0, 1.5, depth)) * 0.2, 0.0, 1.0) * step(0.0, depth);
-  bodyAlb = mix(bodyAlb, mix(uShallow * 1.5, uSSS * 0.22, 0.4), turb * 0.45);
+  bodyAlb = mix(bodyAlb, mix(uShallow * 1.5, uSSS * 0.11, 0.4), turb * 0.25);
   vec3 body = bodyAlb * Ein / 3.14159 * (1.0 - TrBed * 0.85);
   // subsurface scattering through backlit wave crests
   vec3 Lh = L - n0 * dot(L, n0); vec3 Vh = -V + n0 * dot(V, n0);
   float back = pow(max(dot(normalize(Lh + 1e-5), normalize(Vh + 1e-5)), 0.0), 3.0);
   float crest = clamp(hgt / max(uMaxAmp, 1e-3) * 0.6 + 0.45, 0.0, 1.0);
   float face = pow(1.0 - NV, 2.0) * 0.6 + 0.4;
-  vec3 sss = uSSS * (Es * back * (1.0 - sunUp * 0.6) * crest * crest * face * 0.22 + uSkyIrr * crest * 0.08) * (1.0 - smoothstep(0.0, 1.0, foot * 0.02));
+  float backW = pow(max(dot(normalize(Lh + 1e-5), normalize(Vh + 1e-5)), 0.0), 4.0);
+  vec3 sss = uSSS * (Es * (back * 0.3 + backW * 0.9) * (1.0 - sunUp * 0.6) * crest * crest * face * 0.5 + Es * so.y * backW * 0.6 + uSkyIrr * crest * 0.1) * (1.0 - smoothstep(0.0, 1.0, foot * 0.02));
   // seabed caustics (added; the bed itself shows through the blend)
   float caus = 0.0;
   if (depth > 0.0 && Tl > 0.02) {
@@ -577,7 +614,7 @@ void main(){
   float vn2 = texture2D(tDetail, vXZ / 5.3 + rw2 * 0.6 - vec2(uTime * 0.006, 0.0)).a;
   float veins = pow(1.0 - abs(2.0 * vn1 - 1.0), 14.0) + 0.7 * pow(1.0 - abs(2.0 * vn2 - 1.0), 18.0);
   float lacePatch = smoothstep(0.5, 0.78, texture2D(tDetail, vXZ / 61.0 + vec2(0.29, uTime * 0.002)).a);
-  shoreFoam += resid * clamp(veins, 0.0, 1.0) * smoothstep(0.25, 0.6, ft + 0.3 * ft2) * 0.55 * lacePatch;
+  shoreFoam += resid * clamp(veins, 0.0, 1.0) * smoothstep(0.3, 0.65, ft + 0.3 * ft2) * 0.4 * lacePatch;
   float foam = clamp(crestFoam + shoreFoam + streak + surfFoam, 0.0, 1.0);
   foam *= 1.0 - smoothstep(0.5, 3.0, foot) * 0.6;
   // foam is a volume of bubbles: its tall, rounded faces catch even a low sun

@@ -47,7 +47,8 @@ void main(){
       float f = float(i) / 12.0;
       float t = tEnd * f * f;
       float hh = length(uCam + rd * (0.5 * (t + prev))) - uRs;
-      od += exp(-max(hh, 0.0) / uFume.y) * (t - prev);
+      // the first tens of metres stay clear: near crust reads black, not orange
+      od += exp(-max(hh, 0.0) / uFume.y) * (t - prev) * smoothstep(20.0, 140.0, 0.5 * (t + prev));
       prev = t;
     }
     od *= uFume.x;

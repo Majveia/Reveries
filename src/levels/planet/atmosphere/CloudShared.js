@@ -203,7 +203,7 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   vec3 q = P * uCloudShapeScale + uCloudWind;
   vec4 n = cTex3D(tCloudShape, q, uCloud3DInfo.x);
   // kilometre-scale cumulus families: low Worley octave carves the smooth weather coverage into cells
-  float cell = smoothstep(0.2, 0.8, n.g * 0.75 + n.b * 0.25);
+  float cell = smoothstep(0.3, 0.7, n.g * 0.75 + n.b * 0.25);
   float cov = clamp(smoothstep(0.0, 1.0, wx.r) * (0.5 + 0.8 * cell), 0.0, 1.0);
   // anvil spread at the top of tall clouds
   cov = min(cov * mix(1.0, 1.0 + 0.5 * smoothstep(0.65, 1.0, h), wx.g * wx.g), 1.0);
@@ -261,9 +261,12 @@ float cloudLayer2D(vec3 P, vec3 wx){
   float fr = n1 * 0.35 + n2 * 0.3 + n3 * 0.35;
   // the weather map draws the systems (swirls, fronts, clear subtropics); the noise only
   // frays their margins. Narrow window: crisp fractal edges, never a blurred camo decal
-  float c = smoothstep(0.0, 0.2, cov * cov * 1.25 - 0.12 - (1.0 - fr) * 0.7);
+  // (wide, soft window: margins fray into thin veils that the slice integration and
+  // Beer-Lambert opacity turn into soft edges, cores still build up to full opacity)
+  float e = cov * cov * 1.25 - 0.12 - (1.0 - fr) * 0.7;
+  float c = smoothstep(-0.16, 0.42, e) * (0.3 + 0.7 * smoothstep(-0.02, 0.55, e));
   // popcorn / cloud-street texture inside the decks
-  c *= 0.62 + 0.38 * smoothstep(0.3, 0.8, n3 * 0.7 + n2 * 0.3);
+  c *= 0.55 + 0.45 * smoothstep(0.25, 0.8, n3 * 0.7 + n2 * 0.3);
   return c * (1.0 + wx.b * 0.6);
 }
 // Approximate shadow of the cloud layer on a point (sun at L).
@@ -280,13 +283,15 @@ float cloudShadow(vec3 P, vec3 L){
   if (wx.r < 0.02) return 1.0;
   if (uCloudFlat > 0.5) {
     float c2 = cloudLayer2D(Q, wx);
-    return mix(1.0, exp(-c2 * c2 * 6.0), 0.85);
+    return mix(1.0, exp(-c2 * 2.2), 0.6);
   }
   float d0 = cloudDensityW(Q, wx, 1.0);
   vec3 Q2 = P + L * (t + (uCloudTop - uCloudBase) * 0.35);
   float d1 = cloudDensityW(Q2, wx, 1.0);
-  float od = (d0 + d1) * uCloudDensity * (uCloudTop - uCloudBase) * 0.45;
-  return mix(1.0, exp(-od), 0.92);
+  // (a modest optical-depth scale: the margins grade into a penumbra instead of
+  // saturating into hard navy decals; dense cores still shadow fully)
+  float od = (d0 + d1 * 0.8) * uCloudDensity * (uCloudTop - uCloudBase) * 0.08;
+  return mix(1.0, exp(-od), 0.8);
 }
 `;
 

@@ -104,7 +104,7 @@ export class Star {
           // distance, melting into a smooth mottle once even the base octave is sub-pixel
           vec3 wq = qs * uCell;
           float fsh = length(fwidth(wq));
-          float lk = clamp(log2(0.09 / max(fsh, 1e-5)), -1.0, 4.0);
+          float lk = clamp(log2(0.26 / max(fsh, 1e-5)), -1.0, 4.0);
           float k0 = floor(lk), kf = lk - k0;
           float s0 = exp2(k0);
           float tg = uTime * 0.015;
@@ -116,10 +116,10 @@ export class Star {
           vec3 sq = qs * uCell * 0.1;
           sq += 0.35 * vec3(snoise(sq * 0.7 + 3.0), snoise(sq * 0.7 + 9.0), snoise(sq * 0.7 + 21.0));
           vec2 sg = worley(sq);
-          float net = 1.0 - smoothstep(0.0, 0.6, sg.y - sg.x);
+          float net = (1.0 - smoothstep(0.0, 0.22, sg.y - sg.x)) * (0.55 + 0.45 * snoise(sq * 3.0 + 4.0));
           float turb = fbm(qs * 4.0 + vec3(uTime * 0.008), uOct);
           float meso = fbm(qs * uCell * 0.035 + vec3(uTime * 0.01), 4);
-          float I = (0.66 + 0.5 * gran) * (1.0 + 0.08 * turb + 0.35 * meso) * (1.0 + 0.12 * net);
+          float I = (0.76 + 0.3 * gran) * (1.0 + 0.08 * turb + 0.3 * meso) * (1.0 + 0.16 * net * (0.4 + 1.6 * (1.0 - mu)));
           // --- sunspots: umbra, penumbra of radial filaments, plage/faculae around the group
           float umbra = 0.0, pen = 0.0, penI = 1.0, plage = 0.0;
           float spotVis = uSpots * (0.15 + 0.85 * uFilter);
@@ -169,14 +169,14 @@ export class Star {
           I = mix(I, 0.95 * penI, pen);   // penumbra: filaments replace granulation
           I *= mix(1.0, 0.16, umbra);
           // limb darkening (wavelength dependent: the limb is redder and dimmer)
-          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.6, 0.9, 1.3) * mix(1.0, 0.55, uHot) * mix(1.0, 1.25, uFilter));
+          vec3 limb = pow(vec3(max(mu, 0.02)), vec3(0.6, 0.9, 1.3) * mix(1.0, 0.55, uHot) * mix(1.0, 1.7, uFilter));
           limb *= 0.55 + 0.45 * smoothstep(0.0, 0.12, mu);
           // far view: true stellar colour; close-up: a warm white-light filter — yellow-white granule tops, amber lanes
           vec3 farTone = uColor * mix(vec3(1.0, 0.78, 0.6), vec3(1.0), clamp(I, 0.0, 1.0)) * I;
           // close-up: each pixel's brightness is a temperature (Stefan-Boltzmann, T ~ I^1/4) through a warm
           // white-light filter: white-gold granule domes, orange lanes, red-brown umbrae
           float Tl = uTeff * pow(max(I * 0.95, 0.02), 0.25) * mix(0.93, 1.0, smoothstep(0.0, 0.6, mu));
-          vec3 nearTone = blackbody(Tl) * vec3(1.0, 0.7, 0.34) * pow(max(I, 0.0), 2.6) * 0.62;
+          vec3 nearTone = blackbody(Tl) * vec3(1.0, 0.74, 0.4) * pow(max(I, 0.0), 2.6) * (0.9 + 1.6 * mu * mu);
           vec3 c = mix(farTone, nearTone, uFilter) * limb * uI;
           gl_FragColor = vec4(c, 1.0);
         }`,
@@ -204,13 +204,13 @@ export class Star {
       uniforms: {
         uSize: { value: radius * coronaScale }, uTime: { value: 0 }, uColor: { value: col },
         uDisk: { value: 1 / coronaScale }, uSeed: { value: rng.range(0, 50) },
-        uHalpha: { value: new THREE.Color().setRGB(1.0, 0.16 + 0.15 * hot, 0.1 + 0.25 * hot) }, uNear: { value: 0 },
+        uHalpha: { value: new THREE.Color().setRGB(1.0, 0.16 + 0.15 * hot, 0.1 + 0.25 * hot) }, uNear: { value: 0 }, uHa: { value: 1 },
         uI: { value: kind === 'neutron' ? 3.0 : 1.0 },
       },
       vertexShader: FACING_VERT,
       fragmentShader: /* glsl */`
         ${NOISE_GLSL}
-        uniform float uTime, uDisk, uSeed, uI, uNear; uniform vec3 uColor, uHalpha;
+        uniform float uTime, uDisk, uSeed, uI, uNear, uHa; uniform vec3 uColor, uHalpha;
         varying vec2 vUv;
         void main(){
           float r = length(vUv) / uDisk; // in disk radii
@@ -232,7 +232,7 @@ export class Star {
           float sp2 = smoothstep(0.35, 0.9, snoise(vec2(a * 420.0, 7.0 + uTime * 0.07)));
           float spicules = max(sp1, sp2 * 0.8) * (1.0 - smoothstep(sh * 0.35, sh, x)) * mix(0.6, 1.4, uNear);
           float skirt = exp(-x * 22.0) * 0.14 * (0.6 + 0.8 * st);   // diffuse off-limb H-alpha emission the prominences sit in
-          vec3 c = uColor * (inner + outer) * uI + uColor * mix(vec3(1.0), uHalpha, 0.35) * halo * 0.4 * uI + uHalpha * (chromo * 1.3 + spicules * 0.7 + skirt);
+          vec3 c = uColor * (inner + outer) * uI + uColor * mix(vec3(1.0), uHalpha, 0.35) * halo * 0.4 * uI + uHalpha * (chromo * 1.3 + spicules * 0.7 + skirt) * uHa;
           c *= smoothstep(1.0, 0.55, length(vUv));
           gl_FragColor = vec4(c, 1.0);
         }`,
@@ -308,7 +308,7 @@ export class Star {
           float ring = 0.0;
           // colour gradient: white-hot core -> stellar colour -> warm scattered halo
           vec3 tint = mix(mix(vec3(1.0), uColor, 0.45), uColor * vec3(1.08, 0.78, 0.5), smoothstep(0.02, 0.35, r));
-          vec3 c = tint * (core + spikes * 0.05 + rays) + vec3(0.6, 0.8, 1.0) * ring;
+          vec3 c = tint * (core + rays * 0.15) + vec3(0.6, 0.8, 1.0) * ring;
           gl_FragColor = vec4(c * uVis * uI * smoothstep(1.0, 0.8, r), 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true,
@@ -349,12 +349,12 @@ export class Star {
     const R = this.radius;
     const tan = new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
     const side = new THREE.Vector3().crossVectors(dir, tan).normalize();
-    const span = R * 0.42, H = R * 0.2, NS = this.engine.quality.pick(6, 8, 12, 14), thick = R * 0.035;
+    const span = R * 0.46, H = R * 0.24, NS = this.engine.quality.pick(6, 8, 12, 14), thick = R * 0.03;
     const pos = [], sl = [], idx = [];
     for (let j = 0; j < NS; j++) {
       const o = ((j + 0.5) / NS - 0.5) * 2 * thick;
       const base = pos.length / 3;
-      for (const [x, y] of [[-0.5, -0.03], [0.5, -0.03], [0.5, 0.6], [-0.5, 0.6]]) {
+      for (const [x, y] of [[-0.42, -0.03], [0.42, -0.03], [0.42, 0.42], [-0.42, 0.42]]) {
         const v = dir.clone().multiplyScalar(R * (0.985 + y)).addScaledVector(tan, x * R).addScaledVector(side, o);
         pos.push(v.x, v.y, v.z); sl.push(j / NS);
       }
@@ -379,40 +379,48 @@ export class Star {
           float x = dot(vWP, uTan) / (uSpan * 0.5);             // along the filament channel
           float z = dot(vWP, uSide) / uThick;                   // across (slice depth)
           float y = hgt / uH;
-          // flux-rope spine: a slightly asymmetric semi-ellipse, sagging in the middle (twisted rope)
-          float xx = x + 0.12 * sin(y * 2.0 + 0.6);
-          float sp = sqrt(max(1.0 - xx * xx, 0.0)) * (1.0 - 0.18 * exp(-xx * xx * 6.0));
+          // flux rope: an arch (normalised circle in x/y) carried by 3 twisted strands of fine threads
           float t = uTime * 0.02;
+          float xx = x + 0.1 * sin(y * 2.0 + 0.6);
+          vec2 ap = vec2(xx, y * 1.05);
+          float rr = length(ap);
+          float ang = atan(ap.y, ap.x);                         // 0..pi along the arch
           vec3 wq = vec3(x * 3.0, y * 3.0, z * 0.6 + vS * 0.3);
           float warp = fbm(wq * 0.9 + vec3(0.0, -t, 0.0), 3);
-          float d = abs(y - sp + 0.12 * warp);
-          float knot = 0.45 + 0.9 * smoothstep(-0.3, 0.5, fbm(vec3(x * 4.0 - t * 2.0, y * 1.5, vS), 3));
-          float rope = exp(-d * d / 0.03) * step(abs(xx), 1.05) * knot;
-          // hedgerow curtain hanging below the rope down to the chromosphere
-          float curtain = smoothstep(-0.02, 0.25, sp - y) * smoothstep(1.02, 0.5, abs(xx)) * (0.6 + 0.5 * smoothstep(0.0, 0.8, sp - y + 0.3));
-          // fine vertical threads: noise stretched ~1:8 along the local vertical
-          // resolvable threads (a few px apart on screen, not sub-pixel cotton), sharpened into strands
-          float th1 = 0.5 + 0.5 * snoise(vec3(x * 13.0 + 3.0 * warp, y * 2.2 - t * 3.0, z * 1.2 + vS * 1.5));
-          float th2 = 0.5 + 0.5 * snoise(vec3(x * 31.0 + 5.0 * warp, y * 3.0 - t * 4.0, z * 1.5 + vS * 2.0 + 9.0));
-          float th = max(pow(th1, 6.0), 0.7 * pow(th2, 7.0)) * 2.2;
-          // erosion: large holes and ragged edges
-          float er = smoothstep(-0.25, 0.35, fbm(wq * 1.7 + vec3(t, 0.0, 0.0), 4) + 0.25);
+          float rope = 0.0;
+          for (int i = 0; i < 3; i++) {
+            float fi = float(i);
+            float rad = 1.0 + 0.055 * sin(ang * 7.0 + fi * 2.09 + t * 3.0) + 0.04 * warp;
+            float zc = 0.6 * cos(ang * 7.0 + fi * 2.09 + t * 3.0);   // strands wind around the rope axis
+            float wv = 0.6 + 0.8 * (0.5 + 0.5 * snoise(vec2(ang * 4.0 + fi * 3.1, t + fi)));   // strands swell and pinch
+            float dd = (rr - rad) / ((0.026 + 0.016 * fi) * wv);
+            float dz = z - zc;
+            rope += exp(-dd * dd - dz * dz * 0.8) * (0.8 - 0.18 * fi);
+          }
+          // the rope fattens toward its apex and pinches to narrow footpoints in the chromosphere
+          rope *= smoothstep(0.0, 0.35, ap.y) * 0.6 + 0.4;
+          float knot = 0.15 + 1.5 * smoothstep(-0.25, 0.55, fbm(vec3(ang * 3.5 - t * 2.0, rr * 5.0, vS * 0.7), 4));
+          // fine threads aligned with the field: noise stretched along the arch
+          float th1 = 0.5 + 0.5 * snoise(vec3(ang * 3.0 + 0.4 * warp, rr * 38.0, z * 1.2 + vS * 1.5 - t));
+          float th2 = 0.5 + 0.5 * snoise(vec3(ang * 5.0 + 0.6 * warp, rr * 90.0, z * 1.5 + vS * 2.0 + 9.0));
+          float th = max(pow(th1, 5.0), 0.7 * pow(th2, 6.0)) * 2.4;
+          // faint hedgerow threads hanging below the rope (a dark cavity separates them from the arch)
+          float inside = smoothstep(0.98, 0.7, rr) * smoothstep(0.0, 0.12, ap.y) * smoothstep(0.55, 0.0, y);
+          float hang = pow(0.5 + 0.5 * snoise(vec3(x * 26.0 + 2.0 * warp, y * 2.5 - t * 3.0, vS * 2.0)), 6.0) * 2.0;
+          float er = smoothstep(-0.25, 0.35, fbm(wq * 1.7 + vec3(t, 0.0, 0.0), 4) + 0.3);
           // coronal rain: bright beads streaming down the legs
-          float legs = smoothstep(0.55, 0.95, abs(x)) * step(abs(x), 1.0);
-          float rain = legs * smoothstep(0.8, 0.98, snoise(vec3(x * 60.0, y * 14.0 + uTime * 0.25, vS * 3.0))) * smoothstep(0.0, 0.3, sp - y + 0.1);
-          float slab = exp(-z * z * 1.6);                       // soft volume edge across the slices
-          float dens = (max(rope * (0.35 + 0.8 * th), curtain * th * 0.75) * er + rain * 0.8) * slab;
-          dens *= smoothstep(-0.02, 0.03, hgt / uRad) ;           // emerges from the chromosphere
-          dens *= exp(-max(y - 1.0, 0.0) * 4.0);
-          // smooth window inside the slice quads: no slice edge can ever show as a straight cut
-          float bx = abs(dot(vWP, uTan)) / (uRad * 0.5), by = hgt / (uRad * 0.6);
-          dens *= smoothstep(1.0, 0.72, max(bx, by));
+          float legs = smoothstep(0.35, 0.05, ap.y) * smoothstep(1.25, 0.9, rr) * smoothstep(0.6, 0.85, rr);
+          float rain = legs * smoothstep(0.8, 0.98, snoise(vec3(ang * 60.0, rr * 14.0 + uTime * 0.25, vS * 3.0)));
+          float slab = exp(-z * z * 0.45);
+          float dens = (rope * knot * (0.3 + 0.9 * th) * er + inside * hang * er * 0.22 + rain * 0.6) * slab;
+          dens *= smoothstep(-0.02, 0.03, hgt / uRad);           // emerges from the chromosphere
+          dens *= smoothstep(1.4, 1.12, rr);                     // nothing outside the arch: a curved outline, never a cut
           // against the disk a prominence is an absorbing filament, not emission
           vec3 V = normalize(cameraPosition - vWP);
           float bq = dot(vWP, -V), cq = dot(vWP, vWP) - uRad * uRad;
           float onDisk = step(bq, 0.0) * smoothstep(0.0, 0.03 * uRad * uRad, bq * bq - cq);
           dens *= 1.0 - 0.92 * onDisk;
-          vec3 c = uColor * (1.0 + vec3(0.9, 0.55, 0.45) * rope * th);   // hot rope core brightens (blooms)
+          vec3 c = uColor * (1.0 + vec3(0.9, 0.55, 0.45) * min(rope * th, 2.0));   // hot rope core brightens (blooms)
           gl_FragColor = vec4(c * dens * uI * uK, 1.0);
         }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
@@ -548,7 +556,9 @@ export class Star {
     this.surfMat.uniforms.uFilter.value = THREE.MathUtils.smoothstep(1 - k, 0.2, 0.75);
     this.coronaMat.uniforms.uI.value = this.baseCorona * (0.12 + 0.88 * k);
     this.coronaMat.uniforms.uNear.value = this.surfMat.uniforms.uFilter.value;
-    for (const m of this.loops.children) m.material.uniforms.uK.value = 0.5 + 0.5 * k;
+    const nearH = 1 - THREE.MathUtils.smoothstep(d / R, 12, 40);   // 1 near, 0 when the star is a distant disc
+    this.coronaMat.uniforms.uHa.value = 0.1 + 0.9 * nearH;
+    for (const m of this.loops.children) m.material.uniforms.uK.value = (0.5 + 0.5 * k) * nearH;
     if (this.pulsarSpin) { this.pulsarSpin.rotation.y = t * 2.6; }
   }
 

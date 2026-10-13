@@ -613,9 +613,9 @@ export class PMSolver {
   }
 
   /** Same, without stalling the GPU: PBO + fence (resolves a frame or two later). */
-  async readHaloGridAsync() {
+  async readHaloGridAsync(allowSync = true) {
     const r = this.renderer;
-    if (!r.readRenderTargetPixelsAsync) return this.readHaloGrid();
+    if (!r.readRenderTargetPixelsAsync) return allowSync ? this.readHaloGrid() : null;
     const W = this._haloPass();
     r.setRenderTarget(W.prev);
     const buf = new Float32Array(W.w * W.h * 4);
@@ -623,7 +623,7 @@ export class PMSolver {
       r.readRenderTargetPixelsAsync(this.haloRT, 0, 0, W.w, W.h, buf).then(() => true, () => false),
       new Promise((res) => setTimeout(() => res(false), 2000)),
     ]);
-    if (!ok) return this.readHaloGrid();                     // driver without fences: fall back
+    if (!ok) return allowSync ? this.readHaloGrid() : null;  // driver without fences: fall back only at load (never stall a running frame)
     return this._unpackHalo(buf);
   }
 

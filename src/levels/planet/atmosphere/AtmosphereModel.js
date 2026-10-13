@@ -499,7 +499,8 @@ export class AtmosphereModel {
     u.uBetaMe.value.set(ms, ms, ms);
     // coarse dust scatters more isotropically (a luminous ochre dome, not a dark anti-sun sky);
     // the sharp forward aureole is drawn separately (Atmosphere uAureole) so the sun stays readable
-    u.uMieG.value = THREE.MathUtils.clamp(0.83 - 0.06 * haze - 0.4 * w.dust, 0.64, 0.86);
+    // (still clearly forward-lobed: the sun side of a dust storm glows, the anti-sun side is dimmer)
+    u.uMieG.value = THREE.MathUtils.clamp(0.83 - 0.06 * haze - 0.15 * w.dust, 0.7, 0.86);
     // Ozone (only where there is life to make it).
     const life = THREE.MathUtils.clamp(this.planet.life ?? 0.4, 0, 1);
     const oc = 0.45 * T, ow = 0.25 * T;

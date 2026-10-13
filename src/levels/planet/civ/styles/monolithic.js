@@ -19,19 +19,20 @@ export function palette(A, rng) {
     stone: col('#a2927a'), stoneDark: col('#7d6e5a'), wood: col('#5a4430'), trim: col('#c8b89a'), iron: col('#1c1a18'),
     lamp: col(P.lights || '#ffb36b'), accent: col(P.accent || '#ff9a3c'),
     cloth: ['#7a2a1a', '#c8a060', '#2a2420', '#d8c8a8'].map(col),
-    ground: { main: col('#b09a7a'), street: col('#a8926e'), lane: col('#b8a07a'), plaza: col('#bba482'), dirt: col(P.sand || '#d8ae76').multiplyScalar(0.85) },
+    ground: { skirt: col('#8f8576'), main: col('#b09a7a'), street: col('#a8926e'), lane: col('#b8a07a'), plaza: col('#bba482'), dirt: col(P.sand || '#d8ae76').multiplyScalar(0.85) },
     metal: col('#7a7068'),
   };
 }
 
 export function roadMat(road, zone) {
-  if (road.kind === 'avenue') return G.SANDSTONE;
-  if (road.kind === 'main') return G.SANDSTONE;
+  if (road.kind !== 'lane') return G.SANDSTONE; // graded slab causeways
   return zone < 0.5 ? G.FLAG : G.DIRT;
 }
+/** Roads are graded causeways (low-pass window in m) instead of ribbons draped over the dunes. */
+export const gradeRoads = 45;
 export const plazaMat = () => G.SANDSTONE;
 export const shotSun = 0.24; // low raking late-afternoon light through the dust: slabs split into lit and shadow planes
-export const shot = { dist: 1.35, height: 85, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.6, maxDown: 0.34 }; // a high Arrakeen vantage over the slabs: dunes fall away below the lens
+export const shot = { dist: 1.0, height: 50, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.6, maxDown: 0.15, skyTop: 0.1 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
 
 function slab(ctx, lot, w, d, H) {
   const { rng, pal } = ctx, B = ctx.B;
@@ -188,11 +189,14 @@ export function building(ctx, lot) {
   ctx.place(lot.x, lot.z, lot.base, lot.yaw);
   const area = lot.w * lot.d;
   const core = lot.zone < 0.45;
-  if ((area > 260 && lot.zone < 0.7) || lot.plaza) {
+  if ((area > 150 && lot.zone < 0.78) || lot.plaza) {
     const w = lot.w * 0.92, d = lot.d * 0.92;
     let H;
-    if (rng.chance(0.25) && Math.min(w, d) > 16) H = ziggurat(ctx, lot, w, d, rng.int(3, 4), rng.range(6, 9));
-    else H = slab(ctx, lot, w, d, (core ? (rng.chance(0.55) ? rng.range(48, 110) : rng.range(20, 34)) : rng.range(12, 26)) * (lot.plaza ? 1.2 : 1));
+    // three height classes: towers, mid-rise slabs, low blocks — the skyline gets a hierarchy
+    const cls = rng.float();
+    const hCore = cls < 0.3 ? rng.range(64, 130) : cls < 0.7 ? rng.range(28, 50) : rng.range(14, 24);
+    if (rng.chance(0.18) && Math.min(w, d) > 16) H = ziggurat(ctx, lot, w, d, rng.int(3, 4), rng.range(6, 9));
+    else H = slab(ctx, lot, w, d, (core ? hCore : lot.zone < 0.6 ? rng.range(16, 40) : rng.range(10, 22)) * (lot.plaza ? 1.2 : 1));
     ctx.collider(0, H / 2, 0, w / 2, H / 2, d / 2, false);
     ctx.footprints.push({ lot, h: H });
   } else if (lot.zone > 0.55 && rng.chance(0.3)) {
@@ -352,7 +356,12 @@ export function reserve(ctx, radius) {
   return (center, plazaR) => {
     const r = plazaR + 78;
     ctx._citadel = { x: center[0] + Math.cos(a) * r, z: center[1] + Math.sin(a) * r, a };
-    return [{ x: ctx._citadel.x, z: ctx._citadel.z, w: 136, d: 136, yaw: 0 }];
+    // two hero megastructures flanking the plaza: the slabs that own the skyline from 10 km
+    ctx._heroes = [a + 2.3, a - 2.1].map((b, i) => {
+      const rr = plazaR + 120 + i * 70;
+      return { x: center[0] + Math.cos(b) * rr, z: center[1] + Math.sin(b) * rr, w: 46 + i * 10, d: 30 + i * 6, H: i ? 230 : 300 };
+    });
+    return [{ x: ctx._citadel.x, z: ctx._citadel.z, w: 136, d: 136, yaw: 0 }, ...ctx._heroes.map((h) => ({ x: h.x, z: h.z, w: h.w + 14, d: h.d + 14, yaw: 0 }))];
   };
 }
 
@@ -360,6 +369,18 @@ export function landmark(ctx) {
   const { plan, rng } = ctx;
   const cdl = ctx._citadel;
   if (cdl) citadel(ctx, cdl.x, cdl.z, Math.atan2(plan.center[0] - cdl.x, plan.center[1] - cdl.z));
+  for (const h of ctx._heroes || []) {
+    ctx.useTile('landmark');
+    const fp = ctx.frame.footprint(h.x, h.z, h.w, h.d, 0, 4);
+    ctx.place(h.x, h.z, fp.min - 0.5, 0);
+    const c = ctx.pal.concrete[3].clone().multiplyScalar(rng.range(0.95, 1.05));
+    plinth(ctx, h.w + 8, h.d + 8, { w: h.w + 8, d: h.d + 8, base: fp.min - 0.5, low: fp.min - 0.5 }, 1.2, M.CONCRETE, c.clone().multiplyScalar(0.85), 0.6);
+    const top = colossalSlab(ctx, h.w, h.d, h.H + (fp.max - fp.min), c);
+    ctx.collider(0, top / 2, 0, h.w / 2, top / 2, h.d / 2, false);
+    ctx.footprints.push({ lot: { x: h.x, z: h.z, w: h.w, d: h.d, yaw: 0, base: fp.min }, h: top });
+    ctx.landmarkSpots.push({ x: h.x, z: h.z, h: fp.min + top, kind: 'tower', r: Math.max(h.w, h.d) * 0.7 });
+    ctx.useTile(null);
+  }
   // the monolith out in the sand
   let best = null;
   for (let k = 0; k < 24; k++) {

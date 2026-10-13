@@ -56,41 +56,70 @@ vec3 cloudSkyAmb(vec3 up, float r){
   return uSunE * atmoSkyIrr(r, dot(up, uSunDir)) + uMoonE * atmoSkyIrr(r, dot(up, uMoonDir)) + uNightAmb;
 }
 
-// Orbit: one textured shell instead of a march (no extruded walls, no dither).
+// Orbit: a cheap "projected" layer instead of the full march, but integrated through
+// three slices of the shell (base / middle / top) so the deck has thickness: margins
+// fray and thin out, dense cores build up, and the slices parallax at grazing angles.
+// Lit with a sunward self-shadow (anti-sun flanks darken, sun-facing edges glow),
+// soft Beer-Lambert opacity (no binary decal edges) and the sky-dome ambient.
+float cProf2D(float h, float c){
+  // denser cores reach higher: the top slice only exists where the deck is thick
+  return smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.25 + 0.7 * c, 0.3 + 0.75 * c, h));
+}
 vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   dOut = -1.0;
-  float Rm = mix(uCloudBase, uCloudTop, 0.3);
+  float shellH = uCloudTop - uCloudBase;
+  float Rm = uCloudBase + shellH * 0.45;
   vec2 tm = raySphere(ro, rd, Rm);
   if (tm.y <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
   float t = tm.x > 0.0 ? tm.x : tm.y;
-  if (t > sceneDist + 400.0) return vec4(0.0, 0.0, 0.0, 1.0);
+  if (t > sceneDist + 1500.0) return vec4(0.0, 0.0, 0.0, 1.0);
   vec3 P = ro + rd * t;
   float r = length(P);
   vec3 n = P / r;
   vec3 wx = cloudWeather(P);
-  float c = cloudLayer2D(P, wx);
-  if (c <= 0.002) { dOut = t; return vec4(0.0, 0.0, 0.0, 1.0); }
-  // pseudo normal from the density gradient → relief, self-shadowed flanks
-  vec3 e1 = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-  vec3 e2 = cross(n, e1);
-  float eps = 700.0;
-  float cx = cloudLayer2D(P + e1 * eps, wx), cy = cloudLayer2D(P + e2 * eps, wx);
-  vec3 nn = normalize(n - (e1 * (cx - c) + e2 * (cy - c)) * 2.4);
-  float mu = abs(dot(rd, n));
-  // soft optical-depth ramp (no hard decal edges); thins out toward the limb where the
-  // long air path veils it
-  float tau = c * (5.0 + 9.0 * c) * (0.55 + 0.9 * wx.g) / max(mu, 0.25);
-  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.3, mu);
+  if (wx.r < 0.015) { dOut = t; return vec4(0.0, 0.0, 0.0, 1.0); }
+  float mu = max(abs(dot(rd, n)), 0.06);
+  // three slices through the shell, each with its own height profile
+  float tauSum = 0.0; float cMid = 0.0; float hW = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float h = 0.18 + 0.32 * float(k);
+    float Rk = uCloudBase + shellH * h;
+    vec2 tk = raySphere(ro, rd, Rk);
+    float ts = tk.x > 0.0 ? tk.x : tk.y;
+    if (ts <= 0.0 || ts > sceneDist + 1500.0) continue;
+    vec3 Pk = ro + rd * ts;
+    float ck = cloudLayer2D(Pk, wx);
+    if (k == 1) cMid = ck;
+    float dk = ck * cProf2D(h, ck);
+    tauSum += dk; hW += dk * h;
+  }
+  if (tauSum <= 0.002) { dOut = t; return vec4(0.0, 0.0, 0.0, 1.0); }
+  float hMean = hW / tauSum;
+  // optical depth: linear in density × slice thickness, path-lengthened toward the limb
+  float tau = tauSum * (1.2 + 1.5 * wx.g) * (0.7 + 0.6 * wx.b) / mu;
+  float alpha = (1.0 - exp(-tau)) * smoothstep(0.0, 0.18, abs(dot(rd, n)));
+  // sunward self-shadow: sample the deck a little toward the light along the surface
+  vec3 kT = uKeyDir - n * dot(uKeyDir, n);
+  float kl = length(kT);
+  vec3 Ps = kl > 1e-3 ? normalize(P + kT / kl * 900.0) * Rm : P;
+  float cs = cloudLayer2D(Ps, cloudWeather(Ps));
+  float occl = max(cs - cMid, 0.0);             // anti-sun flank: the cloud body sits between it and the sun
   float muS = dot(n, uKeyDir);
-  vec3 Tl = transmittanceToLight(r + 600.0, muS);
-  float ndl = dot(nn, uKeyDir);
+  float selfSh = exp(-occl * 3.2 / max(muS * 2.0 + 0.25, 0.25) - cs * 0.35);
+  // tops (high mean slice) catch more light than the thin low margins
+  float topK = 0.75 + 0.5 * hMean;
+  vec3 Tl = transmittanceToLight(r + shellH * 0.4, muS);
   float cosV = dot(rd, uKeyDir);
-  float thick = 1.0 - exp(-tau * 0.35);
-  // thick decks: bright multiple-scattering Lambert-like reflectance; thin veils: forward lobe
-  float shade = (0.72 + 0.28 * clamp(ndl * 1.4, -1.0, 1.0)) * smoothstep(-0.1, 0.22, muS) * max(muS, 0.0);
-  vec3 Ld = uKeyE * Tl * (shade * 0.42 * thick + hg(cosV, 0.6) * 0.35 * (1.0 - thick) * smoothstep(-0.1, 0.1, muS));
-  vec3 Sa = cloudSkyAmb(n, r) * PI * (0.35 + 0.25 * clamp(dot(nn, n), 0.0, 1.0));
-  vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.35 * wx.b);
+  float thick = 1.0 - exp(-tau * 0.5);
+  float dayK = smoothstep(-0.12, 0.2, muS);
+  // thick decks: bright multiple-scattering reflectance (sun-facing tops near-white);
+  // thin veils: forward lobe (silver margins toward the sun)
+  float refl = max(muS, 0.0) * 0.5 * thick * selfSh * topK + 0.04 * dayK * thick;
+  float fwd = hg(cosV, 0.65) * 0.5 * (1.0 - thick) * dayK;
+  vec3 Ld = uKeyE * Tl * (refl + fwd);
+  // ambient: zenith sky + a cool skylight floor in the self-shadowed flanks
+  vec3 Sa = cloudSkyAmb(n, r) * PI * (0.32 + 0.22 * hMean) * (0.7 + 0.3 * selfSh);
+  vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.3 * wx.b);
   vec2 ta = raySphere(ro, rd, uRt);
   float a0 = max(ta.x, 0.0);
   vec3 Lair, Tair;
@@ -188,9 +217,11 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     }
     // diffusion floor: light that random-walks around a shadowing tower (sides of a cumulus in
     // the shadow of its neighbour read blue-grey, never as charcoal holes)
-    ms += 0.035 / (1.0 + 0.08 * od);
-    // silver lining: only the thinnest, least-shadowed margins, a fraction of the main lobe
-    ms += 0.12 * silverPh * exp(-od) * (1.0 - smoothstep(0.0, 0.25, d));
+    // (small: it is coloured by the key's transmittance, so at golden hour a large floor
+    // turned every shadowed flank brown/maroon; the cool sky ambient carries those instead)
+    ms += 0.014 / (1.0 + 0.08 * od);
+    // silver lining: the thin, least-shadowed margins light up when looking toward the sun
+    ms += (0.14 + 0.3 * smoothstep(0.55, 0.92, cosK)) * silverPh * exp(-od * 0.7) * (1.0 - smoothstep(0.0, 0.3, d));
     float powder = 1.0 - exp(-ext * 380.0);
     powder = mix(1.0, powder, 0.3 + 0.45 * smoothstep(-0.2, 0.6, -cosK));
     // Schneider in-scatter probability: thin outer wisps and the flat bases scatter less light
@@ -214,9 +245,11 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     float ambOcc = exp(-d * 1.4);
     vec3 skyA = cloudSkyAmb(upL, r);
     float muSun = dot(upL, uSunDir);
-    vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA) + uCityGlow;
-    // tops see the whole sky dome, bases a blue-grey mix of sky and ground bounce
-    vec3 Sa = (skyA * (0.38 + 0.62 * sqrt(hl)) + gndA * 0.55 * (1.0 - hl)) * (0.55 + 0.45 * ambOcc) * PI * 0.36;
+    vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA);
+    // ground bounce reaches the bases desaturated (a green/ochre world must not tint the deck)
+    gndA = mix(vec3(dot(gndA, vec3(0.3333))), gndA, 0.35) + uCityGlow;
+    // tops see the whole (blue) sky dome, bases a cool blue-grey mix of sky and a little bounce
+    vec3 Sa = (skyA * (0.5 + 0.7 * sqrt(hl)) + gndA * 0.35 * (1.0 - hl)) * (0.55 + 0.45 * ambOcc) * PI * 0.36;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -301,7 +334,7 @@ void main(){
 // Weather presets → cloud field.
 export const CLOUD_PRESETS = {
   clear: { coverage: 0.34, type: 0.35, wet: 0.0, bands: 0.5, density: 0.06 },
-  cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.065 },
+  cumulus: { coverage: 0.5, type: 0.8, wet: 0.05, bands: 0.6, density: 0.085 },
   rain: { coverage: 0.72, type: 0.75, wet: 0.7, bands: 0.5, density: 0.08 },
   storm: { coverage: 0.8, type: 0.95, wet: 0.9, bands: 0.4, density: 0.07 },
   fog: { coverage: 0.38, type: 0.3, wet: 0.15, bands: 0.4, density: 0.04 },
@@ -432,11 +465,12 @@ export default class Clouds {
     // low — both are lit consistently, no hard switch between a sunlit and a moonlit deck.
     const moonUp = m.moonE.x + m.moonE.y + m.moonE.z;
     if (sunUp > 0) { mu.uKeyDir.value.copy(this.world.sunDir); mu.uKeyE.value.copy(m.sunE); }
-    else { mu.uKeyDir.value.copy(m.moonDir); mu.uKeyE.value.copy(m.moonE); }
+    // (moonE is the deliberately dim sky-scattering moon; the deck itself is lit a bit brighter)
+    else { mu.uKeyDir.value.copy(m.moonDir); mu.uKeyE.value.set(m.moonE.x * 0.75, m.moonE.y * 0.85, m.moonE.z).multiplyScalar(1.8); }
     const k2 = sunUp > 0 && moonUp > 1e-6 ? 1 - THREE.MathUtils.smoothstep(sunEl, -0.25, 0.05) : 0;
     mu.uKey2Dir.value.copy(m.moonDir);
     // scotopic tint: moonlit cloud tops read cool silver, never cream
-    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 2.2);
+    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 3.6);
     const nightK = light ? light.night : 0;
     // starlight + airglow + scattered moonlight: unlit clouds read as dark blue-grey shapes over the stars
     mu.uNightAmb.value.set(7e-4, 1.0e-3, 1.6e-3).multiplyScalar(nightK);
@@ -468,6 +502,9 @@ export default class Clouds {
     const orbit = alt > this.topH * 2.4;
     mu.uSteps.value = orbit ? q.pick(16, 24, 32, 40) : q.pick(32, 56, 84, 112);
     this.uniforms.uCloudFlat.value = orbit ? 1 : 0;
+    // from high up the whole weather system reads (fronts, cyclone arms): widen the coverage
+    // smoothly with altitude; near the deck the towers stay separated by blue gaps
+    this.uniforms.uCloudCov.value = 1 + 0.35 * THREE.MathUtils.smoothstep(alt, this.topH * 1.4, this.topH * 3.2);
     mu.uLightSteps.value = orbit ? 3 : q.pick(3, 4, 6, 6);
     mu.uOrbitLod.value = orbit ? 1 : 0;
     mu.uMaxDist.value = orbit ? 4e5 : 7e4;

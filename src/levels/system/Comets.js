@@ -80,7 +80,7 @@ export class Comet {
     this.comaMat = new THREE.ShaderMaterial({
       uniforms: { uSize: { value: 1 }, uI: { value: 1 }, uCol: { value: new THREE.Color(0.75, 0.88, 1.0) } },
       vertexShader: /* glsl */`uniform float uSize; varying vec2 vUv; void main(){ vUv = position.xy; vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0); mv.xy += position.xy * uSize; gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: /* glsl */`uniform float uI; uniform vec3 uCol; varying vec2 vUv; void main(){ float r = length(vUv); float a = exp(-r * 7.0) * 0.8 + 0.06 / (1.0 + r * r * 300.0) * 6.0; gl_FragColor = vec4(uCol * a * uI * smoothstep(1.0, 0.6, r), 1.0); }`,
+      fragmentShader: /* glsl */`uniform float uI; uniform vec3 uCol; varying vec2 vUv; void main(){ float r = length(vUv); float a = exp(-r * 7.0) * 0.8 + 0.06 / (1.0 + r * r * 300.0) * 6.0 + 3.0 * exp(-r * r * 1500.0); gl_FragColor = vec4(uCol * a * uI * smoothstep(1.0, 0.6, r), 1.0); }`,
       blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
     });
     this.coma = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.comaMat);

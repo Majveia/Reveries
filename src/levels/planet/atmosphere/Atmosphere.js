@@ -26,9 +26,10 @@ uniform vec3 uFogWind;
 #ifdef ATMO_FOG_NOISE
 // drifting dust walls / fog banks: two octaves of advected simplex noise, sharper near the ground
 float atmoFogNoise(vec3 P){
-  vec3 q = P * (1.0 / 1100.0) + uFogWind;
-  float n = snoise(q) * 0.65 + snoise(q * 2.7 + 3.1) * 0.35;
-  return 0.18 + 1.9 * smoothstep(-0.35, 0.55, n);
+  // (~450 m cells: discrete dust walls and banks between the dunes, not one even veil)
+  vec3 q = P * (1.0 / 450.0) + uFogWind;
+  float n = snoise(q) * 0.6 + snoise(q * 2.7 + 3.1) * 0.3 + snoise(q * 0.31 - 7.7) * 0.5;
+  return 0.06 + 2.3 * smoothstep(-0.25, 0.6, n);
 }
 #endif
 #ifdef CLOUDS
@@ -68,7 +69,8 @@ vec3 atmoAureole(vec3 ro, vec3 rd, float r){
   }
   if (uMoonE.r + uMoonE.g + uMoonE.b > 0.0) {
     float c = dot(rd, uMoonDir);
-    a += uMoonE * transmittanceToLight(r, dot(up, uMoonDir)) * (phaseHG(c, 0.97) * 0.5 + phaseHG(c, 0.85) * 0.5);
+    // (small: a moon glow must not wash the starfield into a grey-navy dome)
+    a += uMoonE * transmittanceToLight(r, dot(up, uMoonDir)) * (phaseHG(c, 0.97) * 0.18 + phaseHG(c, 0.85) * 0.12);
   }
   return a * (1.0 - exp(-tau)) * uAureole;
 }
@@ -122,7 +124,8 @@ void main(){
     vec3 P = ro + rd * dist;
     float s = cloudShadow(P, uSunDir);
     // shadowed ground keeps its sky fill: darken less in blue so cloud shadows read cool, not black
-    col *= mix(vec3(1.0), vec3(s) + (1.0 - s) * vec3(0.10, 0.16, 0.28), uGroundShadow);
+    // (a soft, desaturated cool tint: the shadowed ground keeps most of its skylight)
+    col *= mix(vec3(1.0), vec3(s) + (1.0 - s) * vec3(0.34, 0.40, 0.52), uGroundShadow);
   }
 #endif
   gl_FragColor = vec4(col * T + L, 1.0);
@@ -191,7 +194,7 @@ export default class Atmosphere {
   update(dt) {
     if (!this.ready) return;
     // advect the fog / dust structure with the wind (noise space, 1100 m cells)
-    const w = this.world, k = (3 + 14 * (w.windStrength || 0)) * dt / 1100;
+    const w = this.world, k = (3 + 14 * (w.windStrength || 0)) * dt / 450;
     if (w.wind) this.mat.uniforms.uFogWind.value.addScaledVector(w.wind, k);
   }
 

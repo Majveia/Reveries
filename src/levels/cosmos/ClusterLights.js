@@ -23,7 +23,7 @@ void main(){
   gl_PointSize = px;
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float tw = 0.92 + 0.08 * sin(uTime * (0.6 + aSeed) + aSeed * 40.0);   // slow scintillation
-  float L = pow(10.0, 0.55 * m) * uGain * tr * tw;
+  float L = pow(10.0, 0.75 * m) * uGain * tr * tw;
   vCore = px / max(1.6 * uPxK, 1.0);                       // sprite radius in core units
   vIcl = clamp(pxR * 2.0 / px, 0.05, 1.0);                 // R200 relative to the sprite
   vSpike = smoothstep(0.6, 2.0, m);
@@ -40,10 +40,10 @@ void main(){
   float rq = length(q);
   // brightest cluster galaxy: a cuspy, NFW/Sersic-like core (sharp peak, long shallow wing) —
   // the only part of the web allowed past display white
-  float core = exp(-rq * rq * 2.2) + 0.10 * exp(-rq * 1.1);
+  float core = 1.6 * exp(-rq * rq * 3.0) + 0.10 * exp(-rq * 1.1);
   // intracluster light: de Vaucouleurs envelope truncated at R200, so voids stay true black
   float ri = sqrt(r2) / vIcl;
-  float icl = 0.03 * exp(-pow(ri, 0.5) * 5.0) * exp(-ri * ri) * (1.0 - smoothstep(0.6, 1.0, sqrt(r2)));
+  float icl = 0.05 * exp(-pow(ri, 0.5) * 5.0) * exp(-ri * ri) * (1.0 - smoothstep(0.6, 1.0, sqrt(r2)));
   float sp = 0.0;                                          // hexagonal (JWST) diffraction pattern
   for (int k = 0; k < 3; k++) {
     float an = 1.5707963 + float(k) * 1.0471976;

@@ -142,8 +142,11 @@ export default class SystemLevel {
     if (I.pressed('timeFaster')) this._setWarp(this.warpIdx + 1);
     if (I.pressed('timeSlower')) this._setWarp(this.warpIdx - 1);
     const warp = WARPS[this.warpIdx];
-    this.days += dt * DAYS_PER_SEC * warp;
-    this.spinT += dt * Math.min(warp, 16) * (warp > 0 ? 1 : 0);
+    // shot mode: the orrery holds still so posed frames converge (no TAA ghosting of orbiting / tumbling rocks)
+    if (!E.shotMode) {
+      this.days += dt * DAYS_PER_SEC * warp;
+      this.spinT += dt * Math.min(warp, 16) * (warp > 0 ? 1 : 0);
+    }
     this._update(dt, t);
 
     // camera follows the focused planet
@@ -175,7 +178,7 @@ export default class SystemLevel {
   _update(dt, t) {
     const cam = this.camera;
     for (const sp of this.planets) sp.update(this.days, t, this.spinT);
-    for (const b of this.belts) b.update(this.days, t, this.engine.renderer.getPixelRatio(), cam);
+    for (const b of this.belts) b.update(this.days, this.engine.shotMode ? 0 : t, this.engine.renderer.getPixelRatio(), cam);
     for (const c of this.comets) c.update(this.days, t);
     cam.updateMatrixWorld();
     this.star.update(dt, t, cam, this._starVisibility());
@@ -244,9 +247,9 @@ export default class SystemLevel {
     for (const sp of this.planets) {
       const p = sp.planet;
       const hov = sp === this.hover;
-      if (hov || sp === this.focus || (far && !E.shotMode)) {
+      if (hov || sp === this.focus || far || ui.mapNames !== false) { // quiet always-on names (ui module)
         _p.copy(sp.position); _p.y += sp.R * 1.15;
-        ui.labelWorld?.(`sys-${p.index}`, _p, this.camera, p.name, { sub: hov ? `${KIND_LABEL[p.kind] || p.kind}${p.aesthetic ? ' · ' + (AESTHETICS[p.aesthetic]?.name || '') : ''}` : '', hover: hov, kind: 'planet' });
+        ui.labelWorld?.(`sys-${p.index}`, _p, this.camera, p.name, { sub: hov ? `${KIND_LABEL[p.kind] || p.kind}${p.aesthetic ? ' · ' + (AESTHETICS[p.aesthetic]?.name || '') : ''}` : '', hover: hov, kind: 'planet', quiet: !hov && sp !== this.focus });
       }
     }
     if (this.hover) this.engine.canvas.style.cursor = 'pointer';
@@ -337,7 +340,7 @@ export default class SystemLevel {
     const L = this.layout;
     return {
       hero: async () => {
-        this.backdrop.bandMat.uniforms.uK.value = 1;   // galactic band yields to close-up subjects
+        this.backdrop.bandMat.uniforms.uK.value = 1.6;   // galactic band yields to close-up subjects
         for (const b of this.belts) b.mat.uniforms.uFade.value = 1, b.mat.uniforms.uGain.value = 1;   // distant belt rocks must not read as confetti in close-ups
         // beside the ringed giant at a ~115° phase angle: a lit crescent with open rings in the
         // foreground, the star and the inner worlds strung along their orbits beyond it
@@ -354,7 +357,7 @@ export default class SystemLevel {
         const others = this.planets.filter((x) => x !== sp).map((x) => x.position);
         const pxRad = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / 720;
         let best = null, bestScore = -Infinity;
-        for (let ph = 112; ph <= 166; ph += 3) for (let el = -0.5; el <= 0.7; el += 0.1) for (let k = 5.5; k <= 10; k += 0.75) {
+        for (let ph = 98; ph <= 160; ph += 3) for (let el = -0.5; el <= 0.7; el += 0.1) for (let k = 5.5; k <= 10; k += 0.75) {
           const a = THREE.MathUtils.degToRad(ph);
           const d = s.clone().multiplyScalar(Math.cos(a)).addScaledVector(t, Math.sin(a)).addScaledVector(up, el).normalize();
           const cam = P.clone().addScaledVector(d, R * k);
@@ -372,8 +375,8 @@ export default class SystemLevel {
             const a1 = _v.copy(others[i]).sub(cam).normalize(), a2 = _w.copy(others[j]).sub(cam).normalize();
             if (a1.angleTo(a2) < pxRad * 24) clash++;
           }
-          const score = Math.min(open, 0.38) * 3 + lit * 3.5 + size * 2.5 - Math.abs(el - 0.25) * 0.3 - clash * 0.04;
-          if (score > bestScore) { bestScore = score; best = { cam, toP, toS, sep }; }
+          const score = Math.min(open, 0.38) * 3 + Math.min(lit, 0.42) * 7 + size * 2.5 - Math.abs(el - 0.25) * 0.3 - clash * 0.04;
+          if (score > bestScore) { bestScore = score; best = { cam, toP, toS, sep, ringAng }; }
         }
         if (!best) {
           const d = s.clone().multiplyScalar(Math.cos(2.4)).addScaledVector(t, Math.sin(2.4)).addScaledVector(up, 0.25).normalize();
@@ -382,7 +385,8 @@ export default class SystemLevel {
           best = { cam, toP, toS, sep: toP.angleTo(toS) };
         }
         const axis = new THREE.Vector3().crossVectors(best.toS, best.toP).normalize();
-        const lookDir = best.toS.clone().applyAxisAngle(axis, Math.min(aS, best.sep * 0.5));
+        // balance the frame: the star's margin on the left mirrors the ring tips' margin on the right
+        const lookDir = best.toS.clone().applyAxisAngle(axis, Math.min(aS, (best.sep + (best.ringAng || 0) * 1.05) * 0.5));
         const look = best.cam.clone().addScaledVector(lookDir, R * 9.0);
         this._keepFov = true;
         this._poseCam(best.cam, look); this._keepFov = false;
@@ -428,7 +432,7 @@ export default class SystemLevel {
         const P = b.instances.map((it) => b.instancePosition(it, this.days, new THREE.Vector3()));
         const up = new THREE.Vector3(0, 1, 0);
         for (const x of this.belts) x.mat.uniforms.uGain.value = 1.6;   // close-up exposure for dark regolith
-        const ph = THREE.MathUtils.degToRad(74);   // ~2/3 lit: a sculpted terminator across the hero rock, the star still in frame
+        const ph = THREE.MathUtils.degToRad(116);   // backlit: a lit crescent and a forward-scattering dusty rim, the star burning in frame behind the field
         const camFor = (pos, S) => {
           const s = pos.clone().multiplyScalar(-1).normalize();
           const t = new THREE.Vector3().crossVectors(up, s).normalize();
@@ -456,13 +460,15 @@ export default class SystemLevel {
         });
         const pos = P[bi], S = b.instances[bi].s;
         const cam = camFor(pos, S);
-        this.camera.fov = 52; this.camera.updateProjectionMatrix();
+        this.camera.fov = 58; this.camera.updateProjectionMatrix();
         const toRock = pos.clone().sub(cam).normalize(), toStar = cam.clone().multiplyScalar(-1).normalize();
         const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.aspect);
         const axis = new THREE.Vector3().crossVectors(toStar, toRock).normalize();
         // the boulder sits right of centre, lit from the left; the star burns just outside the left edge
         // and its light rakes across the rock (the field of fragments recedes behind it)
-        const lookDir = toRock.clone().applyAxisAngle(axis, -0.32 * hfov / 2);
+        // rock on the right third, the star inside the left quarter of the frame
+        const sepRS = toRock.angleTo(toStar);
+        const lookDir = toRock.clone().applyAxisAngle(axis, -Math.max(0.2 * hfov, sepRS - 0.42 * hfov));
         const look = cam.clone().addScaledVector(lookDir, S * 4.0);
         this._keepFov = true; this._poseCam(cam, look); this._keepFov = false;
       },

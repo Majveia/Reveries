@@ -22,6 +22,7 @@ import { detailTexture, plateTexture, foamTexture } from './OceanTextures.js';
 import { bakeGlobal, bakeLocal } from './heightBake.js';
 import { createTerrain } from '../terrain/TerrainHeight.js';
 import { OceanFX } from './OceanFX.js';
+import { OceanSSR } from './OceanSSR.js';
 
 const TAU = Math.PI * 2;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _q = new THREE.Quaternion();
@@ -111,7 +112,8 @@ export default class Ocean {
     }
 
     this.fx = new OceanFX(this);
-    this.effects = [this.fx];
+    this.ssr = this.isLava ? null : new OceanSSR(this);
+    this.effects = this.ssr ? [this.ssr, this.fx] : [this.fx];
     this.under = false;
     progress?.(1);
   }
@@ -151,17 +153,17 @@ export default class Ocean {
     const wd = w.wind;
     const wa = Math.atan2(wd.dot(this.T2), wd.dot(this.T1)) || 0;
     this.windAngle = wa;
-    const lamMax = lava ? 38 : rng.range(44, 64);
-    const lamMin = lava ? 2.5 : 0.75;
-    const lamP = lava ? 22 : lamMax * 0.55;
-    const total = lava ? 0.16 : 0.74;
+    const lamMax = lava ? 38 : rng.range(95, 140);
+    const lamMin = lava ? 2.5 : 0.7;
+    const lamP = lava ? 22 : lamMax * 0.42;
+    const total = lava ? 0.16 : 0.95;
     const waves = [];
     let ssum = 0;
     for (let i = 0; i < NW; i++) {
       const f = i / (NW - 1);
       const lam = lamMax * Math.pow(lamMin / lamMax, f) * rng.range(0.92, 1.08);
       const k = TAU / lam;
-      const spread = 0.28 + 0.95 * f;
+      const spread = (i < 2 ? 0.12 : 0.28) + 0.95 * f;
       const ang = wa + (i % 2 ? 1 : -1) * spread * rng.range(0.15, 1.0) + rng.range(-0.1, 0.1);
       const s = lam >= lamP ? Math.exp(-Math.pow(Math.log(lam / lamP), 2) / 0.45) : 0.4 + 0.6 * Math.pow(lam / lamP, 0.35);
       ssum += s;
@@ -199,10 +201,10 @@ export default class Ocean {
     const sand = lin(pal.sand, '#d8c8a0');
     // deep body albedo: the palette's water, darkened (open ocean reflects ~3-6 %)
     const deep = water.clone().multiplyScalar(0.11);
-    deep.lerp(new THREE.Color(0.004, 0.02, 0.05), 0.25);
+    deep.lerp(new THREE.Color(0.01, 0.05, 0.07), 0.4);
     // shallow: turquoise over sand
-    const shallow = new THREE.Color(0.04, 0.3, 0.3).lerp(water, 0.25).multiplyScalar(0.4);
-    const sss = new THREE.Color(0.08, 0.55, 0.42).lerp(water, 0.2);
+    const shallow = new THREE.Color(0.03, 0.34, 0.33).lerp(water, 0.2).multiplyScalar(0.5);
+    const sss = new THREE.Color(0.08, 0.6, 0.45).lerp(water, 0.15).multiplyScalar(1.5);
     const u = this.uniforms = {
       ...this.model.uniforms,
       uTime: w.uniforms.uTime,
@@ -219,8 +221,8 @@ export default class Ocean {
       uPixelAngle: { value: 0.002 }, uLutW: { value: 0 }, uUseTrans: { value: 0 },
       uSkyZenith: { value: new THREE.Color() }, uSkyHorizon: { value: new THREE.Color() }, uSkyIrr: { value: new THREE.Color() },
       uDeep: { value: deep }, uShallow: { value: shallow }, uSSS: { value: sss },
-      uAbsorb: { value: new THREE.Vector3(0.6, 0.1, 0.07) }, uBed: { value: sand.clone().multiplyScalar(0.5) },
-      uMaxAmp: { value: this.maxAmp }, uFoam: { value: 0.62 }, uSparkle: { value: 1 }, uUnder: { value: 0 },
+      uAbsorb: { value: new THREE.Vector3(0.55, 0.085, 0.06) }, uBed: { value: sand.clone().multiplyScalar(0.5) },
+      uMaxAmp: { value: this.maxAmp }, uFoam: { value: 0.5 }, uSparkle: { value: 1 }, uUnder: { value: 0 },
       uBio: { value: new THREE.Vector4(0, 0, 0, 0) },
       uLava: { value: new THREE.Vector4(70, 0.35, 1.0, 14.0) },
       tSunVis: { value: null }, uSunVisM: { value: new THREE.Matrix4() }, uSunVisOn: { value: 0 }, uSunVisParams: { value: new THREE.Vector4() },
@@ -325,7 +327,7 @@ export default class Ocean {
     u.uWaveScale.value = this.isLava ? 1 : 0.85 + 0.5 * ws;
     u.uDetail.value.z = this.isLava ? 0.1 : 0.2 + 0.15 * ws;
     u.uDetail.value.w = time;
-    u.uSurf.value.x = 0.55 + 0.9 * ws;
+    u.uSurf.value.x = 0.9 + 1.2 * ws;
 
     // cap: the visible sea disc
     const ref = Math.abs(nadir.y) < 0.95 ? _v.set(0, 1, 0) : _v.set(1, 0, 0);
@@ -449,11 +451,13 @@ export default class Ocean {
             const seabed = camD.h - H(p);
             p.copy(up).multiplyScalar(R).addScaledVector(seaH, 90).normalize();
             const seabed90 = camD.h - H(p);
+            p.copy(up).multiplyScalar(R).addScaledVector(seaH, 220).normalize();
+            const seabed220 = camD.h - H(p);
             const slope = Math.max(0, inland) / 40 + Math.max(0, seabed - 6) / 40;
             // …but not a tidal flat either: the sea must deepen to a few metres
             // within ~40–90 m so swell shoals and breaks in the middle distance
             // (on a flat the water is a glassy film and no surf ever forms)
-            const flat = Math.max(0, 2.5 - seabed) / 2.5 + Math.max(0, 5 - seabed90) / 5;
+            const flat = Math.max(0, 2.5 - seabed) / 2.5 + Math.max(0, 5 - seabed90) / 5 + Math.max(0, 12 - seabed220) / 12;
             const t = goldenTime(up);
             const sunH = w.sunDir.clone().addScaledVector(up, -w.sunDir.dot(up)).normalize();
             cands.push({ dir: up.clone(), h: camD.h, seaH, sunH, t, slope, flat: lava ? 0 : flat });
@@ -482,7 +486,8 @@ export default class Ocean {
           const ca = Math.cos(THREE.MathUtils.degToRad(fa)), sa = Math.sin(THREE.MathUtils.degToRad(fa));
           for (const dist of [70, 180, 420, 900, 2000, 4000]) {
             offs(up, fwd, side, dist * ca, dist * sa, p);
-            const wet = H(p) < sea - 0.3;
+            // open sea, not a lagoon: the far samples must be properly deep
+            const wet = H(p) < sea - (dist >= 400 ? 6 : dist >= 180 ? 2.5 : 0.3);
             water += wet ? 1 : 0; n++;
           }
         }
@@ -498,8 +503,9 @@ export default class Ocean {
         // side, open sea and sun on the other): ~40° between view and shore normal
         const offShore = Math.acos(THREE.MathUtils.clamp(c.seaH.dot(fwd), -1, 1));
         const diag = lava ? 0 : 1 - Math.min(1, Math.abs(offShore - 0.7) / 0.7);
-        const score = wf * 6 + sunIn * 3 + edge * 1.5 + diag * 2 - c.slope * 10 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
+        const score = wf * 6 + sunIn * 3 + edge * 1.5 + diag * 2 - c.slope * 10 - c.flat * 4 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
         if (!best || score > best.score) best = { score, c, fwd: fwd.clone() };
+        if (!c.top || score > c.top.score) c.top = { score, fwd: fwd.clone() };
       }
     }
     // the sun must actually be visible over the sea (not behind a headland)
@@ -517,10 +523,11 @@ export default class Ocean {
           w.setTimeOfDay(c.t, c.dir);
           const pp = c.dir.clone().multiplyScalar(R + c.h + camH);
           if (w.raycast(pp, w.sunDir.clone(), 8000)) continue;
-          const sc = -c.slope * 10 + Math.max(0, c.seaH.dot(c.sunH)) * 4;
+          // rank the sunlit alternatives by the same composition score
+          const sc = c.top ? c.top.score : -1e9;
           if (!alt || sc > alt.sc) alt = { sc, c };
         }
-        if (alt) best = { c: alt.c, fwd: alt.c.sunH.clone().applyAxisAngle(alt.c.dir, THREE.MathUtils.degToRad(12)) };
+        if (alt) best = { c: alt.c, fwd: alt.c.top ? alt.c.top.fwd.clone() : alt.c.sunH.clone() };
       }
     }
     let up = best.c.dir;
@@ -535,13 +542,13 @@ export default class Ocean {
       for (let s = 0; s <= 240; s += 2) {
         const pd = up.clone().multiplyScalar(R).addScaledVector(sh, s).normalize();
         if (w.heightAt(pd) < sea - 0.6) {
-          const back = up.clone().multiplyScalar(R).addScaledVector(sh, Math.max(0, s - 3)).normalize();
-          up = back; position = back.clone().multiplyScalar(R + sea + 1.5);
+          const back = up.clone().multiplyScalar(R).addScaledVector(sh, Math.max(0, s - 4)).normalize();
+          up = back; position = back.clone().multiplyScalar(R + Math.max(sea, w.heightAt(back)) + 2.4);
           break;
         }
       }
     }
-    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -21);
+    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -30);
     return { position, target, dir: up, time: best.c.t };
   }
 
@@ -555,6 +562,7 @@ export default class Ocean {
     this.mulMesh?.removeFromParent();
     this.tDetail?.dispose(); this.tFoam?.dispose(); this.tPlates?.dispose(); this.tGlobal?.dispose(); this.tLocal?.dispose();
     this.fx?.dispose();
+    this.ssr?.dispose();
     if (this.level.ocean === this) this.level.ocean = null;
   }
 }

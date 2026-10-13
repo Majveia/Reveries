@@ -345,7 +345,7 @@ export default class Civilization {
           // light: sun to the side and a little ahead
           const da = Math.abs(wrap(sunA - yaw));
           sc -= Math.abs(da - sunPref) * 2.0;
-          if (!o.night && da < hf * 0.5 + 0.12) sc -= 4;
+          if (!o.night && da < hf * 0.5 + 0.12) sc -= 4 + 6 * Math.max(0, 1 - da / (hf * 0.5 + 0.12)); // no sun disc / flare orb pasted into the frame
           if (f.wet(x, z)) sc -= 0.4;
           sc += Math.min(1, Math.max(0, (gh - ch) / 60)) * 0.4; // a natural vantage on a rise
           sc -= Math.abs(fh - 0.75) * 0.6;
@@ -353,6 +353,7 @@ export default class Civilization {
           const townAng = 2 * Math.atan(Rb * 0.8 / Math.max(dC, 1));
           sc += Math.min(1, townAng / (vfov * aspect * 0.9)) * 3.0;
           // a lower, grazing view overlaps roofs in depth; a bird's-eye view flattens the town
+          if (sh.skyTop != null) sc -= Math.max(0, sh.skyTop - (pitch + vfov * 0.5)) * 10; // the top of the frame must hold sky
           const md = sh.maxDown ?? 0.2; sc -= Math.max(0, -eTown - md) * 4 + Math.max(0, -eTown - md + 0.06) * 6; // keep it near eye level: roofs stack against the sky
           if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov, tod };
         }

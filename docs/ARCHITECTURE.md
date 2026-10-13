@@ -176,6 +176,15 @@ directions. Main thread and workers must produce identical heights.
     refreshed for 2 frames fade out unless `persist`). `ui.labelWorld(id, vec3, camera, text, opts)`
     projects for you (hides behind camera / off screen). `ui.unlabel(id)`, `ui.clearLabels()`
     (labels are cleared automatically on level change). Use for hover names in galaxy/system.
+    `opts.quiet` renders an always-on name at reduced opacity (hover lifts it); overlapping labels are
+    decluttered greedily each frame (hover > named > quiet). `ui.mapNames` (default on) lets map
+    levels show quiet names for every body, in shots too.
+  - Legibility: the UI samples the presented frame under each HUD anchor every ~18 frames
+    (every 2 in shot mode) and fades in a feathered "ink" scrim + stronger text halo where the
+    background is bright; pure-black space stays untouched.
+  - `ui.arrival` in game modes (planet) renders as a lower-left plaque (phones: compact top-left
+    caption, auto-fades ≤ 4.6 s, compass hidden meanwhile); map levels keep the centred title card.
+    The pointer-lock hint lives bottom-right; bottom-centre is for contextual prompts/hints.
   - `ui.toast(title, text, ms, {kind:'lore'|'note', kicker})` — short text → discovery note under
     the breadcrumb; long text (>70 chars) or `kind:'lore'` → cinematic serif myth reveal (upper third).
   - `ui.arrival({kicker, title, text, ms})` — place-name reveal (queued, one at a time).

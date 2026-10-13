@@ -17,7 +17,7 @@ const CLOUD_TINT = { lava: [0.22, 0.2, 0.2], toxic: [0.85, 0.9, 0.55], exotic: [
 
 /** Bake surfaces of all landable planets in parallel workers. Resolves to Map(index → {albedo, data}). */
 export async function bakeSurfaces(planets, quality, onProgress) {
-  const W = quality.pick(256, 512, 1280, 1536), H = W / 2;
+  const W = quality.pick(512, 768, 1280, 1536), H = W / 2;   // low tiers too: 256 texels read as blocky squares up close
   const jobs = planets.filter((p) => p.world);
   const out = new Map();
   if (!jobs.length) return out;

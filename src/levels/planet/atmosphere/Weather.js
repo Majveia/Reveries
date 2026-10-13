@@ -28,7 +28,7 @@ const KINDS = {
   storm: { clouds: 'storm', fog: 0.0004, fogH: 300, dust: 0.0, overcast: 0.8, particles: 'rain', wet: 1 },
   fog: { clouds: 'fog', fog: 0.0004, fogH: 170, dust: 0.0, overcast: 0.08, particles: null, wet: 0.3 },
   snow: { clouds: 'snow', fog: 0.0003, fogH: 220, dust: 0.0, overcast: 0.3, particles: 'snow' },
-  dust: { clouds: 'dust', fog: 0.00034, fogH: 280, dust: 0.3, particles: 'dust' }, // low, dense, bright: the zenith stays clearer than the horizon, the mid-ground dissolves
+  dust: { clouds: 'dust', fog: 0.0005, fogH: 140, dust: 0.2, particles: 'dust' }, // low, dense, bright: the zenith stays clearer than the horizon, the mid-ground dissolves
   ash: { clouds: 'ash', fog: 0.00016, fogH: 320, dust: 0.3, particles: 'ash' },
   spores: { clouds: 'spores', fog: 0.0002, fogH: 160, dust: 0.0, particles: 'spores' },
   aurora: { clouds: 'aurora', fog: 0.0, fogH: 120, dust: 0.0, particles: 'snowlight', aurora: 1 },
@@ -119,7 +119,7 @@ const LOOKS = {
   snow: { n: 0.7, box: 28, size: 0.035, stretch: 0, fall: 1.1, swirl: 0.6, shape: 2, alpha: 0.85, color: [0.95, 0.97, 1.0], glow: 0 },
   snowlight: { n: 0.18, box: 30, size: 0.03, stretch: 0, fall: 0.7, swirl: 0.5, shape: 2, alpha: 0.75, color: [0.95, 0.97, 1.0], glow: 0 },
   // blowing sand: thin wind-aligned streaks (shutter smear), many and faint — a flowing veil, never confetti
-  dust: { n: 1.0, box: 22, size: 0.0045, stretch: 4.5, fall: 0.1, swirl: 0.45, shape: 0, alpha: 0.085, color: [0.62, 0.46, 0.3], glow: 0, skyLit: 1 },
+  dust: { n: 1.0, box: 22, size: 0.0045, stretch: 4.5, fall: 0.1, swirl: 0.45, shape: 0, alpha: 0.06, color: [0.62, 0.46, 0.3], glow: 0, skyLit: 1 },
   ash: { n: 0.5, box: 32, size: 0.05, stretch: 0, fall: 0.7, swirl: 0.9, shape: 2, alpha: 0.7, color: [0.22, 0.2, 0.19], glow: 0.07 },
   spores: { n: 0.14, box: 30, size: 0.05, stretch: 0, fall: -0.12, swirl: 0.9, shape: 1, alpha: 0.9, color: [0.7, 0.9, 0.8], glow: 0.55 },
 };
@@ -296,7 +296,8 @@ export default class Weather {
     if (lt && this.look && this.look.skyLit) {
       // airborne sand sits at (or just under) the sky luminance: fog colour × sky + a little sun
       const fc = this.fogColor, kc = lt.keyColor, sky = lt.skyColor;
-      p.uColor.value.set(fc.r * (sky.r * 2.6 + kc.r * 0.08), fc.g * (sky.g * 2.6 + kc.g * 0.08), fc.b * (sky.b * 2.6 + kc.b * 0.08));
+      // (brighter than the sky behind them: backlit grains forward-scatter, never dark specks)
+      p.uColor.value.set(fc.r * (sky.r * 4.2 + kc.r * 0.16), fc.g * (sky.g * 4.2 + kc.g * 0.16), fc.b * (sky.b * 4.2 + kc.b * 0.16));
     } else if (lt && this.look) {
       const c = this.look.color;
       const kc = lt.keyColor, sky = lt.skyColor;

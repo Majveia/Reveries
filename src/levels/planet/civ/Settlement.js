@@ -218,8 +218,10 @@ export class Settlement {
     const gp = ctx.pal.ground;
     const c = plan.center;
     // dirt shoulders under everything, then the paving
+    const gradeOf = (road) => (S.gradeRoads && road.kind !== 'lane' ? { win: S.gradeRoads, skirtColor: gp.skirt } : null);
     for (const road of plan.roads) {
       const zone = Math.hypot(road.pts[0][0] - c[0], road.pts[0][1] - c[1]) / plan.radius;
+      if (gradeOf(road)) continue; // causeways carry their own retaining walls
       ribbon(Gb, frame, road.pts, road.w + 1.6, G.DIRT, gp.dirt, 0.12, lamps, 0.3);
       void zone;
     }
@@ -228,7 +230,7 @@ export class Settlement {
       const zone = Math.hypot(mid[0] - c[0], mid[1] - c[1]) / plan.radius;
       const id = S.roadMat(road, zone);
       const color = road.kind === 'main' || road.kind === 'avenue' ? gp.main : road.kind === 'street' ? gp.street : gp.lane;
-      ribbon(Gb, frame, road.pts, road.w, id, id === G.DIRT ? gp.dirt : color, 0.2, lamps, rng.float());
+      ribbon(Gb, frame, road.pts, road.w, id, id === G.DIRT ? gp.dirt : color, 0.2, lamps, rng.float(), 2.5, gradeOf(road));
     }
     yield;
     for (const pz of plan.plazas) disc(Gb, frame, pz.x, pz.z, pz.r, S.plazaMat(pz), gp.plaza, 0.26, lamps, { seed: rng.float() });
@@ -253,7 +255,7 @@ export class Settlement {
     yield;
 
     // glows
-    this.glowMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.6, gain: 7 });
+    this.glowMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.6, gain: 7, conserve: 1.0, maxI: 9 });
     if (ctx.glows.length) {
       this.glowMesh = makeGlowMesh(this.glowMat, ctx.glows);
       this.glowMesh.matrixAutoUpdate = false;
@@ -403,7 +405,7 @@ export class Settlement {
     this.shadow.update(sunL, this.level.engine.shotMode && !this._shotShadowDone);
     if (this.level.engine.shotMode) this._shotShadowDone = true;
     // phones: city tiles beyond the tier's draw distance drop out (the far glow LOD keeps the lights)
-    const tileR = this.level.engine.quality.pick(1700, 2800, Infinity, Infinity);
+    const tileR = this.level.engine.quality.pick(950, 1600, Infinity, Infinity);
     if (tileR < Infinity && this.archMeshes) {
       for (const m of this.archMeshes) {
         if (!m.userData.civCull) continue;

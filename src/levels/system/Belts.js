@@ -88,14 +88,18 @@ varying vec3 vWP; varying vec3 vN; varying vec3 vLP; varying float vSeed; varyin
 void main(){
   vec3 Ng = normalize(vN);
   vec3 lp = vLP + vSeed * 17.0;
+  // footprint-aware detail: octaves finer than ~3 px fade out (no shimmer / cross-hatch under TAA jitter)
+  float fp = length(fwidth(vLP));
+  float k12 = 1.0 - smoothstep(0.012, 0.03, fp), k17 = 1.0 - smoothstep(0.008, 0.02, fp);
   float h = fbm(lp * 2.6, 4);
-  float spk = fbm(lp * 12.0, 3);
+  float spk = fbm(lp * 12.0, 3) * k12;
   // small craters and boulders resolved in the shader
   vec2 cr = worley(lp * 6.0);
   float crater = smoothstep(0.35, 0.05, cr.x) * -0.6 + smoothstep(0.3, 0.42, cr.x) * smoothstep(0.55, 0.42, cr.x) * 0.25;
   vec2 cr2 = worley(lp * 17.0 + 3.0);
-  float crater2 = smoothstep(0.3, 0.05, cr2.x) * -0.5 + smoothstep(0.28, 0.4, cr2.x) * smoothstep(0.5, 0.4, cr2.x) * 0.2;
-  float hb = (h * 0.9 + spk * 0.35 + crater * 0.35 + crater2 * 0.15) * vScale * 0.09;
+  float crater2 = (smoothstep(0.3, 0.05, cr2.x) * -0.5 + smoothstep(0.28, 0.4, cr2.x) * smoothstep(0.5, 0.4, cr2.x) * 0.2) * k17;
+  // only low-frequency relief drives the derivative bump (fine octaves stay in albedo: no 2x2-quad blockiness)
+  float hb = (h * 0.9 + crater * 0.35) * vScale * 0.09;
   vec3 dpdx = dFdx(vWP), dpdy = dFdy(vWP);
   float dhdx = dFdx(hb), dhdy = dFdy(hb);
   vec3 r1 = cross(dpdy, Ng), r2 = cross(Ng, dpdx);
@@ -108,11 +112,17 @@ void main(){
   // rough regolith: Oren-Nayar-ish flattening + a hard terminator (no air, no fill light)
   float ndl = max(dot(N, L), 0.0);
   ndl = mix(ndl, sqrt(ndl), 0.35) * smoothstep(-0.08, 0.12, ndlG);
-  vec3 alb = uCol * (0.6 + 0.55 * vTint) * (0.72 + 0.4 * h + 0.16 * spk);
+  vec3 alb = uCol * (0.6 + 0.55 * vTint) * (0.72 + 0.4 * h + 0.22 * spk + 0.18 * crater2);
   // space weathering: mature reddish-brown regolith vs fresh grey-white ejecta around young craters
   float fresh = smoothstep(0.2, 0.0, cr.x) * 0.5 + smoothstep(0.12, 0.0, cr2.x) * 0.35 + smoothstep(0.62, 0.8, fbm(lp * 4.0 + 9.0, 3)) * 0.4;
   alb = mix(alb, alb * vec3(1.18, 0.95, 0.78), smoothstep(0.1, 0.6, fbm(lp * 1.5, 3)) * (1.0 - uIce));
   alb = mix(alb, vec3(dot(alb, vec3(0.33))) * 1.5, fresh * (1.0 - uIce * 0.5));
+  // taxonomy per body: carbonaceous C-type (dark, neutral), S-type (stony, ruddy), M-type (metal, grey-blue, glossy), icy
+  float cls = fract(vSeed * 7.31 + vTint * 3.7);
+  float metal = step(0.86, cls) * (1.0 - uIce);
+  vec3 tax = cls < 0.5 ? vec3(0.62, 0.6, 0.58) : cls < 0.86 ? vec3(1.12, 0.96, 0.8) : vec3(0.86, 0.9, 0.98);
+  alb *= mix(tax, vec3(1.0), uIce * 0.6);
+  alb = mix(alb, vec3(0.78, 0.84, 0.92) * dot(alb, vec3(0.4)), step(0.97, cls) * (1.0 - uIce));   // rare icy interlopers
   // crater floors sit in shadow-dark material
   alb *= 1.0 - 0.25 * smoothstep(0.25, 0.0, cr.x);
   float opp = 1.0 + 0.6 * pow(max(dot(V, L), 0.0), 10.0);
@@ -121,7 +131,7 @@ void main(){
   float ls = 2.0 * ndl / (ndl + ndvL + 0.05);
   float lit = mix(ndl, ls * ndl * 1.6, 0.45);
   vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 60.0) * (0.04 + 0.5 * uIce + 0.25 * fresh) * ndl;
+  float spec = pow(max(dot(N, H), 0.0), mix(60.0, 140.0, metal)) * (0.04 + 0.5 * uIce + 0.25 * fresh + 0.9 * metal) * ndl;
   // fill: starlight scattered by the belt's own dust + the galactic band (cool, from the shadow side)
   float fillW = 0.55 + 0.45 * max(dot(N, -L), 0.0);
   vec3 c = alb * uSun * (lit * opp) + uSun * spec + alb * uSun * vec3(0.1, 0.105, 0.13) * fillW;
@@ -131,7 +141,7 @@ void main(){
   float hg = 0.51 / pow(1.49 - 1.4 * cosT, 1.5) / 6.0;
   // pixel-sized rocks: no rim and a dimmer disc, so the far belt reads as texture, not salt
   float tiny = smoothstep(0.15, 0.6, fwidth(ndv));
-  c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 0.9 * (1.0 - tiny);
+  c += uSun * mix(alb, vec3(dot(alb, vec3(0.33))), 0.5) * pow(1.0 - ndv, 2.0) * hg * smoothstep(-0.35, 0.15, ndlG) * 1.9 * (1.0 - tiny);
   c *= 1.0 - 0.75 * tiny;
   c *= smoothstep(1.3, 4.0, vPx) * uGain;
   gl_FragColor = vec4(c * uFade, 1.0);

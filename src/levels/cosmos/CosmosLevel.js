@@ -36,8 +36,8 @@ export default class CosmosLevel {
     this.effects = [];
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
-      blackPoint: 0.008, blackToe: 0.03, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.3, bloomRadius: 0.55, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
+      blackPoint: 0.008, blackToe: 0.03, vignette: 0.2, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
+      bloomStrength: 0.45, bloomRadius: 0.7, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
     };
     this.L = BOX;
     this.halos = [];
@@ -97,7 +97,7 @@ export default class CosmosLevel {
     if (this._haloPending) return;
     this._haloPending = true;
     const a = this.sim.a;
-    this.sim.readHaloGridAsync().then((grid) => { this._applyHalos(grid, reference, a); }).catch(() => {}).finally(() => { this._haloPending = false; });
+    this.sim.readHaloGridAsync(false).then((grid) => { if (grid) this._applyHalos(grid, reference, a); else this._haloA = a; }).catch(() => {}).finally(() => { this._haloPending = false; });
   }
 
   _applyHalos(grid, reference = false, a = this.sim.a) {
@@ -300,7 +300,7 @@ export default class CosmosLevel {
     // black floor with it so voids stay true black and only discrete structure reads
     p.floor = 0.4 + 0.75 * inside;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
-    p.smooth = 3.2 * (1 + 0.9 * p.early); p.sharpA = 4 + 6 * p.early;
+    p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 4 + 1.5 * p.early;
     p.dim = 1; p.lights = 1;
     // seen whole, the box projects 200 Mpc of web per pixel: a lower gain keeps a tonal ladder
     // (violet sheets → cyan filaments → gold nodes) instead of a saturated cyan ball
@@ -311,8 +311,8 @@ export default class CosmosLevel {
     this.glow.center.copy(this.center);
     this.glow.enabled = this.mode !== 'early'; // the glow samples the live mesh, not the z≈5 snapshot
     this.glow.fog = p.fog; this.glow.fogNear = p.fogNear;
-    this.glow.thresh = p.glowThresh ?? 14;
-    this.glow.strength = (p.glow ?? 0.006) * (1 - p.warm) * (1 - 0.6 * p.early) * (1 - 0.85 * inside);   // inside, the glow would veil the voids
+    this.glow.thresh = p.glowThresh ?? 6;
+    this.glow.strength = (p.glow ?? 0.02) * (1 - p.warm) * (1 - 0.6 * p.early) * (1 - 0.6 * inside);   // thresholded: voids stay black
 
     // flash of the Big Bang
     const tr = e.postfx.transition;
@@ -373,7 +373,7 @@ export default class CosmosLevel {
     const e = this.engine;
     // the deep field fades while we are inside the web (it would be hidden by more web)
     const camD = this.camera.position.distanceTo(this.rig.target);
-    this.deep.update(this.camera, e.postfx.height, Math.max(0.25, smooth((camD - 0.35 * this.L) / (0.5 * this.L))) * (1 - this.web.params.warm));
+    this.deep.update(this.camera, e.postfx.height, smooth((camD - 0.7 * this.L) / (0.6 * this.L)) * (1 - this.web.params.warm));
     const time = e.shotMode ? 12.0 : e.time;
     this.web.accumulate(this.camera, this.disp, this.center, time, e.shotMode);
     this.lights.update(this.mode === 'early' ? [] : this.halos, (h, out) => this._haloWorld(h, out), this.camera, e.postfx.height, this.web.params, time, this.disp.a);
@@ -460,7 +460,7 @@ export default class CosmosLevel {
       const d = new THREE.Vector3(h.x, h.y, h.z).sub(A);
       d.x -= L * Math.round(d.x / L); d.y -= L * Math.round(d.y / L); d.z -= L * Math.round(d.z / L);
       const len = d.length();
-      if (len < 22 || len > 60) continue;
+      if (len < 30 || len > 70) continue;
       let lo = Infinity, sum = 0;
       for (let j = 2; j <= 14; j++) {
         const v = Math.log(1 + at(_w.copy(A).addScaledVector(d, j / 16)));
@@ -482,7 +482,7 @@ export default class CosmosLevel {
         this._pose(this.home, this._heroOffset((o.hd ?? 0.62) * this.L, HERO.yaw + (o.hy ?? 0.3), o.hp ?? 0.28), o.hf ?? 58, o.hs ?? 0.0, o.hl ?? 0.0);
       },
       // z≈5: the delicate proto-web, a dim ember lattice in which only the rarest peaks have ignited
-      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.0, gain: 0.45, a0: 70, galaxies: 0.12, lights: 0 }; this._pose(this.home, this._heroOffset(0.85 * this.L, HERO.yaw + 0.4, 0.3), 40, 0.0, 0); },
+      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.14, gain: 0.55, a0: 55, toe: 1.9, sharpA: 1.4, smooth: 2.6, galaxies: 0.6, lights: 0, veil: 0.3 }; this._pose(this.home, this._heroOffset(0.68 * this.L, HERO.yaw + 0.4, 0.26), 55, 0.0, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;
@@ -493,17 +493,20 @@ export default class CosmosLevel {
         this._pose(this.home, this._heroOffset(d, HERO.yaw + 0.5, 0.3), 50);
       },
       // the home supercluster node: filaments converge on a luminous core
-      node: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(30, HERO.yaw + 2.2, 0.22), 40, -0.12, 0); },
+      node: async () => { this.mode = 'live'; this._shotP = { gain: 0.13, hi: 0.03, a0: 220 }; this._pose(this.home, this._heroOffset(48, HERO.yaw + 2.2, 0.22), 35, -0.12, 0); },
       // inside the web: a few Mpc off the spine of the richest filament leaving home, looking down
       // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
-        this._shotP = null;
+        this._shotP = { near: 16, clampK: 1.6 };
+        const o = this._dbg || {};
         const { A, d } = this._filamentPair();
         const B = A.clone().add(d);
         const side = new THREE.Vector3(0, 1, 0).cross(d).normalize();
-        const cam = A.clone().addScaledVector(d, 0.12).addScaledVector(side, 4.5).add(new THREE.Vector3(0, 2.5, 0));
-        this._pose(B, cam.sub(B), 70, 0.0, 0);
+        const up = new THREE.Vector3().crossVectors(d, side).normalize();
+        if (up.y < 0) up.negate();
+        const cam = A.clone().addScaledVector(d, o.wt ?? 0.3).addScaledVector(side, o.ws ?? 8).addScaledVector(up, o.wu ?? 5);
+        this._pose(B, cam.sub(B), o.wf ?? 62, o.wsh ?? 0.12, o.wl ?? -0.3);
       },
     };
   }
