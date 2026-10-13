@@ -12,7 +12,7 @@ import { Random, seedFrom, hash3i, u01 } from '../../../core/Random.js';
 import { TAU, clamp, smooth, lerp, rigMaterial, paint, mergeParts, blob, limb, membrane, tangentBasis, writeInstance, makeInstanced } from './common.js';
 
 const BIRDS = {
-  swift: { span: 0.62, body: 0.2, color: '#2a2a30', belly: '#5a5650', tip: '#141418', flap: 1.0, rate: 11, speed: [11, 16], tail: 'fork', neck: 0 },
+  swift: { span: 0.62, body: 0.2, color: '#1a1a1e', belly: '#3a3834', tip: '#141418', flap: 1.0, rate: 11, speed: [11, 16], tail: 'fork', neck: 0 },
   gull: { span: 1.35, body: 0.32, color: '#e8e8e4', belly: '#ffffff', tip: '#1e1e22', flap: 0.75, rate: 4.2, speed: [8, 12], tail: 'fan', neck: 0, glide: 0.6 },
   raptor: { span: 2.1, body: 0.42, color: '#4a3424', belly: '#b89a74', tip: '#1a120c', flap: 0.6, rate: 2.8, speed: [9, 13], tail: 'fan', neck: 0, glide: 0.92 },
   crane: { span: 2.3, body: 0.5, color: '#efeeea', belly: '#ffffff', tip: '#121214', flap: 0.7, rate: 2.4, speed: [10, 12], tail: 'short', neck: 0.65, legs: 0.7, crown: '#c81e1e' },

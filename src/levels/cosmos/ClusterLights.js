@@ -8,8 +8,8 @@ import * as THREE from 'three';
 const VERT = /* glsl */ `
 attribute float aMass;       // log10(M / 1e13 Msun/h)
 attribute float aSeed;
-uniform float uProj; uniform float uFog; uniform float uFogNear; uniform float uGain; uniform float uPxK; uniform float uTime;
-varying vec3 vCol; varying float vCore; varying float vIcl; varying float vSpike;
+uniform float uProj; uniform float uFog; uniform float uFogNear; uniform float uGain; uniform float uPxK; uniform float uTime; uniform float uNear;
+varying vec3 vCol; varying float vCore; varying float vIcl; varying float vSpike; varying float vSB;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   float dist = -mv.z;
@@ -18,20 +18,28 @@ void main(){
   // R200 (comoving Mpc/h) ∝ M^(1/3): 1.6 Mpc for 1e15
   float R = 1.63 * pow(10.0, (aMass - 2.0) / 3.0);
   float pxR = R * uProj / max(dist, 0.5);
-  float px = clamp(pxR * 2.0, 10.0 * uPxK, 80.0 * uPxK);
-  if (dist < 0.8) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+  float pxCap = 96.0 * uPxK;
+  float px = clamp(pxR * 2.0, 10.0 * uPxK, pxCap);
+  float nearF = smoothstep(uNear * 0.3, uNear, dist);
+  if (dist < 0.8 || nearF <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
   gl_PointSize = px;
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float tw = 0.92 + 0.08 * sin(uTime * (0.6 + aSeed) + aSeed * 40.0);   // slow scintillation
-  float L = pow(10.0, 0.75 * m) * uGain * tr * tw;
+  float L = pow(10.0, 0.75 * m) * uGain * tr * tw * nearF;
   vCore = px / max(1.6 * uPxK, 1.0);                       // sprite radius in core units
   vIcl = clamp(pxR * 2.0 / px, 0.05, 1.0);                 // R200 relative to the sprite
   vSpike = smoothstep(0.6, 2.0, m);
-  vCol = mix(vec3(1.0, 0.80, 0.55), vec3(1.0, 0.93, 0.82), fract(aSeed * 7.31)) * L * 40.0 / max(dist, 6.0);
+  // point-like BCG nucleus (fixed ~2 px): flux falls with distance, capped in the near field so a
+  // halo beside the camera never becomes a giant disc
+  vCol = mix(vec3(1.0, 0.80, 0.55), vec3(1.0, 0.93, 0.82), fract(aSeed * 7.31)) * L * 40.0 / max(dist, 15.0);
+  // intracluster light is an extended source: its SURFACE BRIGHTNESS does not depend on distance
+  // (old: ∝ 1/d², which blew close halos into flat cream plateaus); it fades out once the sprite is
+  // clamped (truncated R200)
+  vSB = 0.22 * L * (1.0 - smoothstep(0.75, 1.0, pxR * 2.0 / pxCap));
 }`;
 
 const FRAG = /* glsl */ `
-varying vec3 vCol; varying float vCore; varying float vIcl; varying float vSpike;
+varying vec3 vCol; varying float vCore; varying float vIcl; varying float vSpike; varying float vSB;
 void main(){
   vec2 p = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(p, p);
@@ -50,8 +58,10 @@ void main(){
     vec2 e = vec2(cos(an), sin(an));
     sp += exp(-abs(dot(q, vec2(-e.y, e.x))) * 2.2) * exp(-abs(dot(q, e)) / vCore * 6.0);
   }
-  float v = core + icl * vCore * 0.25 + 0.16 * sp * vSpike * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
-  gl_FragColor = vec4(vCol * v, 1.0);
+  float v = core + 0.16 * sp * vSpike * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
+  // ICL: warm gold envelope, redder in its outskirts
+  vec3 iclCol = mix(vec3(1.0, 0.55, 0.22), vec3(1.0, 0.82, 0.55), exp(-ri * 3.0));
+  gl_FragColor = vec4(vCol * v + iclCol * icl * 20.0 * vSB, 1.0);
 }`;
 
 
@@ -107,7 +117,7 @@ export class ClusterLights {
     g.setDrawRange(0, 0);
     this.material = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
-      uniforms: { uProj: { value: 600 }, uFog: { value: 60 }, uFogNear: { value: 0 }, uGain: { value: 1 }, uPxK: { value: 1 }, uTime: { value: 0 } },
+      uniforms: { uProj: { value: 600 }, uFog: { value: 60 }, uFogNear: { value: 0 }, uGain: { value: 1 }, uPxK: { value: 1 }, uTime: { value: 0 }, uNear: { value: 0 } },
       depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
     });
@@ -185,7 +195,7 @@ export class ClusterLights {
     const u = this.material.uniforms;
     u.uProj.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     u.uPxK.value = height / 720;
-    u.uFog.value = params.fog; u.uFogNear.value = params.fogNear;
+    u.uFog.value = params.fog; u.uFogNear.value = params.fogNear; u.uNear.value = params.near ?? 0;
     // galaxies only light up once halos have collapsed (and not in the primordial glow)
     u.uGain.value = (params.lights ?? 1) * (1 - params.warm) * Math.min(1, Math.max(0, (a - 0.25) / 0.35));
     u.uTime.value = time;

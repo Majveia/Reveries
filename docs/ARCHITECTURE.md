@@ -177,10 +177,13 @@ directions. Main thread and workers must produce identical heights.
     projects for you (hides behind camera / off screen). `ui.unlabel(id)`, `ui.clearLabels()`
     (labels are cleared automatically on level change). Use for hover names in galaxy/system.
     `opts.quiet` renders an always-on name at reduced opacity (hover lifts it); overlapping labels are
-    decluttered greedily each frame (hover > named > quiet). `ui.mapNames` (default on) lets map
+    decluttered greedily each frame (hover > named > quiet; a name first tries its preferred side,
+    then the other side, then under its body, and never covers another body's anchor; an explicit
+    `opts.align` pins the side). `ui.mapNames` (default on) lets map
     levels show quiet names for every body, in shots too.
   - Legibility: the UI samples the presented frame under each HUD anchor every ~18 frames
-    (every 2 in shot mode) and fades in a feathered "ink" scrim + stronger text halo where the
+    (every 2 in shot mode; live play reads back asynchronously through a fenced pixel-pack buffer, so
+    it never stalls the GPU) and fades in a feathered "ink" scrim + stronger text halo where the
     background is bright; pure-black space stays untouched.
   - `ui.arrival` in game modes (planet) renders as a lower-left plaque (phones: compact top-left
     caption, auto-fades ≤ 4.6 s, compass hidden meanwhile); map levels keep the centred title card.
@@ -196,6 +199,8 @@ directions. Main thread and workers must produce identical heights.
     localStorage `reveries.settings.v1`: quality, mouse/touch/pad sensitivity, invertY, volume, muted, haptics).
   - `ui.setMode('map'|'onfoot'|'bike'|'ship')` (`'vehicle'` = bike) switches touch layouts and help.
   - Title screen in shot mode: `?shot=1&title=1` (harness `--extra "title=1"`).
+  - HUD showcase in shot mode: `--extra "uidemo=1"` stages a contextual prompt and a discovery
+    note on planet shots so their typography can be reviewed.
 - Input additions: `input.setSensitivity({mouse, touch, pad})` (multipliers), `input.invertY`,
   `input.rumble(intensity, ms)` (gamepad rumble / phone vibration, respects the haptics setting),
   `input.gamepadId`. Gamepad: radial dead zones, look-stick turn acceleration; d-pad zooms in map

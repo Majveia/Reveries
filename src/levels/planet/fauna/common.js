@@ -30,7 +30,12 @@ vec2 fa_rot(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x
  * Extra uniforms are shared by reference.
  */
 export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...params });
+  // opts.sheen: a velvet lobe (MeshPhysicalMaterial sheen) so coats read as fur / hide, not matte plastic
+  const mat = opts.physical
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...opts.physical, ...params })
+    : opts.sheen
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, sheen: 1, sheenRoughness: 0.42, sheenColor: opts.sheen, ...params })
+    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...params });
   const head = GLSL_COMMON + (uniforms.__decl || '') + rigGLSL;
   const U = { ...uniforms }; delete U.__decl;
   // Indirect light: creatures stand on (or fly far above) saturated ground. The
@@ -94,12 +99,13 @@ float faLine(float d, float w) { float fw = max(fwidth(d), 1e-4); return 1.0 - s
 /** Assign constant/functional attributes to a geometry: color fn(p,n)->[r,g,b], rig fn(p)->[x,y,z,w], glow fn(p)->f. */
 export function paint(geo, colorFn, rigFn, glowFn) {
   const pos = geo.attributes.position, nor = geo.attributes.normal, n = pos.count;
-  const col = new Float32Array(n * 3), rig = new Float32Array(n * 4), glow = new Float32Array(n);
+  const keep = rigFn === undefined && geo.attributes.aRig ? geo.attributes.aRig.array : null; // loft() bakes its own rig
+  const col = new Float32Array(n * 3), rig = keep ? keep.slice() : new Float32Array(n * 4), glow = new Float32Array(n);
   const p = new THREE.Vector3(), q = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
     p.fromBufferAttribute(pos, i); q.fromBufferAttribute(nor, i);
     const c = colorFn(p, q); col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
-    const r = rigFn ? rigFn(p, q) : [0, 0, 0, 0]; rig[i * 4] = r[0]; rig[i * 4 + 1] = r[1]; rig[i * 4 + 2] = r[2]; rig[i * 4 + 3] = r[3];
+    if (!keep) { const r = rigFn ? rigFn(p, q) : [0, 0, 0, 0]; rig[i * 4] = r[0]; rig[i * 4 + 1] = r[1]; rig[i * 4 + 2] = r[2]; rig[i * 4 + 3] = r[3]; }
     glow[i] = glowFn ? glowFn(p, q) : 0;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -133,6 +139,54 @@ export function blob(rx, ry, rz, profile = null, ws = 16, hs = 12) {
     x *= k; y *= k;
     pos.setXYZ(i, x * rx, y * ry, z * rz);
   }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Lofted sculpt: a smooth closed tube through a list of rings
+ * { c: centre, rx: half-width along the side axis, yt / yb: half-height on the
+ * "top" / "bottom" side, rig?: [x,y,z,w], sq?: squareness 0..1, keel?: 0..1 }.
+ * The side axis is `ref` (default +x: bilateral creatures); "top" = tangent × side.
+ * Ends are closed by the first / last rings (give them tiny radii). Smooth
+ * normals, no seam. Used for torsos, necks, heads, muscular legs and horns.
+ */
+export function loft(rings, around = 16, ref = new THREE.Vector3(1, 0, 0)) {
+  const n = rings.length, pos = [], rig = [], idx = [];
+  const t = new THREE.Vector3(), u = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const R = rings[i];
+    t.copy(rings[Math.min(n - 1, i + 1)].c).sub(rings[Math.max(0, i - 1)].c).normalize();
+    u.copy(ref).addScaledVector(t, -ref.dot(t));
+    if (u.lengthSq() < 1e-6) u.set(0, 0, 1).addScaledVector(t, -t.z);
+    u.normalize(); v.copy(t).cross(u).normalize();
+    const sq = R.sq ?? 0.15, kl = R.keel ?? 0;
+    for (let j = 0; j < around; j++) {
+      const a = (j / around) * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      // superellipse-ish section; the lower half narrows into a keel
+      const ex = Math.sign(ca) * Math.pow(Math.abs(ca), 1 - sq * 0.5), ey = Math.sign(sa) * Math.pow(Math.abs(sa), 1 - sq * 0.5);
+      const w = R.rx * (sa < 0 ? 1 - kl * (-sa) * 0.45 : 1);
+      const h = sa > 0 ? R.yt : R.yb;
+      pos.push(R.c.x + u.x * ex * w + v.x * ey * h, R.c.y + u.y * ex * w + v.y * ey * h, R.c.z + u.z * ex * w + v.z * ey * h);
+      const r = R.rig || [0, 0, 0, 0]; rig.push(r[0], r[1], r[2], r[3]);
+    }
+  }
+  for (let i = 0; i < n - 1; i++) for (let j = 0; j < around; j++) {
+    const a = i * around + j, b = a + around, a1 = i * around + (j + 1) % around, b1 = a1 + around;
+    idx.push(a, a1, b, b, a1, b1);
+  }
+  // end caps (fans to the ring centres)
+  const c0 = pos.length / 3; pos.push(rings[0].c.x, rings[0].c.y, rings[0].c.z); rig.push(...(rings[0].rig || [0, 0, 0, 0]));
+  const c1 = c0 + 1; pos.push(rings[n - 1].c.x, rings[n - 1].c.y, rings[n - 1].c.z); rig.push(...(rings[n - 1].rig || [0, 0, 0, 0]));
+  for (let j = 0; j < around; j++) {
+    const j1 = (j + 1) % around;
+    idx.push(c0, j1, j);
+    idx.push(c1, (n - 1) * around + j, (n - 1) * around + j1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aRig', new THREE.Float32BufferAttribute(rig, 4));
+  g.setIndex(idx);
   g.computeVertexNormals();
   return g;
 }

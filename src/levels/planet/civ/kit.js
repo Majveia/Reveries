@@ -343,7 +343,8 @@ export function plantTrees(ctx, n, kinds, colors, foliageBlob, maxZone = 0.95) {
 export function lanternStrings(ctx, road, every, colors, o = {}) {
   const pts = road.pts, f = ctx.frame, plan = ctx.plan;
   const maxR = (plan.builtRadius || 300) * (o.core ?? 0.6);
-  const n = o.n ?? 7, sag = o.sag ?? 1.1, h = o.h ?? 5.6, scale = o.scale ?? 0.5;
+  // fewer, larger lanterns: dense strings merged into blown-out crescents at town distance
+  const n = Math.max(3, Math.round((o.n ?? 7) * 0.6)), sag = o.sag ?? 1.1, h = o.h ?? 5.6, scale = (o.scale ?? 0.5) * 1.35;
   let s = 0, next = every * 0.5, k = 0;
   for (let i = 1; i < pts.length; i++) {
     const [ax, az] = pts[i - 1], [bx, bz] = pts[i];

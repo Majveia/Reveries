@@ -13,7 +13,8 @@ import { makeCivMaterial, makeCatcherMaterial, makeGlowMaterial, makeGlowMesh, C
 import { SiteFrame } from './frame.js';
 import { planSettlement, KIND_RADIUS } from './layout.js';
 import { ribbon, disc, rect, LampField, catcherGeometry } from './ground.js';
-import { G } from './ids.js';
+import { G, M, W, F } from './ids.js';
+import { col, TAU } from './kit.js';
 import { Random, seedFrom } from '../../../core/Random.js';
 import { STYLES } from './styles/index.js';
 import { pads as spaceportPads } from './styles/outpost.js';
@@ -36,6 +37,7 @@ function prismGeometry() {
   g.computeVertexNormals();
   return g;
 }
+const _pp = new THREE.Vector3();
 const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
 
 export class Settlement {
@@ -144,10 +146,70 @@ export class Settlement {
     this.ctx = ctx;
     ctx.pal = S.palette(this.level.aesthetic, ctx.rng);
     const radius = KIND_RADIUS[this.kind] ?? 220;
+    if (S.podium && (this.main || S.podium.all)) this.frame.setPodium(radius * (S.podium.r ?? 0.9), S.podium);
     const reserve = S.reserve ? S.reserve(ctx, radius) : [];
     const plan = planSettlement(this.frame, this.styleKey, this.kind, this.seed, { main: this.main, radius, reserve });
     ctx.plan = plan;
     this.plan = plan;
+  }
+
+  /**
+   * The podium's paving, its colossal battered retaining wall with buttress piers
+   * (the city rides above the dunes like a dam), stairs down to the sand, and
+   * walkable colliders over its top.
+   */
+  _podium(ctx) {
+    const frame = this.frame, P = frame.podium, R = P.R, rng = ctx.rng, pal = ctx.pal;
+    const gp = pal.ground;
+    const segs = Math.max(96, Math.round((TAU * R) / 6));
+    // pier rhythm along the rim (buttresses + pilaster fins); deep shadow between them
+    const nP = Math.round((TAU * R) / 26);
+    const skin = (pal.concrete?.[0] || gp.skirt).clone();
+    for (let i = 0; i < nP; i++) {
+      const a = (i / nP) * TAU, x = Math.cos(a) * (R + 1.2), z = Math.sin(a) * (R + 1.2);
+      const top = frame.podiumAt(Math.cos(a) * (R - 0.5), Math.sin(a) * (R - 0.5)) ?? frame.hAt(x, z);
+      const g = frame.hRaw(x + Math.cos(a) * 3, z + Math.sin(a) * 3);
+      const hh = top - g;
+      if (hh < 2.5) continue;
+      ctx.select(x, z);
+      ctx.place(x, z, g - 2, Math.atan2(Math.cos(a), Math.sin(a)));
+      const B = ctx.B, wide = i % 6 === 0;
+      const c = skin.clone().multiplyScalar(rng.range(0.82, 0.98));
+      B.mat(M.CONCRETE, rng.float(), W.NONE, 5).color(c).ext(1, 0, F.NOWIN, 0);
+      const w = wide ? 9 : 3.2, dp = wide ? Math.min(14, 3 + hh * 0.35) : Math.min(6, 1.5 + hh * 0.18);
+      B.frustumBox(-w / 2, -0.5, w / 2, dp, 0, hh + 2 + (wide ? 2.5 : 0.6), wide ? dp * 0.55 : dp * 0.4, { base: 0, top: true });
+      if (wide && hh > 8) { // a gate slot with a hot light inside: the scale of a doorway at the foot of a dam
+        B.mat(M.CONCRETE, 0.1, 0, 3).color(pal.black || pal.dark).ext(0.3, 0, F.NOWIN, 0);
+        B.box(-1.3, 2, dp * 0.55 - 0.2, 1.3, 2 + Math.min(9, hh * 0.4), dp + 0.06, { base: 2, top: false });
+        B.mat(M.EMISSIVE, 0.2, 0, 3).color((pal.lamp || col('#ffb36b')).clone().multiplyScalar(0.5));
+        B.box(-0.9, 2, dp * 0.55 - 0.1, 0.9, 5.2, dp + 0.08, { base: 2, top: false, sides: [true, false, false, false] });
+      }
+    }
+    // paving + retaining wall faces (ground mesh)
+    (ctx.groundExtra = ctx.groundExtra || []).push((Gb, lamps) => {
+      disc(Gb, frame, 0, 0, R, G.SANDSTONE, gp.plaza.clone().multiplyScalar(0.94), 0.04, lamps, { seed: 0.37, segs, rings: Math.max(24, Math.round(R / 9)) });
+      Gb.color(gp.skirt);
+      const s0 = Gb.n;
+      for (let i = 0; i <= segs; i++) {
+        const a = (i / segs) * TAU, ca = Math.cos(a), sa = Math.sin(a);
+        const top = frame.podiumAt(ca * (R - 0.01), sa * (R - 0.01));
+        const g = frame.hRaw(ca * (R + 2), sa * (R + 2));
+        const bot = Math.min(g - 2, top - 0.05), hh = Math.max(0, top - bot);
+        Gb.mat(G.SANDSTONE, 0.61, 0.5, 0);
+        frame.point(ca * R, sa * R, top + 0.04, _pp); Gb.v(_pp.x, _pp.y, _pp.z, ca, 0, sa, a * R, 0);
+        frame.point(ca * (R + hh * 0.12), sa * (R + hh * 0.12), bot, _pp); Gb.v(_pp.x, _pp.y, _pp.z, ca, 0.12, sa, a * R, hh);
+      }
+      for (let i = 0; i < segs; i++) { const a = s0 + i * 2; Gb.quad(a, a + 1, a + 3, a + 2); Gb.quad(a, a + 2, a + 3, a + 1); }
+    });
+    // walkable top (coarse boxes, planet-up oriented)
+    const cs = 16;
+    for (let z = -R; z <= R; z += cs) for (let x = -R; x <= R; x += cs) {
+      if (x * x + z * z > (R - cs * 0.5) ** 2) continue;
+      const h = frame.podiumAt(x, z), g = frame.hRaw(x, z);
+      if (h - g < 0.4) continue;
+      ctx.place(x, z, h, 0);
+      ctx.collider(0, -Math.min(30, h - g + 2) / 2, 0, cs / 2 + 0.3, Math.min(30, h - g + 2) / 2, cs / 2 + 0.3, true);
+    }
   }
 
   /** Time-sliced build. Yields periodically; run to completion with buildNow(). */
@@ -184,6 +246,7 @@ export class Settlement {
     for (const pz of plan.plazas) { S.plaza(ctx, pz); }
     yield;
     S.extras?.(ctx);
+    if (frame.podium) this._podium(ctx);
     if (this.kind === 'spaceport' && this.styleKey !== 'outpost') spaceportPads(ctx, this.main ? 6 : 4);
     yield;
     this.trees = plantTrees(this, ctx);
@@ -255,7 +318,7 @@ export class Settlement {
     yield;
 
     // glows
-    this.glowMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.6, gain: 7, conserve: 1.0, maxI: 9 });
+    this.glowMat = makeGlowMaterial(this.uniforms, { size: 1.0, minPx: 1.6, gain: 7, conserve: 1.0, maxI: 6, spacing: 1.4 });
     if (ctx.glows.length) {
       this.glowMesh = makeGlowMesh(this.glowMat, ctx.glows);
       this.glowMesh.matrixAutoUpdate = false;

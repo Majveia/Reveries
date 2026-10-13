@@ -496,6 +496,13 @@ export default class Ocean {
           if (H(offs(up, fwd, side, dist * ca, -dist * sa, p)) > sea + 0.5) landL++;
           if (H(offs(up, fwd, side, dist * ca, dist * sa, p)) > sea + 0.5) landR++;
         }
+        let flankL = 0, flankR = 0;
+        for (const dist of [300, 900, 1800]) {
+          const ca = Math.cos(0.6), sa = Math.sin(0.6);
+          if (H(offs(up, fwd, side, dist * ca, -dist * sa, p)) > sea + 0.5) flankL++;
+          if (H(offs(up, fwd, side, dist * ca, dist * sa, p)) > sea + 0.5) flankR++;
+        }
+        const cove = Math.min(flankL, flankR) / 3;
         const wf = water / n;
         const sunIn = lava ? 1 : Math.max(0, Math.cos(yaw));
         const edge = (landL > 0) !== (landR > 0) ? 1 : 0;
@@ -503,7 +510,7 @@ export default class Ocean {
         // side, open sea and sun on the other): ~40° between view and shore normal
         const offShore = Math.acos(THREE.MathUtils.clamp(c.seaH.dot(fwd), -1, 1));
         const diag = lava ? 0 : 1 - Math.min(1, Math.abs(offShore - 0.7) / 0.7);
-        const score = wf * 6 + sunIn * 3 + edge * 1.5 + diag * 2 - c.slope * 10 - c.flat * 4 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
+        const score = wf * 6 + sunIn * 3 + edge * 1.5 + diag * 2 - cove * 3 - c.slope * 10 - c.flat * 4 - Math.abs(yawDeg) * 0.02 + (lava ? 2 * Math.max(0, c.seaH.dot(fwd)) : 0);
         if (!best || score > best.score) best = { score, c, fwd: fwd.clone() };
         if (!c.top || score > c.top.score) c.top = { score, fwd: fwd.clone() };
       }
@@ -535,20 +542,32 @@ export default class Ocean {
     let position = up.clone().multiplyScalar(R + best.c.h + camH);
     if (!lava) {
       // breakers roll in toward the lens, the shore sweeps away diagonally on
-      // one side, the glitter path runs out to a low sun
+      // one side, the glitter path runs out to a low sun. Stand on the damp
+      // sand a few metres above the waterline (eye height), so the swash edge,
+      // the surf bands and two or three breaker lines all sit in the lower
+      // third of the frame.
       const sh = best.c.seaH;
-      // stand knee-deep in the swash: a few metres shoreward of the first
-      // point that is properly under water (dune grass grows to the waterline)
-      for (let s = 0; s <= 240; s += 2) {
+      let s0 = null;
+      for (let s = -60; s <= 240; s += 1) {
         const pd = up.clone().multiplyScalar(R).addScaledVector(sh, s).normalize();
-        if (w.heightAt(pd) < sea - 0.6) {
-          const back = up.clone().multiplyScalar(R).addScaledVector(sh, Math.max(0, s - 4)).normalize();
-          up = back; position = back.clone().multiplyScalar(R + Math.max(sea, w.heightAt(back)) + 2.4);
-          break;
+        if (w.heightAt(pd) < sea + 0.05) { s0 = s; break; }
+      }
+      if (s0 !== null) {
+        // dune grass grows right down to the waterline and breakers run up the
+        // swash, so stand on the beach a few metres back and a little above the
+        // grass: the carpet of dune grass frames the bottom edge, the wet sand,
+        // swash and breaker lines fill the lower third
+        let back = null;
+        for (const dback of [6, 9, 4, 12, 3]) {
+          const bd = up.clone().multiplyScalar(R).addScaledVector(sh, s0 - dback).normalize();
+          const hb = w.heightAt(bd);
+          if (hb > sea + 0.2 && hb < sea + 2.5) { back = bd; break; }
         }
+        if (!back) back = up.clone().multiplyScalar(R).addScaledVector(sh, s0 - 4).normalize();
+        up = back; position = back.clone().multiplyScalar(R + Math.max(sea + 0.3, w.heightAt(back)) + 3.6);
       }
     }
-    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -30);
+    const target = position.clone().addScaledVector(best.fwd, 200).addScaledVector(up, lava ? -30 : -48);
     return { position, target, dir: up, time: best.c.t };
   }
 

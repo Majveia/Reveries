@@ -139,7 +139,7 @@ export function vehicleMaterials(engine) {
   // lacquered paint: roughness comes straight from the map (≈0.25 panels, 0.85 grooves) under a glossy clear coat
   const paint = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 0.5,
-    metalness: 0.08, roughness: 1.0, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 0.9,
+    metalness: 0.18, roughness: 1.0, clearcoat: 0.45, clearcoatRoughness: 0.16, envMapIntensity: 0.9,
     sheen: 0.0, specularIntensity: 0.8,
   });
   const metal = new THREE.MeshStandardMaterial({
@@ -153,11 +153,20 @@ export function vehicleMaterials(engine) {
       Object.assign(sh.uniforms, light);
       sh.fragmentShader = 'uniform vec3 vehRimDir; uniform vec3 vehRimCol; uniform vec3 vehFill;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
+          vec3 hN = normalize(normal);
+          totalEmissiveRadiance += diffuseColor.rgb * vehFill * (0.75 + 0.25 * hN.y);
+        }`).replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        {
+          // sun rim, masked by the sun's actual visibility here (shadow maps): direct diffuse
+          // received vs. what an unshadowed surface would get → no rim glowing inside shadows
           vec3 hN = normalize(normal); vec3 hV = normalize(vViewPosition);
           float hF = pow(1.0 - clamp(dot(hN, hV), 0.0, 1.0), 4.0);
           float hBack = 0.45 + 0.55 * clamp(dot(vehRimDir, -hV), 0.0, 1.0);
-          totalEmissiveRadiance += vehRimCol * hF * max(dot(hN, vehRimDir), 0.0) * hBack;
-          totalEmissiveRadiance += diffuseColor.rgb * vehFill * (0.75 + 0.25 * hN.y);
+          float hNL = max(dot(hN, vehRimDir), 0.0);
+          const vec3 hLum = vec3(0.2126, 0.7152, 0.0722);
+          float hRef = dot(material.diffuseColor * vehRimCol, hLum) * hNL * 0.579;
+          float hVis = hRef > 1e-6 ? smoothstep(0.1, 0.7, dot(reflectedLight.directDiffuse, hLum) / hRef) : 0.0;
+          totalEmissiveRadiance += vehRimCol * hF * hNL * hBack * hVis;
         }`);
     };
     m.customProgramCacheKey = () => 'vehHero';

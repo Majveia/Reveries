@@ -31,6 +31,8 @@ export function roadMat(road, zone) {
 /** Roads are graded causeways (low-pass window in m) instead of ribbons draped over the dunes. */
 export const gradeRoads = 45;
 export const plazaMat = () => G.SANDSTONE;
+/** The capital rides a graded podium above the dune field, its rim a battered dam wall (Settlement._podium). */
+export const podium = { r: 0.82, maxR: 48, blur: 110, lift: 0.7, raise: 1.5 };
 export const shotSun = 0.24; // low raking late-afternoon light through the dust: slabs split into lit and shadow planes
 export const shot = { dist: 1.0, height: 50, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.6, maxDown: 0.15, skyTop: 0.1 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
 

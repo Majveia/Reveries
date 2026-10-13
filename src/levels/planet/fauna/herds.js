@@ -14,7 +14,7 @@
 //   and terrain heights sampled round-robin and extrapolated with the local slope.
 import * as THREE from 'three';
 import { Random, seedFrom, hash3i, u01 } from '../../../core/Random.js';
-import { TAU, clamp, smooth, lerp, rigMaterial, paint, mergeParts, blob, limb, mixColor, vnoise, tangentBasis, writeInstance, makeInstanced } from './common.js';
+import { TAU, clamp, smooth, lerp, rigMaterial, paint, mergeParts, blob, limb, loft, mixColor, vnoise, tangentBasis, writeInstance, makeInstanced } from './common.js';
 
 // ---------------------------------------------------------------------------------
 // Species
@@ -50,8 +50,9 @@ const RECOLOR = {
 
 const RIG_GLSL = /* glsl */ `
 uniform vec3 uHip[4];
-uniform vec3 uKnee[4];
-uniform vec3 uNeck;
+uniform vec3 uKnee[4];   // carpus (fore) / hock (hind)
+uniform vec3 uFetlock[4];
+uniform vec3 uNeckP[3];  // neck root, mid-neck, poll
 uniform vec3 uTail;
 uniform vec4 uGait;   // x hip swing, y knee lift, z bob, w body pitch
 void faSwing(inout vec3 p, inout vec3 n, vec3 piv, float a) {
@@ -75,15 +76,26 @@ void rig(inout vec3 p, inout vec3 n) {
     float a = amp * uGait.x * mix(1.0, 1.7, gait) * sin(lp);
     float lift = max(0.0, cos(lp)); lift *= lift;
     float k = amp * uGait.y * mix(1.0, 1.6, gait) * lift;
-    if (aRig.y > 0.5) faSwing(p, n, uKnee[leg], leg < 2 ? -k * 1.2 : -k * 0.9);
+    bool fore = leg < 2;
+    // pastern: folds in the swing, counter-rotates in stance so the hoof stays flat on the ground
+    if (aRig.y > 1.5) faSwing(p, n, uFetlock[leg], -k * (fore ? 1.1 : 0.9) - a * 0.8 * (1.0 - lift));
+    // cannon below the carpus / hock (the hock also flexes a little while grazing-stepping)
+    if (aRig.y > 0.5) faSwing(p, n, uKnee[leg], fore ? -k * 1.25 : -k * 0.85);
+    // hind: the stifle flexes forward as the hock closes (reciprocal apparatus)
+    if (!fore && aRig.y < 0.5 && p.y < uKnee[leg].y + (uHip[leg].y - uKnee[leg].y) * 0.75) faSwing(p, n, uHip[leg] - vec3(0.0, (uHip[leg].y - uKnee[leg].y) * 0.4, 0.0), k * 0.25);
     faSwing(p, n, uHip[leg], a);
   }
   if (aRig.z > 0.0) {
-    float w = aRig.z;
+    // the neck curves as a chain: poll, mid-neck and root each take a share (distal first = correct FK)
+    float t = aRig.z;
     float look = sin(uFTime * 0.37 + id * 2.1) * 0.35 * (1.0 - graze) * (1.0 - gait);
-    float down = graze * 1.15 + sin(uFTime * 5.0 + id) * 0.06 * graze - gait * 0.25 + amp * 0.06 * sin(ph * 2.0);
-    faSwing(p, n, uNeck, -down * w);
-    faYaw(p, n, uNeck, look * w);
+    float down = graze * 1.0 + sin(uFTime * 5.0 + id) * 0.05 * graze - gait * 0.25 + amp * 0.06 * sin(ph * 2.0);
+    float w2 = smoothstep(0.88, 0.97, t), w1 = smoothstep(0.42, 0.62, t), w0 = smoothstep(0.02, 0.3, t);
+    faSwing(p, n, uNeckP[2], -(down * 0.42 + 0.12 * graze) * w2);
+    faSwing(p, n, uNeckP[1], -down * 0.4 * w1);
+    faSwing(p, n, uNeckP[0], -down * 0.62 * w0);
+    faYaw(p, n, uNeckP[0], look * w0);
+    faYaw(p, n, uNeckP[2], look * 0.6 * w2);
   }
   if (aRig.w > 0.0) {
     faYaw(p, n, uTail, sin(uFTime * 2.6 + id * 1.7) * 0.5 * aRig.w);
@@ -96,21 +108,23 @@ void rig(inout vec3 p, inout vec3 n) {
 }
 `;
 
-function buildSpecies(spec) {
+function buildSpecies(spec, Q = 2) {
   const S = spec;
   const back = new THREE.Color(S.back), belly = new THREE.Color(S.belly), pat = new THREE.Color(S.patternColor), hoof = new THREE.Color(S.hoof);
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const hipY = S.legLen, cy = S.legLen + S.bodyR * 0.55;
+  const g = (u, c, w) => Math.exp(-(((u - c) / w) ** 2));
+  const hipY = S.legLen, cy = S.legLen + S.bodyR * 0.55, L = S.legLen, r = S.legR;
+  const AR = [12, 14, 18, 20][Q], LR = [8, 9, 10, 12][Q]; // ring resolution by quality
   const parts = [];
-  const zF = S.bodyLen * 0.62, zB = -S.bodyLen * 0.6, xL = S.bodyW * 0.62;
+  const zF = S.bodyLen * 0.58, zB = -S.bodyLen * 0.56, xL = S.bodyW * 0.6;
   const hips = [V(xL, hipY + S.bodyR * 0.25, zF), V(-xL, hipY + S.bodyR * 0.25, zF), V(xL, hipY + S.bodyR * 0.3, zB), V(-xL, hipY + S.bodyR * 0.3, zB)];
-  const knees = hips.map((h, i) => V(h.x * 0.9, S.legLen * (i < 2 ? 0.42 : 0.5), h.z + (i < 2 ? 0.03 : -0.12) * S.legLen));
-  const neckBase = V(0, cy + S.bodyR * 0.35, S.bodyLen * 0.72);
-  const tailBase = V(0, cy + S.bodyR * 0.35, -S.bodyLen * 0.95);
-  // colour function: counter-shading + pattern
+  const knees = hips.map((h, i) => (i < 2 ? V(h.x * 0.92, L * 0.42, h.z + 0.01 * L) : V(h.x * 0.9, L * 0.47, h.z - 0.17 * L)));
+  const fetlocks = hips.map((h, i) => (i < 2 ? V(h.x * 0.92, L * 0.12, h.z + 0.015 * L) : V(h.x * 0.9, L * 0.115, h.z - 0.085 * L)));
+  const tailBase = V(0, cy + S.bodyR * 0.42, -S.bodyLen * 0.93);
+  // colour: counter-shading + pattern + markings
   const coat = (p, n, extra = 0) => {
     const up = clamp(n.y * 0.5 + 0.5, 0, 1);
-    let t = smooth(0.25, 0.75, up) ; // 1 = back
+    let t = smooth(0.25, 0.75, up);
     const yy = (p.y - hipY) / (S.bodyR * 1.6);
     t = clamp(t * 0.65 + clamp(yy, 0, 1) * 0.5, 0, 1);
     let c = mixColor(belly, back, t);
@@ -120,127 +134,192 @@ function buildSpecies(spec) {
     else if (S.pattern === 'mane') pm = smooth(0.6, 0.9, extra);
     else if (S.pattern === 'shag') pm = smooth(0.45, 0.8, nz) * 0.45;
     c = [lerp(c[0], pat.r, pm), lerp(c[1], pat.g, pm), lerp(c[2], pat.b, pm)];
-    const ao = 0.75 + 0.25 * up; // baked cavity darkening under the belly
+    // darker dorsal line, sooty lower legs
+    const dors = smooth(0.06, 0.0, Math.abs(p.x)) * smooth(0.6, 0.95, n.y) * 0.3;
+    const sock = p.y < L * 0.5 && p.y > 0.06 ? smooth(L * 0.5, L * 0.2, p.y) * 0.35 : 0;
+    const k = 1 - dors - sock;
+    const ao = 0.75 + 0.25 * up;
     const v = 0.85 + 0.3 * nz;
-    return [c[0] * ao * v, c[1] * ao * v, c[2] * ao * v];
+    return [c[0] * ao * v * k, c[1] * ao * v * k, c[2] * ao * v * k];
   };
-  const glowFn = null; // coat glow is evaluated per pixel (surfaceGLSL)
-  // body: deep chest, tucked waist, rounded rump (+hump)
-  const body = blob(S.bodyW, S.bodyR, S.bodyLen, (z, x, y) => {
-    let k = 1 + 0.12 * Math.exp(-((z - 0.45) ** 2) * 8) - 0.1 * Math.exp(-((z + 0.05) ** 2) * 10);
-    if (y > 0 && S.hump) k *= 1 + S.hump * Math.exp(-((z - 0.5) ** 2) * 12) * y;
-    if (y < 0) k *= 1 - 0.06 * Math.exp(-((z) ** 2) * 6);
-    return k;
-  }, 30, 18);
-  body.translate(0, cy, 0);
-  parts.push(paint(body, (p, n) => coat(p, n, Math.exp(-((p.z / S.bodyLen - 0.6) ** 2) * 10) * (n.y < 0 ? 1 : 0)), () => [0, 0, 0, 0], glowFn));
-  // neck
-  const neckTop = neckBase.clone().add(V(0, Math.sin(Math.atan(S.neckUp)) * S.neckLen, Math.cos(Math.atan(S.neckUp)) * S.neckLen));
-  const neck = limb(neckBase.clone().add(V(0, -S.bodyR * 0.25, -S.bodyLen * 0.12)), neckTop, S.bodyR * 0.5, S.headR * 0.85, 14, 8);
-  const nLen = neckTop.distanceTo(neckBase) + S.bodyLen * 0.12;
-  const nDir = neckTop.clone().sub(neckBase).normalize();
-  const neckW = (p) => clamp(p.clone().sub(neckBase).dot(nDir) / nLen + 0.15, 0, 1);
-  parts.push(paint(neck, (p, n) => coat(p, n, 1 - Math.abs(n.x)), (p) => [0, 0, smooth(0, 1, neckW(p)), 0], glowFn));
-  // head: tilted muzzle
-  const hdir = V(0, -0.55, 1).normalize();
-  const headC = neckTop.clone().addScaledVector(hdir, S.headLen * 0.55);
-  const head = blob(S.headR * 0.85, S.headR, S.headLen * 0.6, (z) => 1 - 0.32 * smooth(-0.2, 1, z), 12, 10);
-  head.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), hdir));
-  head.translate(headC.x, headC.y, headC.z);
-  const muzzle = headC.clone().addScaledVector(hdir, S.headLen * 0.55);
+  // --- torso: lofted sections — deep chest keel, withers, tucked flank, rounded rump and hip points
+  const TR = [];
+  const NT = [16, 20, 26, 30][Q];
+  for (let i = 0; i <= NT; i++) {
+    const u = -1 + (2 * i) / NT, e = Math.pow(Math.max(0, 1 - u * u), u < 0 ? 0.36 : 0.44);
+    const rx = S.bodyW * e * (1 + 0.12 * g(u, -0.55, 0.22) + 0.07 * g(u, 0.5, 0.25) - 0.1 * g(u, 0.02, 0.3));
+    let yt = S.bodyR * e * (1 + 0.1 * g(u, 0.6, 0.16) + 0.07 * g(u, -0.55, 0.2) - 0.05 * g(u, 0.08, 0.28));
+    if (S.hump) yt *= 1 + S.hump * g(u, 0.5, 0.3);
+    const yb = S.bodyR * e * (0.86 + 0.26 * g(u, 0.36, 0.3) - 0.17 * g(u, -0.38, 0.28));
+    TR.push({ c: V(0, cy + S.bodyR * 0.07 * u - (yb - yt) * 0.15, u * S.bodyLen * 1.02), rx, yt, yb, sq: 0.25, keel: 0.55 * g(u, 0.3, 0.45) });
+  }
+  const body = loft(TR, AR + 4);
+  parts.push(paint(body, (p, n) => coat(p, n, Math.exp(-((p.z / S.bodyLen - 0.6) ** 2) * 10) * (n.y < 0 ? 1 : 0)), () => [0, 0, 0, 0]));
+  // --- neck: a curved loft rising out of the withers / brisket, thick and deep at the root
+  const ang = Math.atan(S.neckUp);
+  const nb0 = V(0, cy + S.bodyR * 0.05, S.bodyLen * 0.5);
+  const neckTop = V(0, cy + S.bodyR * 0.35 + Math.sin(ang) * S.neckLen, S.bodyLen * 0.72 + Math.cos(ang) * S.neckLen);
+  const nCtrl = V(0, cy + S.bodyR * 0.5 + Math.sin(ang) * S.neckLen * 0.35, S.bodyLen * 0.78 + Math.cos(ang) * S.neckLen * 0.25);
+  const bez = (t) => V(0, (1 - t) ** 2 * nb0.y + 2 * (1 - t) * t * nCtrl.y + t * t * neckTop.y, (1 - t) ** 2 * nb0.z + 2 * (1 - t) * t * nCtrl.z + t * t * neckTop.z);
+  const NR = [];
+  for (let i = 0; i <= 9; i++) {
+    const t = i / 9, k = Math.pow(1 - t, 1.3);
+    const rx = lerp(S.headR * 0.6, S.bodyW * 0.46, k) * (i === 0 ? 0.6 : 1);
+    const yy = lerp(S.headR * 0.85, S.bodyR * 0.62, k) * (i === 0 ? 0.6 : 1);
+    NR.push({ c: bez(t), rx, yt: yy * (S.pattern === 'mane' ? 1.1 : 0.95), yb: yy * 1.08, sq: 0.1, rig: [0, 0, lerp(0.02, 0.95, t), 0] });
+  }
+  const neckP = [bez(0.22), bez(0.6), neckTop.clone()];
+  const neck = loft(NR, AR);
+  parts.push(paint(neck, (p, n) => coat(p, n, 1 - Math.abs(n.x))));
+  // --- head: cranium → jaw → muzzle loft, ears as leaf cards, glossy eyes
+  const HL = S.headLen * 1.3, HR = S.headR * 1.35;
+  const hdir = V(0, -0.62, 1).normalize();
+  const h0 = neckTop.clone().addScaledVector(hdir, -HL * 0.08);
+  const HP = [[0, 0.25, 0.35, 0.3], [0.08, 0.85, 0.9, 0.75], [0.25, 0.95, 0.9, 0.95], [0.45, 0.78, 0.72, 0.9], [0.65, 0.6, 0.6, 0.7], [0.85, 0.52, 0.55, 0.6], [0.98, 0.45, 0.48, 0.5], [1.03, 0.18, 0.2, 0.2]];
+  const head = loft(HP.map(([s, x, yt, yb]) => ({ c: h0.clone().addScaledVector(hdir, s * HL).add(V(0, -0.05 * HR * Math.sin(s * Math.PI), 0)), rx: x * HR * 0.82, yt: yt * HR, yb: yb * HR, sq: 0.2, rig: [0, 0, 1, 0] })), AR - 2);
+  const muzzle = h0.clone().addScaledVector(hdir, HL);
+  const headC = h0.clone().addScaledVector(hdir, HL * 0.28);
   parts.push(paint(head, (p, n) => {
-    const c = coat(p, n, 0); const d = p.distanceTo(muzzle) / S.headLen;
-    const m = smooth(0.35, 0.1, d); return [lerp(c[0], 0.05, m), lerp(c[1], 0.045, m), lerp(c[2], 0.04, m)];
-  }, () => [0, 0, 1, 0], glowFn));
-  // eyes (dark glossy beads)
+    const c = coat(p, n, 0); const d = p.distanceTo(muzzle) / HL;
+    const m = smooth(0.24, 0.06, d); // dark wet nose
+    const w = S.pattern === 'flank' ? smooth(0.42, 0.3, d) * smooth(0.12, 0.2, d) * 0.6 : 0; // pale muzzle ring
+    return [lerp(lerp(c[0], 0.9, w), 0.04, m), lerp(lerp(c[1], 0.86, w), 0.035, m), lerp(lerp(c[2], 0.8, w), 0.03, m)];
+  }));
   for (const s of [-1, 1]) {
-    const e = blob(0.028, 0.028, 0.028, null, 6, 4);
-    const ep = headC.clone().add(V(s * S.headR * 0.78, S.headR * 0.35, -S.headLen * 0.05));
+    const e = blob(0.034 * HR / 0.16, 0.03 * HR / 0.16, 0.036 * HR / 0.16, null, 8, 6);
+    const ep = headC.clone().add(V(s * HR * 0.66, HR * 0.38, 0));
     e.translate(ep.x, ep.y, ep.z);
-    parts.push(paint(e, () => [0.01, 0.008, 0.006], () => [0, 0, 1, 0], S.glow ? () => 0.6 : null));
+    parts.push(paint(e, () => [0.012, 0.009, 0.007], () => [0, 0, 1, 0], S.glow ? () => 0.6 : null));
   }
-  // ears
   if (S.ears > 0) for (const s of [-1, 1]) {
-    const base = headC.clone().add(V(s * S.headR * 0.6, S.headR * 0.75, -S.headLen * 0.25));
-    const ear = limb(base, base.clone().add(V(s * S.ears * 0.9, S.ears * 0.45, -S.ears * 0.25)), 0.035, 0.012, 6, 1);
-    parts.push(paint(ear, (p, n) => coat(p, n, 0), () => [0, 0, 1, 0]));
+    const base = headC.clone().add(V(s * HR * 0.5, HR * 0.72, -HL * 0.12));
+    const dirE = V(s * 0.85, 0.5, -0.2).normalize(), E = S.ears * 1.25;
+    const ER = [];
+    for (let i = 0; i <= 5; i++) { const t = i / 5, wdt = Math.sin(Math.PI * Math.pow(t, 0.75)) + (i === 0 ? 0.35 : 0); ER.push({ c: base.clone().addScaledVector(dirE, t * E).add(V(0, 0, E * 0.12 * Math.sin(t * Math.PI))), rx: E * 0.07 * (1 - t * 0.6), yt: E * 0.24 * wdt, yb: E * 0.24 * wdt, rig: [0, 0, 1, 0] }); }
+    const ear = loft(ER, 8, V(0, 0, 1));
+    parts.push(paint(ear, (p, n) => { const c = coat(p, n, 0); const inner = n.z > 0.3 ? 0.55 : 1; return [c[0] * inner, c[1] * inner, c[2] * inner]; }));
   }
-  // horns
-  const hornCol = [0.12, 0.1, 0.08];
-  const hornTop = headC.clone().add(V(0, S.headR * 0.8, -S.headLen * 0.25));
+  // --- horns
+  const hornCol = (p, n, base) => { const k = 0.7 + 0.3 * Math.abs(Math.sin(p.distanceTo(base) * 90)); return [0.1 * k, 0.085 * k, 0.07 * k]; };
+  const hornTop = headC.clone().add(V(0, HR * 0.8, -HL * 0.12));
   if (S.horns === 'lyre' || S.horns === 'curved') for (const s of [-1, 1]) {
-    let a = hornTop.clone().add(V(s * S.headR * 0.4, 0, 0));
-    const steps = S.horns === 'lyre' ? [[0.05, 0.14, -0.06], [0.03, 0.12, -0.08], [-0.02, 0.1, -0.02]] : [[0.16, 0.04, -0.04], [0.08, 0.08, 0.02], [-0.02, 0.06, 0.08]];
-    let r = S.headR * 0.28;
-    for (const st of steps) {
-      const b = a.clone().add(V(s * st[0], st[1], st[2]).multiplyScalar(S.horns === 'curved' ? 1.6 : 1));
-      parts.push(paint(limb(a, b, r, r * 0.7, 6, 1), () => hornCol, () => [0, 0, 1, 0]));
-      a = b; r *= 0.7;
+    const base = hornTop.clone().add(V(s * HR * 0.32, 0, 0));
+    const hl = S.horns === 'lyre' ? 0.42 : 0.5, r0 = HR * (S.horns === 'lyre' ? 0.2 : 0.3);
+    const HRn = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      const c = S.horns === 'lyre'
+        ? base.clone().add(V(s * hl * (0.06 + 0.22 * Math.sin(Math.PI * t * 0.85) - 0.08 * t * t), hl * t, -hl * 0.38 * t + hl * 0.32 * t * t * t))
+        : base.clone().add(V(s * hl * (0.5 * Math.sin(t * 1.6)), hl * (0.25 * Math.sin(t * 3.0)), hl * (-0.15 * t + 0.35 * t * t)));
+      const ridge = 1 + 0.14 * Math.max(0, Math.sin(t * 46)) * (1 - t);
+      const rr = r0 * (1 - 0.82 * t) * ridge;
+      HRn.push({ c, rx: rr, yt: rr, yb: rr, rig: [0, 0, 1, 0] });
     }
+    const horn = loft(HRn, 7);
+    parts.push(paint(horn, (p, n) => hornCol(p, n, base)));
   } else if (S.horns === 'antlers') for (const s of [-1, 1]) {
-    const a = hornTop.clone().add(V(s * S.headR * 0.35, 0, 0));
+    const a = hornTop.clone().add(V(s * HR * 0.3, 0, 0));
     const main = [a, a.clone().add(V(s * 0.18, 0.28, -0.12)), a.clone().add(V(s * 0.38, 0.5, -0.1)), a.clone().add(V(s * 0.5, 0.72, 0.05))];
     const ac = [0.32, 0.27, 0.2];
     for (let i = 0; i < 3; i++) {
-      parts.push(paint(limb(main[i], main[i + 1], 0.03 - i * 0.006, 0.024 - i * 0.006, 5, 1), () => ac, () => [0, 0, 1, 0]));
+      parts.push(paint(limb(main[i], main[i + 1], 0.03 - i * 0.006, 0.024 - i * 0.006, 6, 1), () => ac, () => [0, 0, 1, 0]));
       const tine = main[i + 1].clone().add(V(s * 0.02, 0.2 - i * 0.03, 0.12));
       parts.push(paint(limb(main[i + 1], tine, 0.016, 0.006, 5, 1), () => ac, () => [0, 0, 1, 0]));
     }
   } else if (S.horns === 'fan' || S.horns === 'crest') {
-    // a flat fan crest: a row of thin spines with a membrane glow
     const n = S.horns === 'fan' ? 7 : 4;
     for (let i = 0; i < n; i++) {
       const u = (i / (n - 1)) * 2 - 1;
-      const a = hornTop.clone().add(V(0, 0, -S.headLen * 0.1));
+      const a = hornTop.clone().add(V(0, 0, -HL * 0.08));
       const b = a.clone().add(V(u * 0.32, 0.28 + 0.06 * (1 - u * u), -0.2 - 0.05 * Math.abs(u)));
       parts.push(paint(limb(a, b, 0.02, 0.008, 5, 1), () => S.horns === 'fan' ? [0.05, 0.08, 0.2] : [0.6, 0.25, 0.2], () => [0, 0, 1, 0], S.glow ? (p) => 0.3 + 0.7 * clamp((p.y - a.y) / 0.3, 0, 1) : null));
     }
   }
-  // legs (two segments + hooves)
+  // --- legs: muscled upper (forearm / gaskin), knobbed carpus or backward hock, slim cannon,
+  //     fetlock, sloped pastern and a hoof — rig 0 upper, 1 cannon, 2 pastern
   for (let i = 0; i < 4; i++) {
-    const h = hips[i], k = knees[i];
-    const foot = V(k.x, 0.05, k.z + (i < 2 ? -0.02 : 0.05) * S.legLen);
-    const up = limb(h.clone().add(V(0, S.bodyR * 0.2, 0)), k, S.legR * (i < 2 ? 1.9 : 2.4), S.legR * 1.05, 10, 4);
-    parts.push(paint(up, (p, n) => coat(p, n, 0), () => [i + 1, 0, 0, 0], glowFn));
-    const lo = limb(k, foot, S.legR, S.legR * 0.7, 9, 3);
-    parts.push(paint(lo, (p, n) => { const c = coat(p, n, 0); const d = smooth(0.35 * S.legLen, 0.1, p.y); return [lerp(c[0], c[0] * 0.5, d), lerp(c[1], c[1] * 0.5, d), lerp(c[2], c[2] * 0.5, d)]; }, () => [i + 1, 1, 0, 0]));
-    const hf = blob(S.legR * 1.05, 0.05, S.legR * 1.3, null, 7, 4); hf.translate(foot.x, 0.04, foot.z + 0.01);
-    parts.push(paint(hf, () => [hoof.r, hoof.g, hoof.b], () => [i + 1, 1, 0, 0]));
+    const h = hips[i], K = knees[i], F = fetlocks[i], fore = i < 2, x = K.x;
+    const LRg = fore ? [
+      [V(h.x * 0.85, h.y + S.bodyR * 0.45, h.z + 0.02), 2.0, 2.2, 2.2, 0],
+      [V(x, L * 0.86, h.z + 0.03 * L), 2.0, 2.3, 1.9, 0],          // elbow / upper forearm (muscle)
+      [V(x, L * 0.66, h.z + 0.02 * L), 1.5, 1.6, 1.4, 0],
+      [V(x, L * 0.5, K.z + 0.004 * L), 1.25, 1.25, 1.2, 0],
+      [V(K.x, K.y, K.z), 1.3, 1.4, 1.35, 0],                         // carpus knob
+      [V(x, L * 0.36, K.z + 0.002 * L), 0.95, 0.9, 1.1, 1],
+      [V(x, L * 0.24, K.z + 0.006 * L), 0.82, 0.8, 1.05, 1],         // cannon (tendon behind)
+      [V(F.x, F.y + 0.03 * L, F.z - 0.005 * L), 1.0, 1.0, 1.25, 1],
+      [V(F.x, F.y, F.z), 1.02, 1.05, 1.2, 1],                        // fetlock
+      [V(x, L * 0.06, F.z + 0.03 * L), 0.82, 0.85, 0.9, 2],          // pastern
+      [V(x, 0.045, F.z + 0.055 * L), 1.0, 1.05, 1.0, 2],             // coronet
+      [V(x, 0.008, F.z + 0.08 * L), 1.15, 1.3, 1.0, 2],              // hoof sole
+      [V(x, 0.0, F.z + 0.07 * L), 0.3, 0.3, 0.3, 2],
+    ] : [
+      [V(h.x * 0.85, h.y + S.bodyR * 0.4, h.z + 0.06), 2.4, 2.5, 2.5, 0],
+      [V(x, L * 0.84, h.z + 0.1 * L), 2.3, 2.6, 2.4, 0],            // stifle / thigh
+      [V(x, L * 0.68, h.z - 0.02 * L), 1.55, 1.4, 1.9, 0],           // gaskin
+      [V(x, L * 0.54, K.z + 0.02 * L), 1.25, 1.1, 1.4, 0],
+      [V(K.x, K.y, K.z - 0.01 * L), 1.15, 1.0, 1.55, 0],             // hock point (backward)
+      [V(x, L * 0.36, K.z + 0.025 * L), 0.9, 0.85, 1.15, 1],
+      [V(x, L * 0.24, F.z - 0.02 * L), 0.8, 0.8, 1.05, 1],
+      [V(F.x, F.y + 0.03 * L, F.z - 0.004 * L), 0.98, 1.0, 1.2, 1],
+      [V(F.x, F.y, F.z), 1.0, 1.05, 1.15, 1],
+      [V(x, L * 0.06, F.z + 0.03 * L), 0.8, 0.85, 0.9, 2],
+      [V(x, 0.045, F.z + 0.05 * L), 0.98, 1.0, 1.0, 2],
+      [V(x, 0.008, F.z + 0.075 * L), 1.12, 1.25, 1.0, 2],
+      [V(x, 0.0, F.z + 0.065 * L), 0.3, 0.3, 0.3, 2],
+    ];
+    const leg = loft(LRg.map(([c, rx, yf, yb, seg]) => ({ c, rx: rx * r, yt: yf * r, yb: yb * r, sq: 0.1, rig: [i + 1, seg, 0, 0] })), LR);
+    parts.push(paint(leg, (p, n) => {
+      if (p.y < 0.05) return [hoof.r, hoof.g, hoof.b];
+      return coat(p, n, 0);
+    }));
   }
-  // tail
+  // --- tail
   if (S.tail > 0) {
-    const tEnd = tailBase.clone().add(V(0, -S.tail * 0.8, -S.tail * 0.45));
-    const tl = limb(tailBase, tEnd, S.bodyR * 0.12, S.bodyR * (S.pattern === 'shag' ? 0.16 : 0.05), 6, 3);
-    parts.push(paint(tl, (p, n) => { const c = coat(p, n, 0); return S.pattern === 'stripes' ? c : [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]; }, (p) => [0, 0, 0, clamp(p.distanceTo(tailBase) / S.tail, 0, 1)], glowFn));
+    const TRn = [];
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      const c = tailBase.clone().add(V(0, -S.tail * 0.85 * t + S.tail * 0.12 * Math.sin(t * 2.5), -S.tail * 0.35 * t - S.bodyR * 0.08));
+      const rr = S.bodyR * (S.pattern === 'shag' ? lerp(0.13, 0.17, t) : lerp(0.11, 0.03, t) + (t > 0.6 ? 0.04 * smooth(0.6, 0.85, t) * (1 - smooth(0.9, 1, t)) : 0));
+      TRn.push({ c, rx: rr, yt: rr, yb: rr, rig: [0, 0, 0, t] });
+    }
+    const tl = loft(TRn, 8);
+    parts.push(paint(tl, (p, n) => { const c = coat(p, n, 0); return S.pattern === 'stripes' ? c : [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55]; }));
   }
   const geo = mergeParts(parts);
   geo.computeBoundingSphere();
-  return { geo, hips, knees, neckBase, tailBase };
+  return { geo, hips, knees, fetlocks, neckP, tailBase };
 }
 
-/** Per-pixel coat pattern (antialiased, stable in rest-pose space) — drives albedo and the glow mask. */
+/** Per-pixel coat: fur breakup (two-scale mottling + strands combed along the body and down the legs) and the pattern. */
 function surfaceGLSL(S) {
-  if (S.pattern !== 'stripes' && S.pattern !== 'spots') return '';
   const pc = new THREE.Color(S.patternColor);
   const v3 = `vec3(${pc.r.toFixed(3)}, ${pc.g.toFixed(3)}, ${pc.b.toFixed(3)})`;
-  const y0 = (S.legLen * 0.3).toFixed(3), G = (S.glow || 0).toFixed(3);
-  const body = S.pattern === 'stripes' ? `
-    // thin bioluminescent lines over a dark hide (direhorse / viperwolf), brightest along the back
+  const y0 = (S.legLen * 0.3).toFixed(3), G = (S.glow || 0).toFixed(3), legTop = (S.legLen * 0.9).toFixed(3);
+  const shag = S.pattern === 'shag' ? 1.6 : 1.0;
+  const pattern = S.pattern === 'stripes' ? `
     float s = sin(p.z * 22.0 + sin(p.y * 8.0) * 1.5 + faNoise(p * 9.0) * 2.0);
     float sfw = max(fwidth(s), 1e-4);
     float ln = smoothstep(0.86 - sfw, 0.93 + sfw, s) * smoothstep(-0.2, 0.55, n.y) * step(0.2, faNoise(p * 3.0 + 1.7));
-    ln = max(ln, faLine(p.x * 14.0, 0.18) * smoothstep(0.6, 0.9, n.y)); // dorsal line
+    ln = max(ln, faLine(p.x * 14.0, 0.18) * smoothstep(0.6, 0.9, n.y));
     float dots = smoothstep(0.8, 0.86, faNoise(p * 26.0)) * smoothstep(0.1, 0.8, n.y) * 0.8;
-    float m = max(ln, dots);
+    float m = max(ln, dots) * step(${y0}, p.y);
     col = mix(col, ${v3} * 0.35, m * 0.6);
-    glow = m * ${G};` : `
+    glow = m * ${G};` : S.pattern === 'spots' ? `
     float sp = faNoise(p * 7.0 + 3.0); float fw = max(fwidth(sp), 1e-4);
-    float m = smoothstep(0.64 - fw, 0.64 + fw, sp) * smoothstep(-0.2, 0.6, n.y);
+    float m = smoothstep(0.64 - fw, 0.64 + fw, sp) * smoothstep(-0.2, 0.6, n.y) * step(${y0}, p.y);
     col = mix(col, ${v3}, m);
-    glow = m * ${G};`;
+    glow = m * ${G};` : '';
   return `void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
-    if (glow > 0.01 || p.y < ${y0}) return; // eyes, crest and hooves keep their own look
-    ${body}
+    if (glow > 0.01 || p.y < 0.05) return; // eyes, crest and hooves keep their own look
+    // fur: strands combed along the body axis (and down the legs), filtered by the pixel footprint
+    vec3 sp = p.y < ${legTop} && abs(n.y) < 0.8 ? vec3(p.x * 70.0, p.y * 7.0, p.z * 70.0) : vec3(p.x * 60.0, p.y * 60.0, p.z * 7.0);
+    sp *= ${(1 / shag).toFixed(3)};
+    float fwS = length(fwidth(sp));
+    float strand = mix(0.5, faNoise(sp), 1.0 - smoothstep(0.35, 1.1, fwS));
+    float b1 = faNoise(p * 9.0), b2 = faNoise(p * 37.0);
+    col *= (0.86 + 0.28 * b1) * mix(1.0, 0.9 + 0.2 * b2, 1.0 - smoothstep(0.4, 1.4, fwS * 0.5)) * (0.8 + 0.4 * strand);
+    ${pattern}
   }`;
 }
 
@@ -259,14 +338,15 @@ export class Herds {
     this.species = speciesIds.map((id, k) => {
       const spec = { ...SPECIES[id], ...(RECOLOR[A] || {}) };
       if (spec.glow == null) spec.glow = 0;
-      const built = buildSpecies(spec);
+      const built = buildSpecies(spec, fauna.q.level ?? 2);
       const U = fauna.uniforms;
       const uni = {
         uFTime: U.uFTime, uGlowColor: { value: new THREE.Color(spec.glow ? spec.patternColor : '#000000') },
-        uHip: { value: built.hips }, uKnee: { value: built.knees }, uNeck: { value: built.neckBase }, uTail: { value: built.tailBase },
+        uHip: { value: built.hips }, uKnee: { value: built.knees }, uFetlock: { value: built.fetlocks }, uNeckP: { value: built.neckP }, uTail: { value: built.tailBase },
         uGait: { value: new THREE.Vector4(0.42, 0.9, 0.035 * spec.legLen, 0.07) },
       };
-      const mats = rigMaterial({ roughness: 0.82 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35 });
+      const sheen = new THREE.Color(spec.back).lerp(new THREE.Color(spec.belly), 0.5).multiplyScalar(0.9);
+      const mats = rigMaterial({ roughness: 0.74 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35, sheen });
       const max = fauna.q.pick(24, 48, 80, 120);
       // no shadow-map casting (thin legs alias into dithered streaks at cascade
       // resolution): each animal gets an analytic soft contact shadow instead

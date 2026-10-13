@@ -296,9 +296,13 @@ void main(){
     float c = cos(t) * f, sn = sin(t) * f;
     sx += w.x * ka * c; sz += w.y * ka * c;
     sy += uChop * ka * sn;
-    jxx += uChop * ka * sn * w.x * w.x;
-    jzz += uChop * ka * sn * w.y * w.y;
-    jxz += uChop * ka * sn * w.x * w.y;
+    // whitecaps live on the crests of the dominant wind sea, not on every
+    // capillary fold: the fold (Jacobian) counts the longer two thirds only
+    if (i < NW * 2 / 3) {
+      jxx += uChop * ka * sn * w.x * w.x;
+      jzz += uChop * ka * sn * w.y * w.y;
+      jxz += uChop * ka * sn * w.x * w.y;
+    }
     hgt += w.w * shoal * sin(t) * f;
   }
   float J = (1.0 - jxx) * (1.0 - jzz) - jxz * jxz;
@@ -584,11 +588,17 @@ void main(){
   vec3 bedLight = uBed * Es * sunUp * Tr * Tr * caus * 0.9;
 
   // foam: Jacobian crests, surf lines, swash edge
-  float fJ = smoothstep(uFoam, uFoam - 0.45, J);
+  float fJ = smoothstep(uFoam + 0.1, uFoam - 0.35, J);
+  float fJw = smoothstep(uFoam + 0.35, uFoam - 0.1, J);
   vec2 fuv = vXZ / 4.3 + vec2(uTime * 0.02, 0.0);
   float ft = texture2D(tFoam, fuv).r;
   float ft2 = texture2D(tDetail, vXZ / 13.0 - vec2(0.0, uTime * 0.012)).a;
-  float crestFoam = fJ * smoothstep(0.15, 0.55, ft * (0.6 + 0.8 * ft2)) * mix(0.55, 1.3, gk);
+  // whitecaps come in clusters (gusts, wave groups): most of the sea is clean
+  float cluster = smoothstep(0.38, 0.78, texture2D(tDetail, vXZ / 230.0 + vec2(uTime * 0.0031, 0.21)).a * 0.7
+                                       + texture2D(tDetail, vXZ / 71.0 + vec2(0.43, -uTime * 0.002)).a * 0.3);
+  // a milky bubble patch under a lacy edge — never a field of identical dashes
+  float crestFoam = (fJ * smoothstep(0.2, 0.6, ft * (0.6 + 0.8 * ft2)) + fJ * fJ * 0.3 * ft2)
+                  * mix(0.25, 1.25, cluster) * mix(0.55, 1.3, gk);
   // shore foam follows the distance to the waterline (m), not the depth: on a
   // flat beach a depth band would smear foam over tens of metres
   float sd = shoreDist(vXZ, depth);
@@ -600,7 +610,8 @@ void main(){
   float shoreFoam = clamp((band + wash) * smoothstep(0.28, 0.7, ft + 0.2 * ft2 - 0.05), 0.0, 1.0);
   // wind-blown streaks: crest foam smeared downwind
   float st = texture2D(tDetail, vec2(pw.x / 60.0 - uDetail.w * 0.004, pw.y / 5.5)).a;
-  float streak = smoothstep(0.68, 0.86, st) * smoothstep(0.3, 0.7, ft) * 0.35 * smoothstep(0.85, 1.3, uWaveScale) * smoothstep(3.0, 20.0, depth);
+  float streak = smoothstep(0.68, 0.86, st) * smoothstep(0.3, 0.7, ft) * 0.3 * smoothstep(0.85, 1.3, uWaveScale) * smoothstep(3.0, 20.0, depth)
+               * fJw * cluster;
   // breakers: a bright lip on the pitching crest, whitewater rolling behind it, lacy residue
   float lace = smoothstep(0.25, 0.75, ft * (0.55 + 0.9 * ft2));
   float ft3 = texture2D(tFoam, vXZ / 2.1 + vec2(0.0, uTime * 0.05)).r;

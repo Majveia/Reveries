@@ -58,7 +58,7 @@ void main() {
 `;
 const JELLY_FRAG = /* glsl */ `
 uniform vec3 uKeyColor; uniform vec3 uKeyDir; uniform vec3 uSky; uniform vec3 uGround;
-uniform float uNight; uniform vec3 uGlowA; uniform vec3 uGlowB;
+uniform float uNight; uniform vec3 uGlowA; uniform vec3 uGlowB; uniform float uFTime;
 varying vec3 vN; varying vec3 vW; varying vec4 vRig; varying float vPulse; varying vec3 vCol; varying float vGlowI;
 void main() {
   vec3 V = normalize(cameraPosition - vW);
@@ -70,29 +70,30 @@ void main() {
   vec3 up = normalize(vW);
   float wrap = max(0.0, (dot(N, L) + 0.6) / 1.6);
   float trans = pow(max(0.0, dot(-V, L)), 4.0); // looking toward the sun through the bell
-  vec3 base = mix(vec3(1.0), vCol, 0.3);
-  vec3 gcol = vCol * 1.6;
+  vec3 base = mix(vec3(1.0), vCol, 0.45);
+  vec3 gcol = vCol * vCol * 2.6 + vCol * 0.4; // saturated living light
   vec3 amb = mix(uGround, uSky, dot(N, up) * 0.5 + 0.5);
-  vec3 lit = base * (uKeyColor * (wrap * 0.1 + trans * 0.35) + amb * 0.35) * (1.0 - 0.75 * uNight);
-  float glowI = vGlowI * (0.04 + 1.0 * uNight);
+  // the body is nearly clear glass; at night it all but vanishes so the light inside carries the form
+  float dayK = 1.0 - 0.95 * uNight;
+  vec3 lit = base * (uKeyColor * (wrap * 0.12 + trans * 0.5) + amb * 0.22 * dayK) * dayK;
+  float glowI = vGlowI * (0.1 + 5.0 * uNight);
   vec3 glow = vec3(0.0);
   float alpha;
   if (vRig.x < 0.5) {
-    // bell: radial veins + rim band glow
-    float ang = atan(vW.x, vW.z);
+    // bell: radial veins, a luminous scalloped rim, and a soft lantern core seen through the glass
     float va = sin(vRig.z * 8.0); float vfw = max(fwidth(va), 1e-3);
-    float veins = (1.0 - smoothstep(0.08 - vfw, 0.08 + vfw, abs(va))) * smoothstep(0.05, 0.4, vRig.y);
-    float rimBand = smoothstep(0.25, 0.0, abs(vRig.y - 0.92));
-    glow = mix(gcol, mix(uGlowA, uGlowB, 0.5) * 0.5, vRig.y * 0.5) * (0.06 + veins * 0.5 + rimBand * 1.5 + vRig.w * 0.35) * (0.5 + 0.9 * vPulse);
-    alpha = clamp(0.05 + fres * 0.45 + vRig.w * 0.06 + rimBand * 0.25 + veins * 0.15, 0.0, 0.75);
-    lit += base * uSky * fres * 0.35;
+    float veins = (1.0 - smoothstep(0.06 - vfw, 0.06 + vfw, abs(va))) * smoothstep(0.08, 0.5, vRig.y);
+    float rimBand = smoothstep(0.16, 0.0, abs(vRig.y - 0.95));
+    float coreL = vRig.w * pow(ndv, 1.5);
+    glow = gcol * (0.03 + veins * 0.55 + rimBand * 1.8 + coreL * 1.4) * (0.55 + 0.9 * vPulse) + mix(uGlowA, uGlowB, vRig.y) * fres * 0.12;
+    alpha = clamp(0.015 + fres * 0.5 + rimBand * 0.3 + veins * 0.08 + vRig.w * 0.03, 0.0, 0.7);
+    lit += base * uSky * fres * 0.3 * dayK;
   } else {
-    float bead = smoothstep(0.85, 1.0, sin(vRig.y * (vRig.x > 1.5 ? 14.0 : 40.0) - vPulse * 4.0) * 0.5 + 0.5);
-    glow = gcol * (0.15 + bead * 1.2) * (1.0 - vRig.y * 0.7);
-    alpha = (vRig.x > 1.5 ? 0.22 : 0.4) * (0.6 + bead * 0.4) * (1.0 - smoothstep(0.6, 1.0, vRig.y));
+    float bead = smoothstep(0.82, 1.0, sin(vRig.y * (vRig.x > 1.5 ? 14.0 : 34.0) - vPulse * 4.0 - uFTime * 0.8) * 0.5 + 0.5);
+    glow = gcol * (0.12 + bead * 1.6) * (1.0 - vRig.y * 0.6);
+    alpha = (vRig.x > 1.5 ? 0.18 : 0.32) * (0.6 + bead * 0.4) * (1.0 - smoothstep(0.55, 1.0, vRig.y));
   }
-  vec3 col = lit + glow * glowI;
-  gl_FragColor = vec4(col, alpha);
+  gl_FragColor = vec4(lit * alpha + glow * glowI * (vRig.x < 0.5 ? 1.0 : alpha * 2.5), alpha);
 }
 `;
 
@@ -102,8 +103,8 @@ function buildJelly(rng) {
   const prof = [];
   const N = 14;
   for (let i = 0; i <= N; i++) {
-    const t = i / N, a = t * Math.PI * 0.62;
-    prof.push(new THREE.Vector2(Math.sin(a) * (1 + 0.08 * t), Math.cos(a) * 0.85 - 0.25 - t * t * 0.2));
+    const t = i / N, a = t * Math.PI * 0.5;
+    prof.push(new THREE.Vector2(Math.sin(a) * (1 + 0.25 * t ** 4) * 0.95, Math.cos(a) * 0.68 - 0.18 - 0.12 * t ** 6));
   }
   const bell = new THREE.LatheGeometry(prof, 28);
   bell.deleteAttribute('uv');
@@ -121,7 +122,7 @@ function buildJelly(rng) {
   });
   parts.push(bell);
   // inner glowing core
-  const core = blob(0.42, 0.3, 0.42, null, 12, 8); core.translate(0, 0.15, 0);
+  const core = blob(0.3, 0.22, 0.3, null, 12, 8); core.translate(0, 0.12, 0);
   parts.push(paint(core, () => [1, 1, 1], (p) => [0, 0.2, Math.atan2(p.x, p.z), 1]));
   // ribbon tentacles and frilly oral arms
   const ribbon = (x0, z0, len, width, kind, ang) => {
@@ -146,7 +147,7 @@ function buildJelly(rng) {
   const nt = 12;
   for (let i = 0; i < nt; i++) {
     const a = (i / nt) * TAU + rng.range(-0.1, 0.1);
-    parts.push(ribbon(Math.sin(a) * 0.85, Math.cos(a) * 0.85, rng.range(2.6, 4.2), 0.025, 1, a));
+    parts.push(ribbon(Math.sin(a) * 0.9, Math.cos(a) * 0.9, rng.range(4.0, 6.5), 0.013, 1, a));
   }
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * TAU + 0.4;
@@ -207,7 +208,7 @@ function buildWhale(style) {
     return c.map((x) => x * v);
   };
   const glowFn = style.glow ? (p, n) => smooth(0.008, 0.0, Math.abs(p.y - 0.01 - 0.02 * Math.sin(p.z * 18))) * smooth(0.3, 0.7, Math.abs(n.x)) * (0.5 + 0.5 * smooth(0.7, 0.9, vnoise(p.z * 60, 0, 0))) + smooth(0.8, 0.85, vnoise(p.x * 120, p.y * 120, p.z * 50)) * 0.8 : null;
-  parts.push(paint(body, col, (p) => [clamp(0.5 - p.z, 0, 1), 0, 0, 0], glowFn));
+  parts.push(paint(body, col, (p) => [clamp(0.5 - p.z, 0, 1), 0, 0, 0], null));
   // eye
   for (const s of [-1, 1]) {
     const e = blob(0.006, 0.006, 0.006, null, 6, 4); e.translate(s * 0.084, -0.014, 0.36);
@@ -225,25 +226,40 @@ function buildWhale(style) {
     fin.rotateY(s * (Math.PI / 2 + 0.45));       // reach out sideways, swept back
     fin.rotateZ(s * -0.52);                      // droop
     fin.translate(s * 0.075, -0.04, 0.21);
-    parts.push(paint(fin, (p, n) => col(p, V(0, n.y > 0 ? 0.6 : -0.8, 0)), (p) => [clamp(0.5 - p.z, 0, 1), s, clamp((Math.abs(p.x) - 0.07) / 0.3, 0, 1) * 1.6, -0.04], glowFn));
+    parts.push(paint(fin, (p, n) => col(p, V(0, n.y > 0 ? 0.6 : -0.8, 0)), (p) => [clamp(0.5 - p.z, 0, 1), s, clamp((Math.abs(p.x) - 0.07) / 0.3, 0, 1) * 1.6, -0.04], null));
   }
   // flukes
   const fl = [[0, -0.42], [0.07, -0.48], [0.18, -0.57], [0.15, -0.6], [0.06, -0.555], [0, -0.535], [-0.06, -0.555], [-0.15, -0.6], [-0.18, -0.57], [-0.07, -0.48]];
-  const flg = membrane(fl, 0.008);
-  parts.push(paint(flg, (p) => col(p, V(0, 1, 0)), (p) => [clamp(0.5 - p.z, 0, 1), 0, 0, 0], glowFn));
-  // dorsal ridge bumps
-  for (let i = 0; i < 5; i++) {
-    const z = -0.1 - i * 0.06;
-    const k = blob(0.006, 0.012, 0.02, null, 6, 4); k.translate(0, 0.075 * (1 - i * 0.12), z);
-    parts.push(paint(k, () => [back.r * 0.7, back.g * 0.7, back.b * 0.7], () => [clamp(0.5 - z, 0, 1), 0, 0, 0]));
-  }
+  const flg = membrane(fl, 0.022);
+  parts.push(paint(flg, (p) => col(p, V(0, 1, 0)), (p) => [clamp(0.5 - p.z, 0, 1), 0, 0, 0], null));
   const g = mergeParts(parts);
   g.computeBoundingSphere();
   return g;
 }
 
+/** Per-pixel hide: mottled scars, wet ventral pleats, and (luminous worlds) a designed photophore lateral line. */
+function whaleSurface(style) {
+  const g = style.glow ? 1 : 0;
+  return `void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
+    if (glow > 0.5) return; // eyes
+    float m1 = faNoise(p * vec3(40.0, 40.0, 16.0)), m2 = faNoise(p * vec3(160.0, 160.0, 60.0));
+    col *= 0.86 + 0.22 * m1 + 0.12 * (m2 - 0.5);
+    // pale healed scars raked along the flanks
+    float sc = faLine(fract(p.z * 9.0 + p.y * 3.0 + m1 * 0.6) - 0.5, 0.025) * smoothstep(0.72, 0.8, faNoise(p * vec3(12.0, 12.0, 4.0))) * smoothstep(-0.2, 0.4, n.y);
+    col = mix(col, col * 1.6 + 0.04, sc * 0.5);
+    // throat pleats, per pixel (vertex density cannot hold them)
+    float pl = faLine(fract(p.x * 55.0) - 0.5, 0.16) * smoothstep(-0.3, -0.7, n.y) * smoothstep(-0.05, 0.08, p.z) * smoothstep(0.42, 0.3, p.z);
+    col *= 1.0 - pl * 0.35;
+    glow = 0.0;
+    ${g ? `// photophores: evenly spaced lights along the lateral line + softer pleat lines on the belly
+    float lat = abs(p.y - 0.01 - 0.02 * sin(p.z * 18.0));
+    float dots = faLine(fract(p.z * 50.0) - 0.5, 0.2) * faLine(lat, 0.005) * smoothstep(-0.38, -0.3, p.z) * smoothstep(0.42, 0.36, p.z);
+    glow = dots * 1.4 + pl * 0.25 + faLine(lat, 0.0015) * 0.25 * smoothstep(-0.38, -0.3, p.z);` : ''}
+  }`;
+}
+
 const WHALE_STYLE = {
-  ghibli: { back: '#3e4f66', belly: '#e6e2d8', mark: '#f4efe4' },
+  ghibli: { back: '#2a3a52', belly: '#e2ddd2', mark: '#f4efe4' },
   moebius: { back: '#d77a6a', belly: '#fde6d2', mark: '#3fb0a6' },
   pandora: { back: '#1a2648', belly: '#8ab0c8', mark: '#9ad8ff', glow: '#38f6ff' },
   wukong: { back: '#3a3c3e', belly: '#cfcbc2', mark: '#e8e2d4' },
@@ -269,7 +285,8 @@ export class Floaters {
         uSky: { value: L?.skyColor || new THREE.Color(0.3, 0.4, 0.6) }, uGround: { value: L?.groundColor || new THREE.Color(0.1, 0.1, 0.1) },
         uNight: { value: 0 }, uGlowA: { value: new THREE.Color(glow[0]).multiplyScalar(2.2) }, uGlowB: { value: new THREE.Color(glow[1]).multiplyScalar(2.2) },
       };
-      const mat = new THREE.ShaderMaterial({ vertexShader: JELLY_VERT, fragmentShader: JELLY_FRAG, uniforms: this.jU, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+      const mat = new THREE.ShaderMaterial({ vertexShader: JELLY_VERT, fragmentShader: JELLY_FRAG, uniforms: this.jU, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor });
       this.jMax = q.pick(24, 40, 64, 90);
       const anim = new THREE.InstancedBufferAttribute(new Float32Array(this.jMax * 4), 4); anim.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute('aAnim', anim);
@@ -286,7 +303,8 @@ export class Floaters {
       const style = WHALE_STYLE[A] || WHALE_STYLE.default;
       const geo = buildWhale(style);
       const uni = { uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color(style.glow || '#000000') }, uLen: { value: 1 } };
-      const mats = rigMaterial({ roughness: 0.62 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.22, aoMin: 0.6 });
+      // living wet hide: a rough skin under a thin clear coat (no brushed-metal sheen)
+      const mats = rigMaterial({ roughness: 0.55 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.22, aoMin: 0.6, surface: whaleSurface(style), physical: { clearcoat: 0.45, clearcoatRoughness: 0.35 } });
       mats.mat.side = THREE.DoubleSide;
       const { mesh, anim } = makeInstanced(geo, mats, 8, { shadow: true });
       mesh.receiveShadow = true;

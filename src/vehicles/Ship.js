@@ -67,8 +67,8 @@ export class Ship {
     this._coreS = new THREE.Color(0.75, 0.9, 1.0); this._edgeS = new THREE.Color(0.25, 0.45, 1.0);
     this.shadow = new BlobShadow();
     this._sprayAcc = 0;
-    this.vortex = model.wingtips.map(() => new Trail(26, { width: 0.05, grow: 16, color: [0.9, 0.94, 1.0], minStep: 2, erode: 0.8 }));
-    this.contrail = new Trail(96, { width: 1.4, color: [1, 1, 1], minStep: 6, additive: false });
+    this.vortex = model.wingtips.map(() => new Trail(16, { width: 0.05, grow: 14, color: [0.9, 0.94, 1.0], minStep: 1.8, erode: 0.9, curl: 0.35, fadeK: 2.6 }));
+    this.contrail = new Trail(96, { width: 1.4, color: [1, 1, 1], minStep: 6, additive: false, curl: 0.25, fadeK: 1.2 });
     this.plasma = new Plasma(6.5);
     this.object3d.add(this.plasma.mesh);
     this._wing = [new THREE.Vector3(), new THREE.Vector3()];

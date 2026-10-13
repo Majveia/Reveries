@@ -9,24 +9,26 @@ import { FULLSCREEN_VERT } from '../../core/glsl/common.js';
 
 const PALETTE_GLSL = /* glsl */ `
 vec3 webPalette(float h){
-  // linear-light HDR stops: near-black indigo sheets → violet → soft cyan filaments
-  // → warm white crossover → amber groups → white-gold cluster cores
+  // linear-light HDR stops: near-black indigo veil → magenta-violet sheets → electric blue skirt →
+  // saturated cyan filament spines → pale crossover → amber groups → white-gold cluster cores.
+  // Stops sit low enough that the mass-weighted heat of an ordinary filament (≈0.45-0.6) lands in
+  // CYAN, not in blue: three distinct hues, not a single powder-blue.
   vec3 c0 = vec3(0.004, 0.002, 0.012);   // void
-  vec3 c1 = vec3(0.030, 0.010, 0.120);   // faint sheet: deep indigo
-  vec3 c2 = vec3(0.200, 0.090, 0.640);   // violet-blue sheet / thin filament
-  vec3 c3 = vec3(0.060, 0.300, 0.900);   // deep electric blue filament skirt
-  vec3 c4 = vec3(0.110, 0.720, 1.050);   // electric cyan filament spine (stays saturated)
-  vec3 c45 = vec3(0.900, 0.960, 1.000);  // white crossover (where filaments feed a node)
-  vec3 c5 = vec3(1.350, 0.620, 0.180);   // amber group
-  vec3 c6 = vec3(1.600, 1.150, 0.560);   // white-gold cluster core
+  vec3 c1 = vec3(0.045, 0.010, 0.140);   // faint sheet: deep indigo
+  vec3 c2 = vec3(0.300, 0.070, 0.680);   // magenta-violet sheet / thin filament
+  vec3 c3 = vec3(0.060, 0.260, 1.000);   // electric blue filament skirt
+  vec3 c4 = vec3(0.050, 0.820, 1.000);   // electric cyan filament spine (saturated)
+  vec3 c45 = vec3(0.700, 0.980, 0.950);  // pale aqua crossover (where filaments feed a node)
+  vec3 c5 = vec3(1.450, 0.600, 0.150);   // amber group
+  vec3 c6 = vec3(1.650, 1.120, 0.520);   // white-gold cluster core
   h = clamp(h, 0.0, 1.2);
-  if (h < 0.18) return mix(c0, c1, h / 0.18);
-  if (h < 0.40) return mix(c1, c2, (h - 0.18) / 0.22);   // a wide dim violet veil band
-  if (h < 0.52) return mix(c2, c3, (h - 0.40) / 0.12);
-  if (h < 0.64) return mix(c3, c4, (h - 0.52) / 0.12);
-  if (h < 0.76) return mix(c4, c45, smoothstep(0.66, 0.76, h));
-  if (h < 0.86) return mix(c45, c5, smoothstep(0.76, 0.86, h));
-  return mix(c5, c6, clamp((h - 0.86) / 0.22, 0.0, 1.0));
+  if (h < 0.16) return mix(c0, c1, h / 0.16);
+  if (h < 0.34) return mix(c1, c2, (h - 0.16) / 0.18);   // a wide violet veil band
+  if (h < 0.44) return mix(c2, c3, (h - 0.34) / 0.10);
+  if (h < 0.54) return mix(c3, c4, (h - 0.44) / 0.10);
+  if (h < 0.70) return mix(c4, c45, smoothstep(0.62, 0.70, h));
+  if (h < 0.78) return mix(c45, c5, smoothstep(0.70, 0.78, h));
+  return mix(c5, c6, clamp((h - 0.78) / 0.24, 0.0, 1.0));
 }
 // the young universe (z ≳ 3): a delicate indigo-teal lattice whose first knots burn blue-white
 vec3 earlyPalette(float h){
@@ -97,7 +99,17 @@ void main(){
       float stretch = max(max(length(e1), length(e2)), length(e3)) / sp0;
       float rhoTet = sp0 * sp0 * sp0 / max(abs(dot(e1, cross(e2, e3))), 1e-4 * sp0 * sp0 * sp0);
       heat = min(heat, 0.2 + 0.31 * uContrastK * log(max(rhoTet, 0.05)) / log(10.0) + 0.12);
-      if (stretch > 4.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
+      // After shell crossing (collapsed halos, torn or inverted cells) the Lagrangian tetrahedron no
+      // longer maps the sheet: interpolating it paints the cell's convex hull as a flat, faceted
+      // polygon. There the sub-tracer instead joins its parent's virialised swarm — an isotropic,
+      // centrally concentrated cloud (mass is conserved, the halo stays round and cuspy).
+      float tetVol = dot(e1, cross(e2, e3));
+      if (stretch > 2.2 || tetVol <= 0.0 || s.w > 0.62) {
+        d = x - uCenter; d -= uL * floor(d / uL + 0.5);
+        vec3 gj = vec3(r.x - 0.5, r.y - 0.5, r.z - 0.5);
+        d += normalize(gj + 1e-4) * (0.15 + 0.85 * r.w * r.w) * sp0 * 0.45;
+        heat = s.w;
+      }
     }
   } else if (sub > 0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
   vec3 ad = abs(d) / (0.5 * uL);
@@ -197,7 +209,7 @@ void main(){
   float u = float((hi >> 8) & 1023u) / 1023.0;
   float thr = mix(0.28, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
   // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
-  float lum = smoothstep(thr, thr + 0.32, heat) * (0.6 + 3.4 * u * u * u * u);
+  float u3 = u * u * u; float lum = smoothstep(thr, thr + 0.32, heat) * (0.16 + 0.5 * u * u + 4.0 * u3 * u3);
   if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 150.0 / sqrt(max(dist, 5.0));   // pin-sharp at every distance
@@ -264,22 +276,37 @@ const COMPOSITE_FRAG = /* glsl */ `
 uniform sampler2D tInput; uniform sampler2D tAccum; uniform sampler2D tHalf; uniform sampler2D tQuarter;
 uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
 uniform float uSmooth; uniform float uSharpA; uniform float uEarly; uniform float uWarm; uniform float uCap; uniform float uVeil;
+uniform vec2 uHalfSize; uniform vec2 uQuarterSize; uniform float uEarlyLattice;
 varying vec2 vUv;
 ${PALETTE_GLSL}
+// cubic B-spline reconstruction in 4 bilinear taps: thresholding a bilinearly magnified low-res
+// level draws diamond/polygon iso-contours (faceted blobs); the B-spline keeps them round and soft
+vec4 texBicubic(sampler2D t, vec2 uv, vec2 size){
+  vec2 st = uv * size - 0.5; vec2 i = floor(st); vec2 f = st - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0, w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+  vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1, g1 = w2 + w3;
+  vec2 h0 = (w1 / g0 - 1.0 + i + 0.5) / size, h1 = (w3 / g1 + 1.0 + i + 0.5) / size;
+  return g0.y * (g0.x * texture2D(t, vec2(h0.x, h0.y)) + g1.x * texture2D(t, vec2(h1.x, h0.y)))
+       + g1.y * (g0.x * texture2D(t, vec2(h0.x, h1.y)) + g1.x * texture2D(t, vec2(h1.x, h1.y)));
+}
 float ignC(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 void main(){
   vec3 base = texture2D(tInput, vUv).rgb;
   vec4 f = texture2D(tAccum, vUv);
-  vec4 h = texture2D(tHalf, vUv);
-  vec4 q = texture2D(tQuarter, vUv);
+  vec4 h = texBicubic(tHalf, vUv, uHalfSize);
+  vec4 q = texBicubic(tQuarter, vUv, uQuarterSize);
   // Adaptive (SPH-like) smoothing driven by the SMOOTHED local sample count: where only a few sprites
   // overlap — sheets, filament skirts, the sparse swarms of collapsed halos — the tracers are
   // integrated over the wide Gaussian; well-sampled pixels keep the sharp kernel. The weights come
   // from blurred fields, so the transition is a gradient, never a dissolve/dither pattern.
   float cq = q.b * 1000.0, ch = h.b * 1000.0;
   float sA = uSharpA * uSmooth;
-  float kH = smoothstep(0.05 * sA, 0.35 * sA, cq);
-  float kF = smoothstep(0.4 * sA, 2.0 * sA, ch);
+  // (full resolution only where a pixel holds several samples: Poisson noise of 1-2 sprites per
+  // pixel is what read as stipple/dither in the filament skirts)
+  float kH = smoothstep(0.08 * sA, 0.5 * sA, cq);
+  float kF = smoothstep(0.7 * sA, 3.2 * sA, ch);
   vec4 acc = mix(q, mix(h, f, kF), kH);
   // heat from the smoothed moments (numerator and denominator share the kernel)
   float A = min(acc.a, 65000.0) * 10000.0;
@@ -295,6 +322,13 @@ void main(){
   float xf = max(x - uFloor, 0.0);
   // + an unbounded power-law term for collapsed cores: a cusp that keeps rising toward the centre
   float I = uGain * xf * xf / (xf + 0.6) + uHi * (1.0 - exp(-A / (uA0 * 60.0))) + uHi * 3.0 * pow(max(A / (uA0 * 60.0) - 0.15, 0.0), 1.05);
+  // The young universe: its projected COLUMN contrast is tiny (the whole box averages out into
+  // blobs), but each pixel's mass-weighted heat still measures the 3-D overdensity of the matter it
+  // integrates. Driving brightness by that heat (gated by coverage, so voids stay black) draws the
+  // proto-web's connected lattice — the same skeleton the z=0 web will grow from.
+  float cov = A / (A + uA0 * 0.6);
+  float Ie = uGain * 2.2 * cov * pow(smoothstep(0.17, 0.44, hm), 1.6) + uGain * 0.35 * cov * cov;
+  I = mix(I, Ie, uEarly * uEarlyLattice);
   vec3 w = C * I * uExposure;
   // WHIM veil: a faint indigo-violet sheath from the wide (quarter-res) column around the web,
   // with its own floor so voids stay exactly black
@@ -365,7 +399,7 @@ export class WebRenderer {
     const self = this;
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tInput: { value: null }, tAccum: { value: null }, tHalf: { value: null }, tQuarter: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uSmooth: { value: 1 }, uSharpA: { value: 4 }, uEarly: { value: 0 }, uWarm: { value: 0 }, uCap: { value: 0.9 }, uVeil: { value: 0.5 } },
+      uniforms: { tInput: { value: null }, tAccum: { value: null }, tHalf: { value: null }, tQuarter: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uSmooth: { value: 1 }, uSharpA: { value: 4 }, uEarly: { value: 0 }, uWarm: { value: 0 }, uCap: { value: 0.9 }, uVeil: { value: 0.5 }, uHalfSize: { value: new THREE.Vector2(1, 1) }, uEarlyLattice: { value: 0 }, uQuarterSize: { value: new THREE.Vector2(1, 1) } },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
     this.downMat = new THREE.ShaderMaterial({ vertexShader: FULLSCREEN_VERT, fragmentShader: DOWN_FRAG, uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false, blending: THREE.NoBlending });
@@ -378,8 +412,9 @@ export class WebRenderer {
         u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe; u.uFloor.value = self.params.floor;
         if (self.accRT) self._pyramid(ctx);
         u.tHalf.value = self.halfRT?.texture || null; u.tQuarter.value = self.quarterRT?.texture || null;
+        if (self.halfRT) { u.uHalfSize.value.set(self.halfRT.width, self.halfRT.height); u.uQuarterSize.value.set(self.quarterRT.width, self.quarterRT.height); }
         u.uSmooth.value = self.params.smooth / 3.2; u.uSharpA.value = self.params.sharpA;
-        u.uEarly.value = self.params.early; u.uWarm.value = self.params.warm; u.uCap.value = self.params.cap ?? 0.9; u.uVeil.value = self.params.veil ?? 0.5;
+        u.uEarly.value = self.params.early; u.uWarm.value = self.params.warm; u.uCap.value = self.params.cap ?? 0.9; u.uVeil.value = self.params.veil ?? 0.5; u.uEarlyLattice.value = self.params.lattice ?? 0;
         ctx.fullscreen(self.compMat, output);
       },
     };

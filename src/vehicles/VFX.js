@@ -109,7 +109,7 @@ export class Particles {
     g.setAttribute('aMeta', this.aMeta);
     g.setAttribute('aCol', this.aCol);
     this.uniforms = {
-      uTime: { value: 0 }, uScale: { value: 500 }, uUp: { value: new THREE.Vector3(0, 1, 0) },
+      uTime: { value: 0 }, uScale: { value: 500 }, uMaxPx: { value: 160 }, uUp: { value: new THREE.Vector3(0, 1, 0) },
       uLight: { value: new THREE.Color(1, 1, 1) }, uAmb: { value: new THREE.Color(0.3, 0.3, 0.35) },
     };
     this.material = new THREE.ShaderMaterial({
@@ -117,7 +117,7 @@ export class Particles {
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       vertexShader: /* glsl */`
         attribute vec3 aVel; attribute vec4 aMeta; attribute vec4 aCol;
-        uniform float uTime, uScale; uniform vec3 uUp;
+        uniform float uTime, uScale, uMaxPx; uniform vec3 uUp;
         varying vec4 vC; varying float vT;
         void main(){
           float age = uTime - aMeta.x;
@@ -131,8 +131,9 @@ export class Particles {
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           float size = mix(aMeta.z, aMeta.w, sqrt(t));
-          gl_PointSize = clamp(size * uScale / max(0.1, -mv.z), 0.0, 256.0);
-          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (1.0 - t);
+          gl_PointSize = clamp(size * uScale / max(0.1, -mv.z), 0.0, uMaxPx);
+          // near-lens fade: no out-of-focus blobs sweeping past the camera
+          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (1.0 - t) * smoothstep(1.5, 6.0, -mv.z);
           vC = vec4(aCol.rgb, abs(aCol.w) * fade); vT = t;
         }`,
       fragmentShader: /* glsl */`
@@ -166,6 +167,7 @@ export class Particles {
   update(t, camera, height) {
     this.uniforms.uTime.value = t;
     this.uniforms.uScale.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+    this.uniforms.uMaxPx.value = Math.min(256, height * 0.15);
     if (this._dirty) { this.aPos.needsUpdate = this.aVel.needsUpdate = this.aMeta.needsUpdate = this.aCol.needsUpdate = true; this._dirty = false; }
   }
   dispose() { this.points.geometry.dispose(); this.material.dispose(); }
@@ -173,7 +175,7 @@ export class Particles {
 
 // ------------------------------------------------------------------------------------------
 export class Trail {
-  constructor(n = 64, { width = 0.4, color = [1, 1, 1], additive = true, minStep = 2, grow = 2.4, erode = 0.35 } = {}) {
+  constructor(n = 64, { width = 0.4, color = [1, 1, 1], additive = true, minStep = 2, grow = 2.4, erode = 0.35, curl = 0, fadeK = 0 } = {}) {
     this.erode = erode;
     this.n = n; this.minStep = minStep;
     this.pts = Array.from({ length: n }, () => new THREE.Vector3());
@@ -187,33 +189,42 @@ export class Trail {
     const idx = [];
     for (let i = 0; i < n - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     g.setIndex(idx);
-    this.uniforms = { uColor: { value: new THREE.Color(...color) }, uWidth: { value: width }, uGrow: { value: grow }, uErode: { value: erode }, uTime: { value: 0 }, uLight: { value: new THREE.Color(1, 1, 1) } };
+    this.uniforms = { uColor: { value: new THREE.Color(...color) }, uWidth: { value: width }, uGrow: { value: grow }, uErode: { value: erode }, uTime: { value: 0 }, uLight: { value: new THREE.Color(1, 1, 1) }, uCurl: { value: curl }, uFadeK: { value: fadeK } };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       vertexShader: /* glsl */`
         attribute vec3 aNext; attribute vec3 aSide;
-        uniform float uWidth, uGrow;
+        uniform float uWidth, uGrow, uCurl, uTime;
         varying float vU; varying float vS; varying float vA;
         void main(){
           vec4 a = modelViewMatrix*vec4(position,1.0);
           vec4 b = modelViewMatrix*vec4(aNext,1.0);
           vec3 d = b.xyz - a.xyz; if (dot(d,d) < 1e-8) d = vec3(0.0,0.0,1.0);
           vec3 side = normalize(cross(d, a.xyz));
-          float w = uWidth * (0.6 + aSide.y*uGrow);
+          // vortex core: a needle at the tip that rolls up into a widening corkscrew as it ages
+          float u = aSide.y;
+          float w = uWidth * (0.6 + u*uGrow) * (uCurl > 0.0 ? smoothstep(0.0, 0.25, u) * 0.85 + 0.15 : 1.0);
+          if (uCurl > 0.0) {
+            vec3 bin = normalize(cross(side, normalize(d)));
+            float ph = u * 23.0 - uTime * 5.0;
+            float amp = uCurl * u * u * 3.0;
+            a.xyz += (side * cos(ph) + bin * sin(ph)) * amp + side * sin(u * 7.0 + 1.3) * uCurl * u * 1.5;
+          }
           a.xyz += side * aSide.x * w;
           gl_Position = projectionMatrix*a;
           vU = aSide.y; vS = aSide.x; vA = aSide.z;
         }`,
       fragmentShader: /* glsl */`
         ${NOISE}
-        uniform vec3 uColor, uLight; uniform float uTime, uErode;
+        uniform vec3 uColor, uLight; uniform float uTime, uErode, uFadeK;
         varying float vU; varying float vS; varying float vA;
         void main(){
           float edge = exp(-vS*vS*3.2) - 0.04;
           float nn = vnoise(vec3(vU*26.0, vS*3.0, uTime*0.7)) * 0.6 + vnoise(vec3(vU*70.0, vS*7.0, uTime*1.3)) * 0.4;
           float n = mix(1.0, smoothstep(0.15 + vU*0.5, 0.9, nn + 0.35), uErode);
           float fade = smoothstep(0.0, 0.05, vU) * pow(1.0 - vU, 1.4);
+          if (uFadeK > 0.0) fade *= exp(-vU * uFadeK) * (0.55 + 0.45 * smoothstep(0.2, 0.75, nn));
           gl_FragColor = vec4(uColor*uLight, 1.0) * (max(edge, 0.0)*n*fade*vA);
         }`,
     });

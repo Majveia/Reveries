@@ -20,15 +20,23 @@ uniform float uArcR;   // spine circle radius
 uniform float uDepth;  // spine circle centre depth below ground
 uniform float uBodyLen;
 uniform float uRad;
+float wormSeg(float s, out float f, out float hv) {
+  // armour rings of varying pitch (6–14 m): integrate a hashed pitch along the body
+  float x = s * uBodyLen / 10.0;
+  float i = floor(x); hv = fract(sin(i * 12.9898) * 43758.5453);
+  f = fract(x);
+  f = clamp((f - 0.5) * (1.0 + (hv - 0.5) * 0.6) + 0.5, 0.0, 1.0);
+  return i;
+}
 float wormR(float s, float a) {
-  float segs = uBodyLen / 11.0;
-  float x = s * segs * 3.14159;
-  float hv = fract(sin(floor(s * segs) * 12.9898) * 43758.5453);
-  float ridge = smoothstep(0.2, 0.95, abs(sin(x)));
-  float prof = smoothstep(0.0, 0.15, s) * 0.7 + 0.3;
-  float maw = smoothstep(0.96, 1.0, s);
-  float lobes = 0.5 + 0.5 * cos(a * 3.0);
-  return uRad * prof * (0.86 + (0.08 + 0.08 * hv) * ridge) * (1.0 + 0.04 * (hv - 0.5)) * (1.0 + maw * (0.22 + 0.12 * lobes));
+  float f, hv; wormSeg(s, f, hv);
+  // shingled plates: each ring swells toward its leading (head-ward) edge, then steps down into the seam
+  float shingle = 0.9 + 0.1 * smoothstep(0.0, 0.85, f) - 0.07 * smoothstep(0.9, 1.0, f);
+  float prof = mix(0.5, 1.0, smoothstep(0.0, 0.55, s)) * (1.0 + 0.22 * smoothstep(0.6, 0.93, s) * (1.0 - smoothstep(0.93, 0.975, s) * 0.3));
+  float maw = smoothstep(0.965, 1.0, s);
+  float lobes = pow(0.5 + 0.5 * cos(a * 3.0), 0.6);
+  float back = 1.0 + 0.05 * max(0.0, sin(a)) * (hv - 0.3);
+  return uRad * prof * shingle * back * (1.0 + maw * (0.5 + 0.35 * lobes));
 }
 void rig(inout vec3 p, inout vec3 n) {
   float s = aRig.x;         // 0 tail .. 1 head
@@ -37,19 +45,20 @@ void rig(inout vec3 p, inout vec3 n) {
   vec3 C = vec3(0.0, -uDepth + uArcR * cos(phi), uArcR * sin(phi));
   vec3 T = vec3(0.0, -sin(phi), cos(phi));
   vec3 N = vec3(0.0, cos(phi), sin(phi));
-  // the head section rears up along the outward normal
-  float rear = smoothstep(0.82, 1.0, s);
-  C += N * rear * rear * uRad * 2.2;
-  T = normalize(T + N * rear * 0.9);
+  // the head section rears up along the outward normal, then the face turns down toward its prey
+  float rear = smoothstep(0.8, 1.0, s);
+  C += N * rear * rear * uRad * 2.6;
+  T = normalize(T + N * rear * 0.8);
   vec3 B = vec3(1.0, 0.0, 0.0);
-  float maw = smoothstep(0.965, 1.0, s);
-  float lobes = 0.5 + 0.5 * cos(a * 3.0);
+  float maw = smoothstep(0.962, 1.0, s);
+  float lobes = pow(0.5 + 0.5 * cos(a * 3.0), 0.6);
   float r = wormR(s, a);
   float ds = 0.6 / uBodyLen;
   float dr = (wormR(s + ds, a) - wormR(s - ds, a)) / 1.2;
   vec3 off = cos(a) * B + sin(a) * N;
-  p = C + off * r + T * maw * lobes * uRad * 0.25;
-  n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.3 * maw);
+  // three petal lips peel open and curl back: forward along T at the lobe centres, retracted between them
+  p = C + off * r + T * maw * (lobes * 1.1 - 0.35) * uRad * 0.55 - off * maw * maw * (1.0 - lobes) * uRad * 0.25;
+  n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.5 * maw);
 }
 `;
 
@@ -75,7 +84,7 @@ function buildWormGeo(rings, around) {
   }
   for (let i = 0; i < rings; i++) for (let j = 0; j < around; j++) {
     const a = i * (around + 1) + j, b = a + around + 1;
-    idx.push(a, b, a + 1, b, b + 1, a + 1);
+    idx.push(a, a + 1, b, b, a + 1, b + 1); // outward-facing (front = hide, back = inside the maw)
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -91,19 +100,35 @@ function buildWormGeo(rings, around) {
 
 const WORM_SURFACE = /* glsl */ `
 void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
-  float s = p.z, segs = 620.0 / 11.0;
-  float x = s * segs, ring = floor(x), f = fract(x);
+  float s = p.z;
+  float x = s * 620.0 / 10.0, ring = floor(x), f = fract(x);
   float hv = faHash(vec3(ring, 1.7, 3.1));
-  float seam = 1.0 - smoothstep(0.0, 0.1 + 0.08 * hv, min(f, 1.0 - f));
+  f = clamp((f - 0.5) * (1.0 + (hv - 0.5) * 0.6) + 0.5, 0.0, 1.0);
+  float ang = atan(p.y, p.x);
   float top = p.y * 0.5 + 0.5;
+  if (!gl_FrontFacing) {
+    // inside the maw: wet dark flesh, concentric rows of pale crystalline teeth, a furnace glow deep in the throat
+    float depth = smoothstep(1.0, 0.94, s);
+    float rowF = fract(s * 620.0 / 1.6);
+    float tooth = faLine(fract(ang * 36.0 / 6.2831853 + floor(s * 620.0 / 1.6) * 0.5) - 0.5, 0.12 * (1.0 - rowF)) * smoothstep(0.0, 0.25, rowF) * (1.0 - smoothstep(0.5, 0.8, rowF));
+    col = mix(vec3(0.06, 0.02, 0.015), vec3(0.62, 0.55, 0.44), tooth * (1.0 - depth * 0.6));
+    glow = max(glow, depth * depth * 0.9 + 0.08);
+    return;
+  }
+  float seam = 1.0 - smoothstep(0.0, 0.04 + 0.03 * hv, min(f, 1.0 - f));
   float nz = faNoise(vec3(s * 260.0, p.x * 5.0, p.y * 5.0)), nz2 = faNoise(vec3(s * 900.0, p.x * 14.0, p.y * 14.0));
-  float plate = faLine(sin(atan(p.y, p.x) * 9.0 + hv * 6.0), 0.05) * (1.0 - top);
-  vec3 hide = mix(vec3(0.075, 0.055, 0.042), vec3(0.17, 0.125, 0.085), hv) * (0.7 + 0.6 * nz2);
-  vec3 sand = vec3(0.52, 0.36, 0.2) * (0.8 + 0.4 * nz);
-  float crust = smoothstep(0.5, 0.9, top + (nz - 0.5) * 0.8 + (f - 0.5) * 0.3) * (1.0 - seam);
-  vec3 c = mix(hide, sand, crust);
-  c *= (1.0 - 0.8 * seam) * (1.0 - 0.45 * plate);
-  col = mix(c, col, smoothstep(0.972, 0.99, s));
+  float nz3 = faNoise(vec3(s * 2400.0, p.x * 40.0, p.y * 40.0));
+  // longitudinal plate cracks on the flanks
+  float plate = faLine(sin(ang * 7.0 + hv * 6.0), 0.04) * smoothstep(0.85, 0.3, top);
+  vec3 hide = mix(vec3(0.07, 0.052, 0.04), vec3(0.15, 0.11, 0.075), hv) * (0.7 + 0.45 * nz2) * (0.85 + 0.3 * nz3);
+  // dust settles on the upper armour (soft, uniform), sand packs into the seams (bright, granular)
+  vec3 dust = vec3(0.36, 0.26, 0.16) * (0.85 + 0.3 * nz);
+  vec3 sand = vec3(0.42, 0.3, 0.18) * (0.8 + 0.4 * nz3);
+  float dusty = smoothstep(0.55, 1.0, top) * (0.15 + 0.35 * nz) * smoothstep(0.2, 0.9, f);
+  vec3 c = mix(hide, dust, dusty);
+  c = mix(c, sand, seam * (0.35 + 0.35 * top));
+  c *= 1.0 - 0.4 * plate;
+  col = c; glow = 0.0;
 }
 `;
 
@@ -115,7 +140,7 @@ uniform float uFTime; uniform float uScale; uniform float uOn0; uniform float uO
 uniform float uHead; uniform float uArcR; uniform float uDepth; uniform float uBodyLen; uniform float uRad;
 varying vec2 vUv; varying float vA; varying float vH;
 void main() {
-  vec3 c; float size;
+  vec3 c; float size; float vStretch = 1.0;
   if (aSeed.w < 0.55) {
     // eruption clouds where the body breaks the surface
     float which = step(0.275, aSeed.w);
@@ -159,12 +184,13 @@ void main() {
     c.y -= 4.9 * age * age * life * life * 0.35;
     float above = c.y;
     size = uScale * (0.15 + age * 0.5);
-    vA = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.6, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 10.0, above) * 0.75;
+    vStretch = 1.5 + age * 1.3;
+    vA = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.6, 1.0, age)) * step(lo, hi) * smoothstep(-5.0, 10.0, above) * 0.45;
   }
   vH = clamp(c.y / (uScale * 3.0), 0.0, 1.0);
   vUv = position.xy;
   vec4 mv = modelViewMatrix * vec4(c, 1.0);
-  mv.xy += position.xy * size;
+  mv.xy += position.xy * size * vec2(1.0 / sqrt(vStretch), vStretch);
   gl_Position = projectionMatrix * mv;
 }
 `;
@@ -278,7 +304,7 @@ export class Giants {
       mesh.customDepthMaterial = mats.depth; mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
       const group = new THREE.Group(); group.add(mesh);
       // dust
-      const n = fauna.q.pick(160, 260, 380, 500);
+      const n = fauna.q.pick(260, 480, 760, 1000);
       const dg = new THREE.InstancedBufferGeometry();
       dg.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
       dg.setIndex([0, 1, 2, 0, 2, 3]);
@@ -288,7 +314,7 @@ export class Giants {
       dg.instanceCount = n;
       const du = {
         uE0: { value: new THREE.Vector3() }, uE1: { value: new THREE.Vector3() }, uDir0: { value: new THREE.Vector3(0, 0, 1) }, uDir1: { value: new THREE.Vector3(0, 0, -1) },
-        uFTime: fauna.uniforms.uFTime, uScale: { value: 38 }, uOn0: { value: 1 }, uOn1: { value: 1 },
+        uFTime: fauna.uniforms.uFTime, uScale: { value: 64 }, uOn0: { value: 1 }, uOn1: { value: 1 },
         uKeyColor: { value: L?.keyColor || new THREE.Color(1, 1, 1) }, uSky: { value: L?.skyColor || new THREE.Color(0.4, 0.35, 0.3) }, uSand: { value: new THREE.Color('#b08a62') },
       };
       Object.assign(du, { uHead: uni.uHead, uArcR: uni.uArcR, uDepth: uni.uDepth, uBodyLen: uni.uBodyLen, uRad: uni.uRad });

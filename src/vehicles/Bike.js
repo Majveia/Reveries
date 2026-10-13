@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { buildBike } from './Models.js';
-import { Flame, Trail, GroundGlow } from './VFX.js';
+import { Flame, Trail, GroundGlow, BlobShadow } from './VFX.js';
 
 const clamp = THREE.MathUtils.clamp;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -49,7 +49,8 @@ export class Bike {
     this.overWater = false; this.groundH = 0;
     this.sleeping = false;
     // VFX
-    this.flame = new Flame({ radius: 0.11, length: 0.9, core: [1.0, 0.75, 0.8], edge: [1.0, 0.25, 0.15], boost: [0.5, 0.75, 1.0], gain: 0.17 });
+    this.flame = new Flame({ radius: 0.11, length: 0.6, core: [1.0, 0.7, 0.55], edge: [1.0, 0.22, 0.1], boost: [0.25, 0.5, 1.0], gain: 0.17 });
+    this.shadow = new BlobShadow(); // soft contact shadow: the machine is ON the ground, not pasted over it
     this.flame.mesh.position.copy(model.nozzles[0].pos);
     this.body.add(this.flame.mesh);
     this.glow = new GroundGlow([0.3, 0.8, 1.0]);
@@ -58,7 +59,7 @@ export class Bike {
     this._emitAcc = 0;
   }
 
-  addTo(scene) { scene.add(this.object3d); scene.add(this.glow.mesh); scene.add(this.lightTrail.mesh); }
+  addTo(scene) { scene.add(this.object3d); scene.add(this.glow.mesh); scene.add(this.lightTrail.mesh); scene.add(this.shadow.mesh); }
 
   /** Place at a surface direction, facing `forward` (tangent hint). */
   place(dir, forward) {
@@ -248,6 +249,17 @@ export class Bike {
       this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * 1.9 * (1 - w.daylight) ** 2;
       this.glow.uniforms.uTime.value = t;
     }
+    // contact shadow, softening and spreading with clearance
+    this.shadow.mesh.visible = hgt < 5;
+    if (this.shadow.mesh.visible) {
+      this.shadow.mesh.position.copy(up).multiplyScalar(top + 0.05);
+      this.shadow.mesh.quaternion.copy(this._baseQ);
+      const k = 1 + hgt * 0.35;
+      this.shadow.mesh.scale.set(1.5 * k, 1, 3.6 * k);
+      this.shadow.uniforms.uI.value = 0.7 * clamp(1 - hgt / 5, 0, 1) * (this.overWater ? 0.55 : 1) * (0.35 + 0.65 * w.daylight);
+    }
+    // daylight: the flame becomes a short, saturated core (no pale tube washed over the sunlit ground)
+    this.flame.uniforms.uGain.value = 0.17 * (1 - 0.6 * w.daylight);
     // tail-light ribbon at speed (Akira light trails)
     _p.copy(this.model.nozzles[0].pos).add(_v.set(0, 0.1, 0.25));
     this.body.updateMatrixWorld();
@@ -257,7 +269,7 @@ export class Bike {
     // dust / spray
     if (sp > 6 && hgt < 4) {
       const P = this.overWater ? sys.spray : sys.dust;
-      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 80 : 70) * (1 + this.boost * 2.2) * sys.fxScale;
+      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 140 : 130) * (1 + this.boost * 2.2) * sys.fxScale;
       this._emitAcc += rate * dt;
       const fwd = this.heading, left = _v2.crossVectors(up, fwd).normalize();
       const dc = sys.dustColor;
@@ -266,17 +278,17 @@ export class Bike {
         const side = Math.random() < 0.5 ? -1 : 1;
         _p.copy(up).multiplyScalar(top + 0.2).addScaledVector(fwd, (this.position.dot(fwd) - up.dot(fwd) * 0) * 0);
         _p.copy(this.position).addScaledVector(up, -hgt + 0.15).addScaledVector(fwd, -1.2 - Math.random() * 1.0).addScaledVector(left, side * (0.3 + Math.random() * 0.4));
-        const vel = _v3.copy(fwd).multiplyScalar(-sp * 0.12 - Math.random() * 3).addScaledVector(left, side * (2 + Math.random() * 4)).addScaledVector(up, this.overWater ? 4 + Math.random() * 5 : 0.6 + Math.random() * 1.6);
+        const vel = _v3.copy(fwd).multiplyScalar(-sp * 0.12 - Math.random() * 3).addScaledVector(left, side * (4 + Math.random() * 9)).addScaledVector(up, this.overWater ? 4 + Math.random() * 5 : 1.2 + Math.random() * 2.8); // wide V rooster tail
         vel.addScaledVector(this.velocity, 0.35);
-        if (this.overWater) P.emit(_p, vel, 0.8 + Math.random() * 0.7, 0.25, 1.4 + Math.random(), 0.85, 0.9, 0.95, 0.55, t, true);
+        if (this.overWater) P.emit(_p, vel, 0.8 + Math.random() * 0.7, 0.3, 2.0 + Math.random() * 1.5, 0.85, 0.9, 0.95, 0.5, t, true);
         else if (Math.random() < 0.3) P.emit(_p, vel.addScaledVector(up, 1.5 + Math.random() * 2), 0.5 + Math.random() * 0.5, 0.06, 0.12, dc.r * 0.55, dc.g * 0.7, dc.b * 0.45, 0.9, t, true); // grass / grit kicked up
-        else P.emit(_p, vel, 1.6 + Math.random() * 1.8, 0.6, 3.5 + Math.random() * 3.0, dc.r, dc.g, dc.b, 0.36, t, false);
+        else P.emit(_p, vel, 1.8 + Math.random() * 2.0, 0.8, 3.0 + Math.random() * 3.5, dc.r, dc.g, dc.b, 0.4, t, false);
       }
     }
   }
 
   dispose() {
-    this.flame.dispose(); this.glow.dispose(); this.lightTrail.dispose();
+    this.flame.dispose(); this.glow.dispose(); this.lightTrail.dispose(); this.shadow.dispose(); this.shadow.mesh.removeFromParent();
     this.object3d.removeFromParent(); this.glow.mesh.removeFromParent(); this.lightTrail.mesh.removeFromParent();
   }
 }

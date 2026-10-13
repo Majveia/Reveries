@@ -96,8 +96,15 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   metal.push(finish(lathe([[0.001, -5.5], [0.34, -5.5], [0.44, -5.93], [0.5, -5.97], [0.56, -5.8], [0.62, -5.35], [0.66, -4.9], [0.6, -4.5], [0.001, -4.5]], 40), GUN, 1));
   metal.push(finish(lathe([[0.61, -5.42], [0.645, -5.42], [0.645, -5.3], [0.61, -5.3]], 40), TRIM, 1));
   const cavity = (r0, r1, z0, z1, segs = 36) => {
-    const d = new THREE.CircleGeometry(r0, segs); d.rotateY(Math.PI); d.translate(0, 0, z0 - 0.005);
-    hot.push(finish(d, col('#ffffff', 1.6), 1, 0, 0));
+    // turbine face: radial blades over a white-yellow core → orange → deep red rim (reads as depth, not a sticker)
+    const d = new THREE.RingGeometry(0.0, r0, segs * 3, 5); d.rotateY(Math.PI); d.translate(0, 0, z0 - 0.005);
+    const cHot = new THREE.Color(1.0, 0.92, 0.78), cMid = new THREE.Color(1.0, 0.5, 0.18), cRim = new THREE.Color(0.55, 0.1, 0.03);
+    hot.push(finish(d, (x, y, z, nx, ny, nz, o) => {
+      const r = Math.hypot(x, y) / r0, a = Math.atan2(y, x);
+      const blade = 0.6 + 0.4 * Math.cos(a * 15 + r * 4.0) ** 2;
+      if (r < 0.45) o.copy(cHot).lerp(cMid, (r / 0.45) ** 2); else o.copy(cMid).lerp(cRim, (r - 0.45) / 0.55);
+      return o.multiplyScalar(1.7 * (r < 0.12 ? 1 : blade));
+    }, 1, 0, 0));
     const wall = lathe([[r1 - 0.006, z1 + 0.01], [r0 - 0.004, z0 - 0.004]], segs);
     // inner wall: white-hot at the floor fading to orange at the lip
     hot.push(finish(wall, (x, y, z, nx, ny, nz, o) => o.setRGB(1.0, 0.55, 0.28).lerp(_white, THREE.MathUtils.clamp((z - z1) / (z0 - z1), 0, 1) ** 2), 1, 0, 0));
@@ -214,8 +221,8 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   // nav lights: port red (+X = left), starboard green, white tail strobes, warm landing light, cockpit glow
   const lights = new THREE.Group();
   const bulb = (hex, k, x, y, z, r = 0.06) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), M.glow(hex, k)); m.position.set(x, y, z); lights.add(m); return m; };
-  const navL = bulb('#ff2a1a', 30, tipX, tipY + 0.3, -3.2), navR = bulb('#1aff6a', 30, -tipX, tipY + 0.3, -3.2);
-  const strobes = [bulb('#ffffff', 60, 1.0, 2.2, -5.4, 0.05), bulb('#ffffff', 60, -1.0, 2.2, -5.4, 0.05)];
+  const navL = bulb('#ff2a1a', 16, tipX, tipY + 0.3, -3.2, 0.045), navR = bulb('#1aff6a', 16, -tipX, tipY + 0.3, -3.2, 0.045); // small, coloured: physical lights, not UI dots
+  const strobes = [bulb('#ffffff', 28, 1.0, 2.2, -5.4, 0.035), bulb('#ffffff', 28, -1.0, 2.2, -5.4, 0.035)];
   const landing = [bulb('#ffe2b0', 25, 0, -0.62, 2.0, 0.08)];
   const inst = new THREE.Mesh(finish(box(0.5, 0.02, 0.14, 0, 0.47, 1.66)), M.glow('#7fd6ff', 3.5)); lights.add(inst);
   group.add(lights);

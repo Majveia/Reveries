@@ -24,6 +24,7 @@ import { Bike } from './Bike.js';
 import { Ship } from './Ship.js';
 import { Particles, Streaks } from './VFX.js';
 import { Random, seedFrom } from '../core/Random.js';
+import { valueFbm3, valueNoise3 } from '../levels/planet/flora/scatter.js';
 
 const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -77,7 +78,7 @@ export default class Vehicles {
     const rng = new Random(seedFrom(P.seed ?? 1, 'vehicles'));
     this.rng = rng;
     const g = level.lighting?.groundAlbedo;
-    if (g) this.dustColor.copy(g).multiplyScalar(1.25).lerp(new THREE.Color(0.75, 0.68, 0.58), 0.35);
+    if (g) this.dustColor.copy(g).multiplyScalar(1.25).lerp(new THREE.Color(0.8, 0.73, 0.62), 0.6); // pale, sunlit grit: reads over its own ground
 
     // ---- the hero ship + its spawn
     const spawn = level.opts?.spawn || engine.params.get('spawn') || 'orbit';
@@ -235,6 +236,8 @@ export default class Vehicles {
   // Frame
   // =====================================================================================
   update(dt, t) {
+    // shot sims run ahead of the engine clock: keep that lead so the particles they emitted stay alive
+    t += this._tOff || 0;
     this.time = t;
     const level = this.level, engine = this.engine;
     if (this._padPending && (this._padTry = (this._padTry || 0) + 1) % 30 === 1) { try { this._seatOnPad(); } catch (e) { this._padPending = false; console.warn('[vehicles] pad', e); } }
@@ -442,6 +445,7 @@ export default class Vehicles {
       this.time += dt;
       for (const v of this.list) v.update(dt, this.shotDrive === v ? this.shotInput : null, this.time);
     }
+    this._tOff = this.time - this.engine.time;
   }
 
   /** Number of collider samples along segment a→b that fall inside a collider grown by `pad` (m). */
@@ -468,6 +472,29 @@ export default class Vehicles {
       }
     }
     return hits;
+  }
+
+  /**
+   * Tree probability at a surface direction (0 open land … ~1 deep forest): mirrors the flora
+   * Trees layer's placement field so shot runs can avoid woods that are not colliders.
+   */
+  _treeDensity(dir) {
+    const fl = this.level.flora, tr = fl?.trees;
+    if (!tr || !tr.T || typeof tr._clim !== 'function') return 0;
+    try {
+      const s = this.world.terrain.sample(dir.x, dir.y, dir.z);
+      if (tr.sea > -1e8 && s.h < tr.sea + 0.7) return 0;
+      let p = tr._clim(s);
+      if (!(p > 0)) return 0;
+      const T = tr.T, rr = (tr.R || this.world.radius) + s.h, x = dir.x * rr, y = dir.y * rr, z = dir.z * rr;
+      const fz = fl.noiseScale.forest;
+      const fm = valueFbm3(x * fz, y * fz, z * fz, 3);
+      const gv = valueNoise3(x * 0.016, y * 0.016, z * 0.016, 11);
+      const forestK = smooth(fm + (s.biome === 2 ? 0.25 : 0) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.45, -0.02, 0.14);
+      const grove = smooth(gv + 0.2, -0.1, 0.3);
+      p *= forestK * (0.5 + 0.5 * grove) + (1 - forestK) * (T.lone ?? 0.035) * (0.3 + grove);
+      return p * fl.siteClear(x, y, z, 1.0);
+    } catch (e) { return 0; }
   }
 
   /** Unit tangent at `dir` pointing toward `target` (any tangent if degenerate). */
@@ -499,7 +526,7 @@ export default class Vehicles {
     this.forceVortex = 0; this.forceContrail = 0;
     for (const v of this.list) v._holdForShot = false;
     this.engine.ui.telemetry?.(null);
-    this._t0 = this.time = this.engine.time;
+    this._tOff = 0; this._t0 = this.time = this.engine.time;
     const site = spot?.site || w.sites[0];
     const sdir = (spot?.dir || site?.dir || w.focus.clone()).clone().normalize();
 
@@ -513,9 +540,20 @@ export default class Vehicles {
       const cands = [];
       const sd0 = ss.dir.clone().normalize();
       for (let k = 0; k < 12; k++) cands.push({ d: sd0, hd: this._tangentTo(sd0, center.clone().multiplyScalar(w.radius)).applyAxisAngle(sd0, (k / 12) * Math.PI * 2) });
+      // open land around the spawn: rings out to ~600 m (meadows, shorelines, dune ridges)
+      {
+        const t0 = this._tangentTo(sd0, center.clone().multiplyScalar(w.radius));
+        for (const dist of [140, 300, 600]) for (let k = 0; k < 10; k++) {
+          const ax = t0.clone().applyAxisAngle(sd0, (k / 10) * Math.PI * 2 + dist);
+          const d = sd0.clone().addScaledVector(ax, dist / w.radius).normalize();
+          const hd = ax.clone().applyAxisAngle(d, Math.PI / 2 * (k % 2 ? 1 : -1));
+          hd.addScaledVector(d, -hd.dot(d)).normalize();
+          cands.push({ d, hd }, { d, hd: hd.clone().negate() });
+        }
+      }
       if (site) {
         const t1 = new THREE.Vector3(0, 1, 0).cross(center); if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0); t1.normalize();
-        for (const rf of [0.5, 0.6, 0.72]) for (let k = 0; k < 16; k++) {
+        for (const rf of [0.5, 0.6, 0.72, 0.9]) for (let k = 0; k < 16; k++) {
           const ax = t1.clone().applyAxisAngle(center, (k / 16) * Math.PI * 2);
           const d = center.clone().addScaledVector(ax, site.radius * rf / w.radius).normalize();
           const radial = this._tangentTo(d, center.clone().multiplyScalar(w.radius)).negate();
@@ -524,7 +562,7 @@ export default class Vehicles {
         }
       }
       let best = null, bs = Infinity;
-      const P = (d, hd, m) => d.clone().addScaledVector(hd, m / w.radius).normalize();
+      const P = (d, hd, m, lat = 0) => { const q = d.clone().addScaledVector(hd, m / w.radius); if (lat) q.addScaledVector(_v.crossVectors(d, hd), lat / w.radius); return q.normalize(); };
       for (const c of cands) {
         const hs = [-90, -45, 0, 30].map((m) => w.heightAt(P(c.d, c.hd, m)));
         if (w.hasOcean && Math.min(...hs) < w.seaLevel + 1.5) continue;
@@ -532,6 +570,10 @@ export default class Vehicles {
         // obstacles near the path / the chase camera (houses, trees, poles)
         const p0 = P(c.d, c.hd, -70).multiplyScalar(w.radius + hs[0]), p1 = P(c.d, c.hd, 15).multiplyScalar(w.radius + hs[2]);
         sc += this._segBlocked(p0, p1, 4.5) * 4;
+        // woods are not colliders: sample the flora's tree field along the run, beside it and down the view
+        let dens = 0;
+        for (const m of [-60, -40, -20, -8, 0, 15, 40, 80]) for (const lat of [-12, 0, 12]) dens += this._treeDensity(P(c.d, c.hd, m, lat));
+        sc += dens * 6;
         if (sc < bs) { bs = sc; best = c; }
       }
       const sd = best.d, head = best.hd.clone();
@@ -544,14 +586,18 @@ export default class Vehicles {
       this.shotDrive = bike;
       bike.velocity.copy(head).multiplyScalar(55);
       bike._s = 55;
-      this._simulate(70);
-      // low dramatic chase off the rear quarter, looking down the run toward the horizon (sky in the top third);
-      // camera side chosen so nothing stands between the lens and the rider
+      this._simulate(48);
+      // carve into a gentle turn for the last half-second: the machine leans 15-20° into it
+      const carve = sp.carve ?? 0.3;
+      inp.move.x = carve;
+      this._simulate(22);
+      // dramatic low chase off the rear quarter, high enough that grass never sits between lens and bike;
+      // tilted down so the horizon sits on the upper third and the bike on a lower-third power point
       const side = sp.side ?? (() => {
-        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.9 * sg, 0.85, -3.7), target: new THREE.Vector3(0.35 * sg, 1.25, 20) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5; };
+        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.9 * sg, 1.55, -4.6), target: new THREE.Vector3(0.35 * sg, 1.25, 20) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
         return tryS(1) <= tryS(-1) ? 1 : -1;
       })();
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 2.1) * side, sp.by ?? 1.05, -(sp.bz ?? 4.8)), target: new THREE.Vector3(-0.9 * side, 1.35, 20), fov: sp.fov ?? 62, minClear: 0.45, bankRoll: 0.1 };
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.9) * side, sp.by ?? 1.55, -(sp.bz ?? 4.6)), target: new THREE.Vector3(-(sp.tx ?? 1.8) * side, sp.ty ?? -0.6, 20), fov: sp.fov ?? 58, minClear: 1.2, bankRoll: 0.18 };
       bike._holdForShot = true;
       // the rider's cloth was not stepped during the scripted run: make it re-settle at the seat
       // (otherwise its interpolated anchors stretch it back along the 60 m path → a 'pole' in frame)
@@ -564,7 +610,7 @@ export default class Vehicles {
       const ship = this.hero, sp = this.shotParams || {};
       // per-planet choreography: every world gets its own pass (heading, bank, camera, lens)
       const R = new Random(seedFrom(this.level.planet?.seed ?? 1, 'shipShot'));
-      w.setTimeOfDay(sp.tod ?? R.range(0.69, 0.725), sdir);
+      w.setTimeOfDay(sp.tod ?? R.range(0.722, 0.73), sdir); // golden hour: sun a few degrees above the horizon
       const sun = w.sunDir.clone();
       const sunT = sun.addScaledVector(sdir, -sun.dot(sdir)).normalize();
       // fly roughly across the low sun so the hull is side-lit (key + rim), not a backlit silhouette
@@ -591,7 +637,7 @@ export default class Vehicles {
       ship.fly(pos, pos.clone().addScaledVector(hd, 100), 160, start);
       const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
       this.autopilot = ship; this.apParams = { alt: sp.alt ?? R.range(10, 18), throttle: 0.75, yaw: sp.yaw ?? turn };
-      this.forceVortex = 0.55;
+      this.forceVortex = 0.22;
       this._simulate(150);
       // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
       const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
@@ -603,8 +649,10 @@ export default class Vehicles {
         const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
         const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
         const view = ship.position.clone().sub(cam).normalize();
+        // sunset: low sun 35-60° off the view axis (just off-frame) → hot specular rim on the hull,
+        // glowing horizon behind; the hull keeps a lit side (not a pure silhouette)
         const th = Math.acos(clamp(view.dot(w.sunDir), -1, 1)) * 180 / Math.PI;
-        const sc = -Math.abs(th - 122) / 20 - Math.abs(h - 1.8) * 0.15 + R.range(0, 0.6);
+        const sc = -Math.abs(th - (sp.sunAng ?? 48)) / 20 - Math.abs(h - 2.2) * 0.15 + R.range(0, 0.6);
         if (sc > bs) { bs = sc; best = o; }
       }
       const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
@@ -619,11 +667,11 @@ export default class Vehicles {
       // low orbit (the 2.5 R spawn) above the afternoon side; nose toward the limb
       const side = new THREE.Vector3(0, 1, 0).cross(sdir).normalize();
       const p = sdir.clone().addScaledVector(side, 0.35).normalize();
-      const rOrb = w.radius * (this.shotParams?.orbitR ?? 1.32);
+      const rOrb = w.radius * (this.shotParams?.orbitR ?? 2.2); // a whole curved globe below
       const pos = p.clone().multiplyScalar(rOrb);
       const sunT = w.sunDir.clone().addScaledVector(p, -w.sunDir.dot(p)).normalize();
       const T = sunT.clone().applyAxisAngle(p, this.shotParams?.orbitAz ?? 1.6);
-      const dep = Math.acos(w.radius / rOrb) - (this.shotParams?.dep ?? 0.05); // nose just above the limb
+      const dep = Math.acos(w.radius / rOrb) - (this.shotParams?.dep ?? -0.2); // nose dipped below the limb: the arc sits high in frame
       const look = T.clone().multiplyScalar(Math.cos(dep)).addScaledVector(p, -Math.sin(dep)).normalize();
       this._boardForShot(ship);
       ship.fly(pos, pos.clone().add(look), 0, p);
@@ -633,7 +681,7 @@ export default class Vehicles {
       ship.space = 1;
       ship._holdForShot = true;
       // rear 3/4, ~30° off the tail axis: plume in profile, planet beyond the ship
-      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? -6.5, this.shotParams?.oy ?? 2.6, this.shotParams?.oz ?? -15), target: new THREE.Vector3(-1.5, -2.4, 30), fov: this.shotParams?.fov ?? 45 };
+      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? 7.5, this.shotParams?.oy ?? 3.4, this.shotParams?.oz ?? -20), target: new THREE.Vector3(this.shotParams?.tx ?? 4.2, -4.5, 40), fov: this.shotParams?.fov ?? 48 };
       this._updateShotCam();
       return true;
     }

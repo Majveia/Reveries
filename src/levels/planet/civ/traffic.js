@@ -188,7 +188,7 @@ export class Traffic {
     // sky lanterns rising at dusk (temple worlds)
     if (style === 'temple') {
       const cnt = q.pick(30, 60, 120, 160);
-      this.lanternMat = makeGlowMaterial(settlement.uniforms, { size: 0.9, minPx: 1.4, gain: 6 });
+      this.lanternMat = makeGlowMaterial(settlement.uniforms, { size: 0.9, minPx: 1.4, gain: 6, nearCut: 160, conserve: 1.0, maxI: 5 }); // a lantern drifting past the lens must not become a pasted orb
       const items = [];
       this.lanterns = [];
       for (let i = 0; i < cnt; i++) {

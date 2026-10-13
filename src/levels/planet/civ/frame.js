@@ -41,8 +41,61 @@ export class SiteFrame {
     return out.copy(this.up).addScaledVector(this.east, x / this.R).addScaledVector(this.south, z / this.R).normalize();
   }
 
+  /**
+   * Monumental podium (Arrakeen): inside plan radius R the civ ground is a graded
+   * platform instead of the raw dune field — a broad low-pass of the terrain's
+   * local maxima, so slabs, causeways and plazas sit level while colossal
+   * retaining walls drop to the sand at its rim (see Settlement._podium).
+   * Dune crests that still rise above it read as sand drifting over the paving.
+   */
+  setPodium(R, o = {}) {
+    this.podium = null;
+    const cell = o.cell ?? 8, pad = Math.ceil((o.maxR ?? 40) / cell) + Math.ceil((o.blur ?? 90) / cell) + 2;
+    const n = Math.ceil((2 * R) / cell) + 2 * pad + 1, x0 = -R - pad * cell;
+    let raw = new Float32Array(n * n);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) raw[j * n + i] = this.hAt(x0 + i * cell, x0 + j * cell);
+    const sep = (src, rad, op) => { // separable running max / mean
+      let a = src;
+      for (const axis of [0, 1]) {
+        const out = new Float32Array(n * n);
+        for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+          let m = op === 'max' ? -Infinity : 0, k = 0;
+          for (let t = -rad; t <= rad; t++) {
+            const ii = axis ? i : Math.min(n - 1, Math.max(0, i + t)), jj = axis ? Math.min(n - 1, Math.max(0, j + t)) : j;
+            const v = a[jj * n + ii];
+            if (op === 'max') m = Math.max(m, v); else { m += v; k++; }
+          }
+          out[j * n + i] = op === 'max' ? m : m / k;
+        }
+        a = out;
+      }
+      return a;
+    };
+    const mx = sep(raw, Math.max(1, Math.round((o.maxR ?? 40) / cell)), 'max');
+    const br = Math.max(1, Math.round((o.blur ?? 90) / cell));
+    const sm = sep(sep(mx, br, 'mean'), br, 'mean');
+    const mean = sep(sep(raw, br, 'mean'), br, 'mean');
+    const k = o.lift ?? 0.75, sea = this.sea + 1.5;
+    const P = new Float32Array(n * n);
+    for (let q = 0; q < n * n; q++) P[q] = Math.max(sea, mean[q] + (sm[q] - mean[q]) * k + (o.raise ?? 0));
+    raw = null;
+    this.podium = { R, cell, n, x0, P };
+  }
+  /** Podium height at plan point (null outside it). */
+  podiumAt(x, z) {
+    const p = this.podium;
+    if (!p || x * x + z * z > p.R * p.R) return null;
+    const fx = (x - p.x0) / p.cell, fz = (z - p.x0) / p.cell;
+    const i = Math.min(p.n - 2, Math.max(0, Math.floor(fx))), j = Math.min(p.n - 2, Math.max(0, Math.floor(fz)));
+    const u = Math.min(1, Math.max(0, fx - i)), v = Math.min(1, Math.max(0, fz - j)), P = p.P, n = p.n;
+    return (P[j * n + i] * (1 - u) + P[j * n + i + 1] * u) * (1 - v) + (P[(j + 1) * n + i] * (1 - u) + P[(j + 1) * n + i + 1] * u) * v;
+  }
+  /** Raw terrain height (ignores the podium). */
+  hRaw(x, z) { const p = this.podium; this.podium = null; const h = this.hAt(x, z); this.podium = p; return h; }
+
   /** Terrain height (m above base radius) at plan point; cached on a 0.5 m lattice. */
   hAt(x, z) {
+    if (this.podium) { const ph = this.podiumAt(x, z); if (ph !== null) return ph; }
     const kx = Math.round(x * 2), kz = Math.round(z * 2);
     const key = kx * 73856093 + kz * 19349663;
     let h = this._hc.get(key);
@@ -54,7 +107,7 @@ export class SiteFrame {
     return h;
   }
   /** Exact (uncached) height. */
-  hExact(x, z) { return this.world.heightAt(this.dirAt(x, z, _d)); }
+  hExact(x, z) { const ph = this.podium ? this.podiumAt(x, z) : null; return ph !== null ? ph : this.world.heightAt(this.dirAt(x, z, _d)); }
 
   /** Is the plan point under water? */
   wet(x, z, margin = 0) { return this.hAt(x, z) < this.sea + margin; }

@@ -156,23 +156,42 @@ export default class Fauna {
     const w = this.world;
     w.setTimeOfDay(SHOT_TIME[this.aesthetic] ?? 0.32, (w.sites[0]?.dir || new THREE.Vector3(0.3, 0.5, 0.8).normalize()));
     this._sun = w.sunDir.clone();
+    const all = [];
     for (const [maxForest, minUp, corridor] of [[0.12, 0.94, 0.08], [0.3, 0.9, 0.06], [0.6, 0.86, 0.04], [1.01, 0.8, 0.02]]) {
       const b = this._searchSpot(maxForest, minUp, corridor);
-      if (b) return b;
+      for (const c of b) all.push(c);
+      if (all.length >= 6) break;
     }
-    return null;
+    return all;
+  }
+
+  /** Fraction of a 5x3 grid of view rays that are NOT blocked by near terrain rising above the eye's ground (cliffs, pillars). */
+  _openness(eye, fwd, up, h0, fov) {
+    const w = this.world, R = w.radius;
+    const right = fwd.clone().cross(up).normalize(), d = new THREE.Vector3();
+    const hh = THREE.MathUtils.degToRad(fov) * 0.5, hw = Math.atan(Math.tan(hh) * (this.level.camera.aspect || 1.78));
+    let open = 0, n = 0;
+    for (let iy = 0; iy < 3; iy++) for (let ix = 0; ix < 5; ix++) {
+      const yaw = (ix / 4 - 0.5) * 2 * hw * 0.9, pitch = (iy - 1) * hh * 0.8;
+      d.copy(fwd).multiplyScalar(Math.cos(yaw)).addScaledVector(right, Math.sin(yaw)).multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch)).normalize();
+      const hit = w.raycast(eye, d, 420);
+      const blocked = hit && hit.distance < 380 && (hit.point.length() - R - h0) > 3 + hit.distance * 0.02;
+      if (!blocked) open++;
+      n++;
+    }
+    return open / n;
   }
 
   _searchSpot(maxForest, minUp, corridor) {
     const w = this.world, R = w.radius;
     const sites = w.sites.length ? w.sites : [{ dir: new THREE.Vector3(0.3, 0.5, 0.8).normalize(), radius: 0 }];
     const rng = new Random(seedFrom(this.seed, 'spot'));
-    let best = null;
+    const cands = [];
     const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), d = new THREE.Vector3(), g = new THREE.Vector3();
-    for (const s of sites.slice(0, 3)) {
+    for (const s of sites.slice(0, 4)) {
       tangentBasis(s.dir, t1, t2);
-      for (let k = 0; k < 28; k++) {
-        const a = rng.range(0, TAU), r = (s.radius || 0) + rng.range(350, 1300);
+      for (let k = 0; k < 30; k++) {
+        const a = rng.range(0, TAU), r = (s.radius || 0) + rng.range(350, k < 20 ? 1300 : 2400);
         d.copy(s.dir).multiplyScalar(R).addScaledVector(t1, Math.cos(a) * r).addScaledVector(t2, Math.sin(a) * r).normalize();
         if (!this.groundOK(d, minUp, 140)) continue;
         const fk = this.forestAt(d);
@@ -202,48 +221,71 @@ export default class Fauna {
           // light: the sun behind-and-beside the lens lights the herd and models it
           const sunH = this._sun.clone().addScaledVector(d, -this._sun.dot(d));
           const sl = sunH.lengthSq() > 1e-6 ? fw.dot(sunH.normalize()) : 0;
-          let score = -block * 40 + okPatch - fk * 2 + rng.float() * 0.4 - (w.hasOcean && h0 < w.seaLevel + 4 ? 2 : 0) - Math.abs(sl + 0.35) * 1.5;
-          if (best && score <= best.score) continue;
-          // the meadow ahead must not lie in a mountain's shadow
-          g.copy(d).multiplyScalar(R).addScaledVector(fw, 35).normalize();
-          const gp = g.clone().multiplyScalar(R + w.heightAt(g) + 2);
-          if (this._sun.dot(g) < 0.05 || w.raycast(gp, this._sun, 2500)) score -= 4;
-          if (!best || score > best.score) best = { score, dir: d.clone(), fwd: fw, h0 };
+          const score = -block * 40 + okPatch - fk * 2 + rng.float() * 0.4 - (w.hasOcean && h0 < w.seaLevel + 4 ? 2 : 0) - Math.abs(sl + 0.35) * 1.5;
+          cands.push({ score, dir: d.clone(), fwd: fw, h0, fk });
         }
       }
     }
-    return best;
+    cands.sort((a, b) => b.score - a.score);
+    const top = [];
+    for (const c of cands) {
+      if (top.some((o) => o.dir.distanceTo(c.dir) * R < 60)) continue;
+      // the meadow ahead must not lie in a mountain's shadow
+      g.copy(c.dir).multiplyScalar(R).addScaledVector(c.fwd, 35).normalize();
+      const gp = g.clone().multiplyScalar(R + w.heightAt(g) + 2);
+      if (this._sun.dot(g) < 0.05 || w.raycast(gp, this._sun, 2500)) c.score -= 4;
+      top.push(c);
+      if (top.length >= 8) break;
+    }
+    return top.sort((a, b) => b.score - a.score);
   }
 
   async shot(name) {
     if (name !== 'fauna' || !this.mods.length) return false;
     const w = this.world, R = w.radius, A = this.aesthetic;
-    const spot = this._findSpot();
-    if (!spot) return false;
+    const spots = this._findSpot();
+    if (!spots.length) return false;
+    // pick the candidate (and a small yaw tweak) whose frustum is open: no cliff wall or pillar filling the frame
+    const fovS = A === 'dune' ? 42 : 36;
+    let spot = null, bestQ = -1e9, bestF = null, bestOpen = 0;
+    for (const c of spots.slice(0, 8)) {
+      const cUp = c.dir, cCan = c.fk > 0.45;
+      const cEye = cUp.clone().multiplyScalar(R + c.h0 + (cCan ? 22 : A === 'dune' ? 6 : 3.0));
+      for (const yaw of [0, 0.45, -0.45, 0.9, -0.9]) {
+        const f = c.fwd.clone().applyAxisAngle(cUp, yaw);
+        const open = this._openness(cEye, f, cUp, c.h0, fovS);
+        const q = open * 8 + c.score * 0.35 - Math.abs(yaw) * 0.8 - (cCan ? 1.5 : 0);
+        if (q > bestQ) { bestQ = q; spot = c; bestF = f; bestOpen = open; }
+      }
+      if (bestOpen > 0.95 && spot === c) break;
+    }
+    if (this.engine.params?.get?.('fdebug')) console.warn('[fauna] spot open', bestOpen.toFixed(2), 'forest', spot.fk.toFixed(2), 'cands', spots.length);
     w.setTimeOfDay(SHOT_TIME[A] ?? 0.32, spot.dir);
-    // turn the view so the sun is to the side (form-revealing light), keeping the open heading roughly
     const up = spot.dir;
-    // jungle worlds with no open ground: rise above the canopy and watch the sky-life drift over it
-    const canopy = this.forestAt(spot.dir) > 0.45;
-    const eye = up.clone().multiplyScalar(R + spot.h0 + (canopy ? 46 : A === 'dune' ? 6 : 3.0));
-    const fwd = spot.fwd.clone();
+    // jungle worlds with no open ground: rise to the understorey and watch life drift through the clearing
+    const canopy = spot.fk > 0.45;
+    const eye = up.clone().multiplyScalar(R + spot.h0 + (canopy ? 22 : A === 'dune' ? 6 : 3.0));
+    const fwd = bestF.clone();
     const hp = eye.clone().addScaledVector(fwd, 26).normalize();
     const hpos = hp.clone().multiplyScalar(R + w.heightAt(hp));
-    const target = canopy ? eye.clone().addScaledVector(fwd, 100).addScaledVector(up, -2) : A === 'dune' ? eye.clone().addScaledVector(fwd, 100).addScaledVector(up, 7) : hpos.addScaledVector(up, 1 + 26 * 0.1);
+    const target = canopy ? eye.clone().addScaledVector(fwd, 100).addScaledVector(up, -12) : A === 'dune' ? eye.clone().addScaledVector(fwd, 100).addScaledVector(up, 7) : hpos.addScaledVector(up, 1 + 26 * 0.1);
     this.level.freeCam = { position: eye, target, up: up.clone() };
     if (this.level.player) this.level.player.shotPose = null;
     const cam = this.level.camera;
     // wildlife-photography framing: a long lens compresses the herd, the flock and the giants
     if (!this._fov0) this._fov0 = cam.fov;
-    cam.fov = A === 'dune' ? 42 : 36; cam.updateProjectionMatrix();
+    cam.fov = fovS; cam.updateProjectionMatrix();
     cam.position.copy(eye); cam.up.copy(up); cam.lookAt(target); cam.updateMatrixWorld();
     this._pending = false;
     // the explorer stands just behind the lens: the sky, sun and ambient light are evaluated around them
     const P = this.level.player;
     if (P?.ctl?.place) {
       try {
-        const bd = eye.clone().addScaledVector(fwd, -5).normalize();
-        P.ctl.place(bd.multiplyScalar(R + w.heightAt(bd) + 0.1), fwd); P._afterTeleport?.(); P.ctl.frozen = true;
+        // on the dunes the explorer stands in frame, small against the breach: the human scale cue
+        const rgt = fwd.clone().cross(up).normalize(), sg = (this.seed & 2) ? 1 : -1;
+        const bd = A === 'dune' ? eye.clone().addScaledVector(fwd, 30).addScaledVector(rgt, -sg * 7).normalize() : eye.clone().addScaledVector(fwd, -5).normalize();
+        const face = A === 'dune' ? fwd.clone().addScaledVector(rgt, sg * 0.45).normalize() : fwd;
+        P.ctl.place(bd.multiplyScalar(R + w.heightAt(bd) + 0.1), face); P._afterTeleport?.(); P.ctl.frozen = true;
       } catch (e) { console.warn('[fauna] player place', e); }
     }
     w.focus.copy(eye);
@@ -310,8 +352,8 @@ export default class Fauna {
     const right = _r.copy(fwd).cross(up).normalize().clone();
     const at = (dist, side, lift = 0) => eye.clone().addScaledVector(fwd, dist).addScaledVector(right, side).normalize().multiplyScalar(R);
     // --- herd on visible open ground
-    if (this.herds && !canopy) {
-      const tries = hero ? [[26, -3], [30, 4], [22, 0], [36, -6], [48, 8]] : [[110, -30], [160, 30], [80, -20], [220, 0], [60, 15], [300, -60]];
+    if (this.herds) {
+      const tries = canopy ? [[60, -6], [70, 8], [52, 0], [85, -12], [100, 10]] : hero ? [[26, -3], [30, 4], [22, 0], [36, -6], [48, 8]] : [[110, -30], [160, 30], [80, -20], [220, 0], [60, 15], [300, -60]];
       for (const [dist, side] of tries) {
         const d = at(dist, side).normalize();
         if (!this.groundOK(d, 0.88, 50)) continue;
@@ -385,13 +427,16 @@ export default class Fauna {
     if (this.giants?.worm) {
       // the breach must read across open sand: pick the bearing whose sight line crosses the fewest trees
       let d = null, bestF = 1e9;
-      for (const [dist, side] of hero ? [[900, 170], [900, -170], [1000, 0], [850, 300]] : [[1300, -200], [1300, 200]]) {
+      const sg = (this.seed & 2) ? 1 : -1;
+      for (const [dist, side] of hero ? [[820, sg * 170], [860, sg * 90], [780, sg * 250], [900, -sg * 170]] : [[1300, -200], [1300, 200]]) {
         const c = at(dist, side).normalize();
         let fsum = 0;
         for (let k = 1; k <= 8; k++) fsum += this.forestAt(eye.clone().lerp(c.clone().multiplyScalar(R), k / 9).normalize()) * (k < 4 ? 3 : 1);
         if (fsum < bestF - 1e-3) { bestF = fsum; d = c; }
       }
-      this.giants.placeWorm(d, right.clone().multiplyScalar(-1).addScaledVector(fwd, -0.25).normalize(), hero ? 0.25 : 0.1);
+      // hero: it crosses toward the lens at three-quarters, so the opening maw reads (not edge-on)
+      const tv = hero ? right.clone().multiplyScalar(-sg * 0.75).addScaledVector(fwd, -0.66).normalize() : right.clone().multiplyScalar(-1).addScaledVector(fwd, -0.25).normalize();
+      this.giants.placeWorm(d, tv, hero ? 0.3 : 0.1);
     }
     if (this.engine.shotMode && this.engine.params?.get?.('fdebug')) {
       const rep = (n, p) => { if (!p) return n + ':-'; _ndc.copy(p).project(cam); return `${n}:${_ndc.x.toFixed(2)},${_ndc.y.toFixed(2)}`; };

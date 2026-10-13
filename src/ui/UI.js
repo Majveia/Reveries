@@ -50,6 +50,17 @@ const PAD_LABEL = {
   sprint: 'RT', map: 'view', escape: 'menu', photo: 'R3', move: 'LS', look: 'RS', orbit: 'RS', zoom: 'dpad',
   primary: 'A', travel: 'A', help: 'dup', light: 'ddown', timeFaster: 'dright', timeSlower: 'dleft', forward: 'LS', back: 'LS', left: 'LS', right: 'LS',
 };
+// a fused 8-tooth cog outline (reads as "settings" at 15 px, unlike radial strokes)
+function cogPath(n = 8, rO = 8.4, rI = 6.2) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2, tw = Math.PI / n;
+    for (const [da, r] of [[-tw * 0.98, rI], [-tw * 0.52, rI], [-tw * 0.36, rO], [tw * 0.36, rO], [tw * 0.52, rI], [tw * 0.98, rI]]) {
+      pts.push(`${(10 + Math.cos(a + da) * r).toFixed(2)} ${(10 + Math.sin(a + da) * r).toFixed(2)}`);
+    }
+  }
+  return 'M' + pts.join('L') + 'Z';
+}
 const SVG = {
   mouse: '<svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="3.5"/><path d="M8 4v2.5"/></svg>',
   click: '<svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="3.5"/><path d="M8 1.5V7H4.6" class="f"/></svg>',
@@ -62,7 +73,7 @@ const SVG = {
   brake: '<svg viewBox="0 0 20 20"><path d="M7.5 5v10M12.5 5v10"/></svg>',
   view: '<svg viewBox="0 0 20 20"><path d="M2.5 10s3-5 7.5-5 7.5 5 7.5 5-3 5-7.5 5-7.5-5-7.5-5z"/><circle cx="10" cy="10" r="2.2"/></svg>',
   exit: '<svg viewBox="0 0 20 20"><path d="M8 4.5H4.5v11H8M9 10h7.5M13.5 7l3 3-3 3"/></svg>',
-  gear: '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.2v2.3M10 15.5v2.3M2.2 10h2.3M15.5 10h2.3M4.5 4.5l1.6 1.6M13.9 13.9l1.6 1.6M4.5 15.5l1.6-1.6M13.9 6.1l1.6-1.6"/></svg>',
+  gear: `<svg viewBox="0 0 20 20"><path d="${cogPath()}"/><circle cx="10" cy="10" r="2.7"/></svg>`,
   close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
   diamond: '<svg viewBox="0 0 10 10"><path d="M5 .8 9.2 5 5 9.2.8 5z"/></svg>',
 };
@@ -103,10 +114,15 @@ export class UI {
     this._hintTimer = 0;
     this._labels = new Map();
     this._arrivalQ = [];
+    this.mapNames = true; // map levels: quiet always-on body names
     this._seenVehicle = new Set();
 
     const root = (this.root = h('div', 'rvu', document.body));
     root.setAttribute('data-ui', '');
+    // luminance-adaptive "ink": feathered scrims behind each HUD anchor whose
+    // strength follows the brightness of the frame under it (sampled from the
+    // backbuffer every few frames) — pure OLED black stays untouched
+    this.inkLayer = h('div', 'rvu-inks', root);
     // top-left: breadcrumb + discovery toasts
     this.crumbs = h('nav', 'rvu-crumbs', root);
     this.crumbs.setAttribute('data-ui', '');
@@ -127,11 +143,12 @@ export class UI {
     // bottom stack: prompt · pointer-lock hint · hint
     this.stack = h('div', 'rvu-stack', root);
     this.promptEl = h('div', 'rvu-prompt', this.stack);
-    this.lockEl = h('div', 'rvu-lock', this.stack);
     this.hintEl = h('div', 'rvu-hint', this.stack);
     // bottom-right: info card
     this.card = h('aside', 'rvu-card', root);
     this.card.setAttribute('data-ui', '');
+    // bottom-right thumb zone: quiet persistent pointer-lock state (never under the avatar)
+    this.lockEl = h('div', 'rvu-lock', root);
     // help overlay + settings panel
     this.helpEl = h('div', 'rvu-help', root);
     this.helpEl.setAttribute('data-ui', '');
@@ -159,8 +176,14 @@ export class UI {
 
     this._loadSettings();
     this._buildSettings();
+    const ink = (el, cls = '') => ({ el, ink: h('i', 'rvu-ink ' + cls, this.inkLayer), L: 0 });
+    this._regions = [ink(this.crumbs), ink(this.toasts), ink(this.compass, 'is-wide'), ink(this.arrivalEl, 'is-big'), ink(this.stack, 'is-wide'), ink(this.lockEl), ink(this.tele)];
     document.body.dataset.device = this.device;
     document.body.dataset.mode = 'map';
+    if (engine.shotMode) document.body.classList.add('rvu-shot');
+    // first sessions: a ghost "look" arc on the right half until the first look drag
+    if ((parseInt(store.get('reveries.seen.look') || '0', 10) || 0) >= 2) this.touch.classList.add('used-look');
+    else if (!engine.shotMode) store.set('reveries.seen.look', String((parseInt(store.get('reveries.seen.look') || '0', 10) || 0) + 1));
 
     // loading veil names the destination
     engine.on?.('leaving', ({ to, addr }) => {
@@ -173,6 +196,13 @@ export class UI {
     engine.on?.('entered', ({ name, addr }) => {
       this.clearLabels();
       this.toggleHelp(false);
+      // ?uidemo=1 (shots): stage the transient HUD pieces so their polish can be reviewed
+      if (engine.shotMode && engine.params?.get?.('uidemo') === '1' && name === 'planet') {
+        setTimeout(() => {
+          this.prompt('interact', 'Talk');
+          this.toast('Waystone', 'A cairn of the old road · 1.2 km', 60000, { kind: 'note', kicker: 'Discovered' });
+        }, 0);
+      }
       if (name === 'galaxy' || name === 'system') {
         let crumbs = [];
         try { crumbs = engine.universe.crumbs(addr) || []; } catch { /* ignore */ }
@@ -314,13 +344,21 @@ export class UI {
     a.innerHTML = `${kicker ? `<div class="rvu-arr-kick">${esc(kicker)}</div>` : ''}<h3>${letters}</h3><i class="rvu-arr-line"></i>${text ? `<p>${text}</p>` : ''}`;
     a.classList.remove('is-on', 'is-out'); void a.offsetWidth;
     a.classList.toggle('is-static', !!this.engine.shotMode);
+    // game modes: a lower-left plaque (the hero owns the centre, sky owns the top);
+    // map scales keep the centred upper-third title card
+    a.classList.toggle('is-plaque', this.mode !== 'map' || this.engine.levelName === 'planet');
+    a.classList.toggle('is-long', String(text || '').length > 70);
     a.classList.add('is-on');
+    document.body.classList.add('rvu-arriving');
+    // phones: a short caption that gets out of the way
+    if (window.innerWidth <= 640 && !this.engine.shotMode) ms = Math.min(ms, 4600);
     const hold = this.engine.shotMode ? 1e9 : ms;
     clearTimeout(this._arrTimer);
     this._arrTimer = setTimeout(() => {
       a.classList.add('is-out');
       this._arrTimer = setTimeout(() => {
         a.classList.remove('is-on', 'is-out'); this._arrivalBusy = false;
+        if (!this._arrivalQ.length) document.body.classList.remove('rvu-arriving');
         const n = this._arrivalQ.shift(); if (n) this.arrival(n);
       }, 1400);
     }, hold);
@@ -387,18 +425,20 @@ export class UI {
   showTitle(onBegin, opts = {}) {
     const touch = this.device === 'touch';
     const word = 'REVERIES';
-    const letters = [...word].map((c, i) => `<span style="--i:${i}">${c}</span>`).join('');
+    // optical kerning for the display cut (R-E, V-E, E-R pairs close up; I opens)
+    const KERN = { RE: -0.035, EV: -0.05, VE: -0.05, ER: -0.02, RI: 0.01, IE: 0.01, ES: 0 };
+    const letters = [...word].map((c, i) => `<span style="--i:${i};--k:${KERN[c + (word[i + 1] || '')] || 0}em">${c}</span>`).join('');
     const t = h('div', 'rvu-title' + (opts.static ? ' is-static' : ''), document.body, `
       <div class="rvu-title-vignette"></div>
       <div class="rvu-title-inner">
         <div class="rvu-title-kick">a playable universe</div>
-        <h1 aria-label="Reveries">${letters}</h1>
+        <h1 aria-label="Reveries"><span class="rvu-wm">${letters}</span></h1>
         <i class="rvu-title-line"></i>
         <p class="rvu-title-tag">from the first fluctuations to the last city lights</p>
       </div>
       <div class="rvu-title-begin">${touch ? '' : `<span class="rvu-begin-g">${this.device === 'gamepad' ? this._padGlyph('A') : SVG.click.replace('<svg', '<svg class="rvu-ico"')}</span>`}<span>${touch ? 'touch to begin' : this.device === 'gamepad' ? 'press to begin' : 'click to begin'}</span></div>
-      <div class="rvu-title-foot rvu-title-l">ΛCDM&ensp;Ω<sub>m</sub> 0.31&ensp;Ω<sub>Λ</sub> 0.69&ensp;H<sub>0</sub> 67.7</div>
-      <div class="rvu-title-foot rvu-title-r">z 49 → 0&ensp;·&ensp;13.8 Gyr</div>`);
+      <div class="rvu-title-foot rvu-title-l"><b>ΛCDM</b><i></i>Ω<sub>m</sub>&thinsp;0.31<i></i>Ω<sub>Λ</sub>&thinsp;0.69<i></i>H<sub>0</sub>&thinsp;67.7</div>
+      <div class="rvu-title-foot rvu-title-r">z&thinsp;49 → 0<i></i>13.8 Gyr</div>`);
     t.setAttribute('data-ui', '');
     document.body.classList.add('rvu-titling');
     this._titleGone = false;
@@ -437,11 +477,17 @@ export class UI {
     if (L.hover !== hov) { L.hover = hov; L.e.classList.toggle('is-hover', hov); }
     const kind = opts.kind || '';
     if (L.kind !== kind) { L.kind = kind; L.e.dataset.kind = kind; }
-    const align = opts.align || (x > window.innerWidth - 180 ? 'left' : 'right');
-    if (L.align !== align) { L.align = align; L.e.dataset.align = align; }
+    const quiet = !!opts.quiet && !hov;
+    if (L.quiet !== quiet) { L.quiet = quiet; L.e.classList.toggle('is-quiet', quiet); }
+    L.pri = hov ? 3 : quiet ? 1 : 2;
+    // preferred side; the declutter pass may flip it (right → left → under) before hiding
+    L.align0 = opts.align || (x > window.innerWidth - 180 ? 'left' : 'right');
+    L.fixed = !!opts.align;
+    if (this._labels.size <= 1 && L.align !== L.align0) { L.align = L.align0; L.e.dataset.align = L.align0; }
     if (opts.color && L.color !== opts.color) { L.color = opts.color; L.e.style.setProperty('--c', opts.color); }
     const rx = Math.round(x * 2) / 2, ry = Math.round(y * 2) / 2;
     if (rx !== L.x || ry !== L.y) { L.x = rx; L.y = ry; L.e.style.transform = `translate3d(${rx}px, ${ry}px, 0)`; }
+    L.w = 22 + Math.max(String(text).length * 9.2, sub.length * 6.4); // estimated text box (no layout reads)
     if (L.gone) { L.gone = false; L.e.classList.add('is-on'); }
     return L.e;
   }
@@ -631,6 +677,13 @@ export class UI {
     const ex = ny * uz - nz * uy, ey = nz * ux - nx * uz, ez = nx * uy - ny * ux;
     const heading = Math.atan2(fx * ex + fy * ey + fz * ez, fx * nx + fy * ny + fz * nz);
     const hdeg = heading * 180 / Math.PI;
+    // phones keep the compass hidden; it surfaces for 3 s after a turn of > 30°
+    const now = performance.now();
+    if (this._hAnchor == null) this._hAnchor = hdeg;
+    let dh = Math.abs(hdeg - this._hAnchor); if (dh > 180) dh = 360 - dh;
+    if (dh > 30) { this._hAnchor = hdeg; this._peekUntil = now + 3000; }
+    const peek = now < (this._peekUntil || 0);
+    if (peek !== this._peek) { this._peek = peek; this.compass.classList.toggle('is-peek', peek); }
     const W = this.compass.clientWidth || 320;
     const tx = -(hdeg + 360) * this._ppd + W / 2;
     this.compassStrip.style.transform = `translate3d(${tx.toFixed(1)}px,0,0)`;
@@ -693,6 +746,7 @@ export class UI {
       if (l > R) { dx *= R / l; dy *= R / l; }
       this.stickKnob.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
     } else if (this._stickOn) { this._stickOn = false; this.stickRing.classList.remove('is-on'); }
+    if (game && I.touch && I.touch.lookId !== -1 && !this.touch.classList.contains('used-look')) this.touch.classList.add('used-look');
     const showTouch = (I.isTouch || this.device === 'touch') && game;
     if (showTouch !== this._touchOn) { this._touchOn = showTouch; this.touch.classList.toggle('is-touch', showTouch); }
 
@@ -711,6 +765,13 @@ export class UI {
       this.lockEl.classList.toggle('is-on', !!lock);
     }
 
+    // world labels: greedy screen-space declutter (hover > named > quiet)
+    if (this._labels.size > 1) this._declutter();
+    // adaptive ink under the HUD anchors
+    const every = this.engine.shotMode ? 2 : 18;
+    if (this._frame % every === 0 && !this.root.classList.contains('is-hidden')) this._sampleLuma();
+    this._pollLuma();
+
     // labels not refreshed this frame or last → fade
     for (const [id, L] of this._labels) {
       if (L.persist || L.gone) continue;
@@ -719,6 +780,156 @@ export class UI {
     if (this._frame % 120 === 0) for (const [id, L] of this._labels) if (L.gone && this._frame - (L.goneAt || L.seen) > 90) { L.e.remove(); this._labels.delete(id); }
 
     this._updateCompass();
+  }
+
+  _declutter() {
+    const list = [];
+    for (const L of this._labels.values()) if (!L.gone && L.x > -60) list.push(L);
+    list.sort((a, b) => (b.pri || 2) - (a.pri || 2) || a.y - b.y);
+    const kept = [];
+    // every visible anchor point is an obstacle too: a name never sits on another body
+    for (const L of list) kept.push([L.x - 5, L.y - 5, L.x + 5, L.y + 5, L]);
+    const W = window.innerWidth;
+    const boxOf = (L, al) => al === 'left' ? [L.x - 16 - L.w, L.y - 28, L.x - 4, L.y + 2]
+      : al === 'center' ? [L.x - L.w / 2, L.y + 6, L.x + L.w / 2, L.y + 26]
+      : [L.x + 4, L.y - 28, L.x + 16 + L.w, L.y + 2];
+    const free = (b, self) => {
+      if (b[0] < 6 || b[2] > W - 6 || b[1] < 4) return false;
+      for (const k of kept) if (k[4] !== self && b[0] < k[2] && b[2] > k[0] && b[1] < k[3] && b[3] > k[1]) return false;
+      return true;
+    };
+    for (const L of list) {
+      const prefs = L.fixed ? [L.align0] : L.align0 === 'left' ? ['left', 'right', 'center'] : ['right', 'left', 'center'];
+      let al = null;
+      for (const c of prefs) if (free(boxOf(L, c), L)) { al = c; break; }
+      const hit = !al && L.pri < 3; // a hovered name always shows
+      if (!al) al = L.align0;
+      if (!hit) kept.push([...boxOf(L, al), L]);
+      if (L.align !== al) { L.align = al; L.e.dataset.align = al; }
+      if (L.dc !== hit) { L.dc = hit; L.e.classList.toggle('is-dc', hit); }
+    }
+  }
+
+  /** Average brightness of the presented frame under each HUD anchor → ink scrim strength.
+   *  Shot mode reads synchronously (converges on the captured frame); live play queues the
+   *  rows into a pixel-pack buffer behind a fence and applies them a few frames later, so
+   *  the GPU never stalls on the readback. */
+  _sampleLuma() {
+    const R = this.engine.renderer;
+    if (!R || !this._regions) return;
+    let gl;
+    try { gl = R.getContext(); } catch { return; }
+    if (!gl || gl.isContextLost?.()) return;
+    const shot = this.engine.shotMode;
+    const async = !shot && typeof gl.fenceSync === 'function';
+    if (async && this._pbo?.fence) return; // previous readback still in flight
+    const W = window.innerWidth, H = window.innerHeight;
+    const dbw = gl.drawingBufferWidth, dbh = gl.drawingBufferHeight;
+    const sx = dbw / W, sy = dbh / H;
+    const titling = this.titleEl && !this._titleGone;
+    // 1. measure: which anchors are visible, and where (one layout read per region)
+    const jobs = [];
+    if (titling) {
+      const r = this.titleEl.querySelector('h1')?.getBoundingClientRect();
+      if (r && r.width > 2) jobs.push({ title: true, r });
+    } else {
+      for (const g of this._regions) {
+        const el = g.el, cs = el.childElementCount || el.textContent;
+        const r = cs ? el.getBoundingClientRect() : null;
+        const vis = !!(r && r.width > 2 && r.height > 2 && this._regionOn(el));
+        jobs.push({ g, r, vis });
+      }
+    }
+    // 2. rows to read: 3 per visible region, ≤ 48 samples per row (strided columns)
+    const rows = [];
+    for (const j of jobs) {
+      if (!j.title && !j.vis) continue;
+      const r = j.r;
+      const x0 = clamp(r.left - 10, 0, W - 2), x1 = clamp(r.right + 10, x0 + 1, W);
+      const w = Math.min(1024, Math.max(1, Math.floor((x1 - x0) * sx)));
+      j.rows = [];
+      for (let k = 0; k < 3; k++) {
+        const y = r.top + r.height * (k + 0.5) / 3;
+        const row = { x: Math.floor(x0 * sx), y: clamp(dbh - 1 - Math.floor(y * sy), 0, dbh - 1), w, off: 0 };
+        j.rows.push(row); rows.push(row);
+      }
+    }
+    let total = 0;
+    for (const row of rows) { row.off = total; total += row.w * 4; }
+    const buf = this._lbuf && this._lbuf.length >= total ? this._lbuf : (this._lbuf = new Uint8Array(Math.max(4096, total)));
+    try {
+      try { R.setRenderTarget(null); } catch { /* ignore */ }
+      if (async) {
+        const P = (this._pbo ||= { buf: gl.createBuffer(), size: 0, fence: null, jobs: null, total: 0 });
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, P.buf);
+        if (P.size < total) { gl.bufferData(gl.PIXEL_PACK_BUFFER, Math.max(4096, total), gl.STREAM_READ); P.size = Math.max(4096, total); }
+        for (const row of rows) gl.readPixels(row.x, row.y, row.w, 1, gl.RGBA, gl.UNSIGNED_BYTE, row.off);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        P.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
+        P.jobs = jobs; P.total = total; P.wait = 0;
+        return;
+      }
+      const tmp = new Uint8Array(buf.buffer, 0, buf.length);
+      for (const row of rows) gl.readPixels(row.x, row.y, row.w, 1, gl.RGBA, gl.UNSIGNED_BYTE, tmp.subarray(row.off, row.off + row.w * 4));
+    } catch { try { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); } catch { /* ignore */ } this._pbo = null; return; } // readback unsupported: static backing only
+    this._applyLuma(jobs, buf, true);
+  }
+  /** Poll the in-flight async readback (called every frame; cheap when idle). */
+  _pollLuma() {
+    const P = this._pbo;
+    if (!P || !P.fence) return;
+    let gl;
+    try { gl = this.engine.renderer.getContext(); } catch { return; }
+    const st = gl.clientWaitSync(P.fence, 0, 0);
+    if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) {
+      if (++P.wait < 30) return; // give up on a stuck fence after ~half a second
+    }
+    gl.deleteSync(P.fence); P.fence = null; P.wait = 0;
+    if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) return;
+    const buf = this._lbuf && this._lbuf.length >= P.total ? this._lbuf : (this._lbuf = new Uint8Array(Math.max(4096, P.total)));
+    try {
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, P.buf);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf, 0, P.total);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    } catch { try { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); } catch { /* ignore */ } this._pbo = null; return; }
+    this._applyLuma(P.jobs, buf, false);
+  }
+  _applyLuma(jobs, buf, snap) {
+    const lumOf = (j) => {
+      let sum = 0, n = 0, br = 0;
+      for (const row of j.rows) {
+        const step = Math.max(1, Math.floor(row.w / 48));
+        for (let i = 0; i < row.w; i += step) {
+          const o = row.off + i * 4, l = (0.2126 * buf[o] + 0.7152 * buf[o + 1] + 0.0722 * buf[o + 2]) / 255;
+          sum += l; n++; if (l > 0.5) br++;
+        }
+      }
+      return n ? clamp(0.55 * sum / n + 0.45 * br / n, 0, 1) : 0;
+    };
+    for (const j of jobs) {
+      if (j.title) { this.titleEl?.style.setProperty('--bg-l', lumOf(j).toFixed(2)); continue; }
+      const { g, r, vis } = j;
+      const L = vis ? lumOf(j) : 0;
+      g.L = snap ? L : g.L + (L - g.L) * 0.5;
+      const a = clamp((g.L - 0.08) / 0.3, 0, 1);
+      if (vis) {
+        const f = g.ink.classList.contains('is-big') ? 56 : 30;
+        const s = g.ink.style;
+        s.transform = `translate3d(${(r.left - f).toFixed(0)}px, ${(r.top - f * 0.8).toFixed(0)}px, 0)`;
+        s.width = (r.width + f * 2).toFixed(0) + 'px'; s.height = (r.height + f * 1.6).toFixed(0) + 'px';
+      }
+      g.ink.style.opacity = vis ? a.toFixed(2) : '0';
+      g.el.classList.toggle('is-bright', vis && g.L > 0.28);
+    }
+  }
+  _regionOn(el) {
+    if (el === this.compass) return this._compassOn && getComputedStyle(el).opacity > 0.05;
+    if (el === this.arrivalEl) return el.classList.contains('is-on') && !el.classList.contains('is-out');
+    if (el === this.lockEl) return el.classList.contains('is-on');
+    if (el === this.tele) return el.classList.contains('is-on');
+    if (el === this.stack) return this.hintEl.classList.contains('is-on') || this.promptEl.classList.contains('is-on');
+    return true;
   }
 
   // ---- touch buttons -------------------------------------------------------------------------------------

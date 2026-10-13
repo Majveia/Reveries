@@ -552,6 +552,12 @@ CivS civSurface(){
     float streak = civN2(vec2(uv.x * 2.3 + seed * 5.0, uv.y * 0.18));
     s.alb *= 1.0 - 0.18 * smoothstep(0.55, 0.9, streak);
     s.rough = slate ? 0.62 : 0.78;
+    // mid/far: tile rows merge into tone, so keep coarse course shadows (every 3 rows) and a
+    // per-course value drift — roofs read as laid tile, not flat sheets, at town distance
+    float cP = th * 3.0, cL = civLines(uv.y, cP, cP * 0.16, fw.y);
+    float cH = civH12(vec2(floor(uv.y / cP), seed * 7.0));
+    s.alb *= mix(1.0, (1.0 - 0.42 * cL) * (0.9 + 0.2 * cH), far);
+    s.ao *= mix(1.0, 1.0 - 0.25 * cL, far);
   } else if (id == 11) {
     // temple barrel tiles
     float P = 0.36;
@@ -575,6 +581,11 @@ CivS civSurface(){
     float glaze = mix(0.3 + 0.5 * prof * barrel, 0.45, far) * (1.0 - moss * 0.7);
     s.rough = mix(0.62, 0.34, glaze);
     s.glass = 0.55 * glaze;
+    // mid/far: coarse tile courses + the rhythm of barrel ridges (every 3 barrels) survive as tone
+    float cP = 0.38 * 3.0, cL = civLines(uv.y, cP, cP * 0.14, fw.y);
+    float rL = civLines(uv.x, P * 3.0, P * 0.5, fw.x);
+    s.alb *= mix(1.0, (1.0 - 0.38 * cL) * (1.0 - 0.22 * rL), far);
+    s.ao *= mix(1.0, 1.0 - 0.2 * cL, far);
   } else if (id == 5 || id == 27) {
     // painted metal panels (27 = rust)
     float pw = 1.4 + 1.4 * fract(seed * 5.0), ph = 1.0 + 1.0 * fract(seed * 11.0);
@@ -1174,11 +1185,11 @@ export function makeGlowMaterial(uniforms, opts = {}) {
       uCivNight: uniforms.uCivNight, uCivTime: uniforms.uCivTime,
       uSize: { value: opts.size ?? 1.2 }, uMinPx: { value: opts.minPx ?? 2.0 }, uPxAngle: { value: 0.0015 },
       uGain: { value: opts.gain ?? 6.0 }, uDayVis: { value: opts.dayVis ?? 0.0 }, uFarOnly: { value: opts.farOnly ?? 0 },
-      uNearCut: { value: opts.nearCut ?? 0 }, uConserve: { value: opts.conserve ?? 0.75 }, uMaxI: { value: opts.maxI ?? 1e4 },
+      uNearCut: { value: opts.nearCut ?? 0 }, uSpacing: { value: opts.spacing ?? 0 }, uConserve: { value: opts.conserve ?? 0.75 }, uMaxI: { value: opts.maxI ?? 1e4 },
     },
     vertexShader: /* glsl */`
       attribute vec4 aGlow; // rgb color, w = phase/blink
-      uniform float uSize, uMinPx, uPxAngle, uCivNight, uCivTime, uGain, uDayVis, uFarOnly, uNearCut, uConserve;
+      uniform float uSize, uMinPx, uPxAngle, uCivNight, uCivTime, uGain, uDayVis, uFarOnly, uNearCut, uConserve, uSpacing;
       varying vec3 vCol; varying vec2 vUv; varying float vA;
       void main(){
         vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
@@ -1202,8 +1213,10 @@ export function makeGlowMaterial(uniforms, opts = {}) {
         // keep total energy ~constant when the sprite is clamped to a minimum pixel size
         float e = (uSize * sc) / s;
         vA = vis * blink * flick * farK * nearK * mix(1.0, e * e, uConserve);
+        // once clamped sprites grow past their neighbours' spacing they merge into a bar: share the energy
+        if (uSpacing > 0.0) vA *= min(1.0, uSpacing / s);
         // lanterns are faint embers before full dark: no blown-out strings at golden hour
-        vCol = aGlow.rgb * uGain * mix(0.4, 1.0, smoothstep(0.3, 0.8, uCivNight));
+        vCol = aGlow.rgb * uGain * mix(0.25, 1.0, smoothstep(0.35, 0.85, uCivNight));
       }`,
     fragmentShader: /* glsl */`
       uniform float uMaxI;

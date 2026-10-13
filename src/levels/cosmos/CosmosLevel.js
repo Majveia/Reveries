@@ -296,6 +296,7 @@ export default class CosmosLevel {
     p.warm = 0.85 * (1 - smooth((a - 0.022) / 0.05));
     p.early = 1 - smooth((a - 0.17) / 0.2);
     p.shimmer = 1;
+    p.lattice = p.early;
     // inside, the fog-integrated column of the whole periodic box forms a uniform floor: raise the
     // black floor with it so voids stay true black and only discrete structure reads
     p.floor = 0.4 + 0.75 * inside;
@@ -479,10 +480,17 @@ export default class CosmosLevel {
       hero: async () => {
         this.mode = 'live'; this._shotP = null;
         const o = this._dbg || {};
-        this._pose(this.home, this._heroOffset((o.hd ?? 0.62) * this.L, HERO.yaw + (o.hy ?? 0.3), o.hp ?? 0.28), o.hf ?? 58, o.hs ?? 0.0, o.hl ?? 0.0);
+        this._pose(this.home, this._heroOffset((o.hd ?? 0.62) * this.L, HERO.yaw + (o.hy ?? 0.3), o.hp ?? 0.28), o.hf ?? 52, o.hs ?? 0.0, o.hl ?? 0.0);
       },
       // z≈5: the delicate proto-web, a dim ember lattice in which only the rarest peaks have ignited
-      early: async () => { this.mode = 'early'; this._shotP = { floor: 0.14, gain: 0.55, a0: 55, toe: 1.9, sharpA: 1.4, smooth: 2.6, galaxies: 0.6, lights: 0, veil: 0.3 }; this._pose(this.home, this._heroOffset(0.68 * this.L, HERO.yaw + 0.4, 0.26), 55, 0.0, 0); },
+      early: async () => {
+        // from INSIDE the young volume (short aerial perspective): the near lattice reads in depth
+        // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
+        this.mode = 'early';
+        const o = this._dbg || {};
+        this._shotP = { floor: 0.05, gain: 0.5, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 3.2, galaxies: 0.25, lights: 0, veil: 0.3, lattice: 1 };
+        this._pose(this.home, this._heroOffset((o.ed ?? 0.5) * this.L, HERO.yaw + 0.4, 0.22), o.ef ?? 55, 0.0, 0);
+      },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
         const a = this._dbg?.a ?? 0.05, d = this._dbg?.d ?? 60;
@@ -493,12 +501,18 @@ export default class CosmosLevel {
         this._pose(this.home, this._heroOffset(d, HERO.yaw + 0.5, 0.3), 50);
       },
       // the home supercluster node: filaments converge on a luminous core
-      node: async () => { this.mode = 'live'; this._shotP = { gain: 0.13, hi: 0.03, a0: 220 }; this._pose(this.home, this._heroOffset(48, HERO.yaw + 2.2, 0.22), 35, -0.12, 0); },
+      node: async () => {
+        // far enough that particle resolution never shows: the cluster's luminous gold heart (BCG +
+        // ICL + members) with the cyan filaments that feed it converging from every side
+        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.08, a0: 110 };
+        const o = this._dbg || {};
+        this._pose(this.home, this._heroOffset(o.nd ?? 70, HERO.yaw + (o.ny ?? 2.2), 0.22), o.nf ?? 40, -0.1, 0);
+      },
       // inside the web: a few Mpc off the spine of the richest filament leaving home, looking down
       // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
-        this._shotP = { near: 16, clampK: 1.6 };
+        this._shotP = { near: 22, clampK: 2.0, gain: 0.24, cap: 0.62 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
         const o = this._dbg || {};
         const { A, d } = this._filamentPair();
         const B = A.clone().add(d);
