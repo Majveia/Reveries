@@ -125,7 +125,6 @@ export default class Civilization {
   }
 
   _shotCity(s, o = {}) {
-    this._dbg = true;
     const w = this.level.world, f = s.frame, plan = s.plan;
     // the light is part of the composition: try the evening and the morning golden hour (same sun
     // elevation, mirrored azimuth) and keep whichever lets the camera put the sun where the style wants it
@@ -354,14 +353,13 @@ export default class Civilization {
           const townAng = 2 * Math.atan(Rb * 0.8 / Math.max(dC, 1));
           sc += Math.min(1, townAng / (vfov * aspect * 0.9)) * 3.0;
           // a lower, grazing view overlaps roofs in depth; a bird's-eye view flattens the town
-          sc -= Math.max(0, -eTown - 0.2) * 4 + Math.max(0, -eTown - 0.14) * 6; // keep it near eye level: roofs stack against the sky
+          const md = sh.maxDown ?? 0.2; sc -= Math.max(0, -eTown - md) * 4 + Math.max(0, -eTown - md + 0.06) * 6; // keep it near eye level: roofs stack against the sky
           if (!best || sc > best.sc) best = { sc, x, z, camY, yaw, pitch, vfov, tod };
         }
       }
     }
     }
     w.setTimeOfDay(best?.tod ?? times[0].tod, s.site.dir);
-    if (this._dbg) { f.sunLocal(w.sunDir, sunL); const sn = this.level.sun; console.warn('[civ-dbg] sun', sn?.intensity, sn?.color?.getHexString?.(), 'amb', this.level.hemi?.intensity ?? this.level.ambient?.intensity); console.warn('[civ-dbg] times', JSON.stringify(times), 'best', JSON.stringify(best), 'sunL', sunL.toArray().map((v) => v.toFixed(3)).join(','), 'sunA', Math.atan2(sunL.z, sunL.x).toFixed(2), 'tod', w.timeOfDay); }
     if (!best) { // fallback: high above the centre
       best = { x: c[0] + Rb, z: c[1], camY: ch + 120, yaw: Math.PI, pitch: -0.25, vfov: 0.8 };
     }

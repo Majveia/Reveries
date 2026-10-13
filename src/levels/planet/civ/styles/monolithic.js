@@ -31,7 +31,7 @@ export function roadMat(road, zone) {
 }
 export const plazaMat = () => G.SANDSTONE;
 export const shotSun = 0.24; // low raking late-afternoon light through the dust: slabs split into lit and shadow planes
-export const shot = { dist: 1.0, height: 45, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.5 };
+export const shot = { dist: 1.35, height: 85, sunAngle: 1.75, lmLift: 0.25, fov: 52, sunPref: 1.6, maxDown: 0.34 }; // a high Arrakeen vantage over the slabs: dunes fall away below the lens
 
 function slab(ctx, lot, w, d, H) {
   const { rng, pal } = ctx, B = ctx.B;

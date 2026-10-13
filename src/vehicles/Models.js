@@ -47,10 +47,10 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   };
   paint.push(finish(loft([
     { z: -4.95, w: 0.5, h: 0.52, y: 0.06, n: 2.2 },
-    { z: -4.5, w: 0.7, h: 0.7, y: 0.08, n: 2.6 },
-    { z: -3.4, w: 0.84, h: 0.8, y: 0.1, n: 3.0 },
-    { z: -2.0, w: 0.82, h: 0.78, y: 0.08, n: 3.0, top: 1.04 },
-    { z: -0.6, w: 0.68, h: 0.66, y: 0.04, n: 2.8 },
+    { z: -4.5, w: 0.6, h: 0.64, y: 0.08, n: 2.6 },
+    { z: -3.4, w: 0.66, h: 0.72, y: 0.1, n: 3.0 },
+    { z: -2.0, w: 0.64, h: 0.7, y: 0.08, n: 3.0, top: 1.04 },
+    { z: -0.6, w: 0.58, h: 0.62, y: 0.04, n: 2.8 },
     { z: 0.6, w: 0.54, h: 0.54, y: 0.0, n: 2.6 },
     { z: 1.8, w: 0.44, h: 0.44, y: -0.04, n: 2.4 },
     { z: 3.0, w: 0.33, h: 0.32, y: -0.07, n: 2.2 },
@@ -60,15 +60,15 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
 
   // dorsal spine from the canopy to the engine
   paint.push(finish(loft([
-    { z: -4.3, w: 0.16, h: 0.12, y: 0.8, n: 2.2 },
-    { z: -3.0, w: 0.3, h: 0.22, y: 0.86, n: 2.6 },
-    { z: -1.4, w: 0.34, h: 0.22, y: 0.8, n: 2.6 },
-    { z: -0.3, w: 0.3, h: 0.2, y: 0.6, n: 2.4 },
+    { z: -4.3, w: 0.14, h: 0.1, y: 0.62, n: 2.2 },
+    { z: -3.0, w: 0.26, h: 0.2, y: 0.7, n: 2.6 },
+    { z: -1.4, w: 0.28, h: 0.2, y: 0.66, n: 2.6 },
+    { z: -0.3, w: 0.26, h: 0.18, y: 0.52, n: 2.4 },
     { z: 0.0, w: 0.12, h: 0.08, y: 0.5, n: 2 },
   ], { seg: 24 }), RED, UVS));
 
   // canopy: big clear bubble well forward, framed, with a sill
-  const CZ = 1.25, CY = 0.3;
+  const CZ = 1.25, CY = 0.36;
   const can = new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.56);
   can.scale(0.5, 0.52, 1.55); can.translate(0, CY, CZ);
   glass.push(finish(can, 0xffffff, 1));
@@ -78,17 +78,18 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   metal.push(finish(bow, GUN, 1));
   // pilot: seat back, torso, helmet with a lit visor; instrument coaming glows under the glass
   metal.push(finish(box(0.36, 0.5, 0.1, 0, 0.52, 0.42), DARK, 2));
-  paint.push(finish(new THREE.SphereGeometry(0.2, 12, 10).scale(1.1, 1.0, 0.8).translate(0, 0.46, 0.66), col('#3b4048'), 2));
-  paint.push(finish(new THREE.SphereGeometry(0.15, 16, 12).scale(1, 1.08, 1.1).translate(0, 0.76, 0.72), LIGHT, 2));
-  glass.push(finish(new THREE.SphereGeometry(0.1, 12, 8).scale(1.15, 0.6, 0.7).translate(0, 0.77, 0.81), 0xffffff, 2));
+  paint.push(finish(new THREE.SphereGeometry(0.2, 12, 10).scale(1.1, 1.0, 0.8).translate(0, 0.52, 0.66), col('#3b4048'), 2));
+  paint.push(finish(new THREE.SphereGeometry(0.15, 16, 12).scale(1, 1.08, 1.1).translate(0, 0.82, 0.72), LIGHT, 2));
+  glass.push(finish(new THREE.SphereGeometry(0.1, 12, 8).scale(1.15, 0.6, 0.7).translate(0, 0.83, 0.81), 0xffffff, 2));
   metal.push(finish(box(0.62, 0.12, 0.3, 0, 0.4, 1.75), DARK, 2));
 
   // nose lance (the swordfish bill): thick root, collars, muzzle
-  metal.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 7.0], 0.115, 0.05, 16), STEEL, 2));
-  metal.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 4.8], 0.19, 0.16, 18), GUN, 2));
-  metal.push(finish(cyl([0, -0.1, 5.5], [0, -0.1, 5.66], 0.12, 0.115, 14), TRIM, 2));
-  metal.push(finish(cyl([0, -0.1, 6.95], [0, -0.1, 7.4], 0.08, 0.065, 12), GUN, 2));
-  hot.push(finish(cyl([0, -0.1, 7.4], [0, -0.1, 7.42], 0.045, 0.045, 10), col('#6fdcff', 0.12), 1, 0, 0));
+  // slim needle (a rapier, not a cannon): faired into the nose, thin collars
+  metal.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 7.0], 0.07, 0.035, 16), STEEL, 2));
+  paint.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 5.0], 0.12, 0.075, 18), RED, UVS));
+  metal.push(finish(cyl([0, -0.1, 5.5], [0, -0.1, 5.6], 0.075, 0.07, 14), TRIM, 2));
+  metal.push(finish(cyl([0, -0.1, 6.95], [0, -0.1, 7.4], 0.05, 0.04, 12), GUN, 2));
+  hot.push(finish(cyl([0, -0.1, 7.4], [0, -0.1, 7.42], 0.03, 0.03, 10), col('#6fdcff', 0.12), 1, 0, 0));
   for (const s of [1, -1]) metal.push(finish(cyl([0.3 * s, -0.36, 1.4], [0.3 * s, -0.36, 3.4], 0.05, 0.04, 8), GUN, 2));
 
   // rear engine: nacelle with a deep open bell; the cavity glows (hot material)
@@ -116,7 +117,7 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   }
 
   // ---- wings: big swept planform, anhedral, cream band near the tip
-  const tipX = 5.1, tipA = 0.12, tipY = -0.08 - tipX * Math.sin(tipA);
+  const tipX = 5.1, tipA = 0.155, tipY = -0.08 - tipX * Math.sin(tipA);
   const wingPlan = [[0.65, -0.3], [4.95, -3.35], [5.12, -3.5], [5.15, -4.9], [4.75, -4.95], [0.65, -3.95]];
   const wingPaint = (x, y, z, nx, ny, nz, o) => {
     const ax = Math.abs(x);
@@ -138,7 +139,7 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   }
   // wingtip engine pods: bold two-tone (cream intake cowl, red body, gunmetal tail) with glowing bells
   for (const s of [1, -1]) {
-    const pod = lathe([[0.001, -5.2], [0.16, -5.2], [0.21, -5.5], [0.25, -5.53], [0.29, -5.2], [0.3, -4.4], [0.29, -3.2], [0.22, -2.3], [0.1, -1.95], [0.001, -1.88]], 28);
+    const pod = lathe([[0.001, -5.2], [0.16, -5.2], [0.21, -5.5], [0.245, -5.53], [0.26, -5.2], [0.25, -4.4], [0.235, -3.2], [0.17, -2.3], [0.08, -1.95], [0.001, -1.86]], 28);
     pod.translate(tipX * s, tipY, 0);
     paint.push(finish(pod, (x, y, z, nx, ny, nz, o) => o.copy(z < -4.75 ? GUN : z > -2.85 ? LIGHT : z > -3.05 ? DARK : RED), 0.8));
     const g0 = hot.length; cavity(0.16, 0.21, -5.2, -5.5, 20);

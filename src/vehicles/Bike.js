@@ -93,6 +93,8 @@ export class Bike {
     if (!input && camD > 600 * 600 && this.velocity.lengthSq() < 0.01) { this.sleeping = true; this.object3d.visible = camD < 6000 * 6000; this.glow.mesh.visible = false; return; }
     this.sleeping = false;
     this.object3d.visible = true;
+    // screenshot hold: the pose is frozen after the scripted run (cloth/particles settle, no smear)
+    if (this._holdForShot) { this._fx(dt, t, input); return; }
     const steps = Math.min(4, Math.max(1, Math.ceil(dt / (1 / 60))));
     const h = dt / steps;
     for (let i = 0; i < steps; i++) this._step(h, input);

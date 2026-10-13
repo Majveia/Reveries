@@ -348,7 +348,7 @@ export class Ship {
     });
     const cold = this.landed && !driven;
     const hotI = cold ? 0.18 : 1.3 + thr * 2.6 + this.boost * 2.2; // capped ~6: hot, but keeps its hue
-    M.hotMat.color.setRGB(lerp(1, 0.7, sp), lerp(1, 0.85, sp), 1).multiplyScalar(hotI);
+    M.hotMat.color.setRGB(lerp(1, 0.5, sp), lerp(0.72, 0.78, sp), lerp(0.45, 1, sp)).multiplyScalar(hotI);
     this.glows.forEach((g, i) => {
       g.mesh.visible = !cold;
       g.uniforms.uI.value = (0.6 + thr * 1.6 + this.boost * 2.0) * (i ? 0.8 : 1);

@@ -551,7 +551,12 @@ export default class Vehicles {
         const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.9 * sg, 0.85, -3.7), target: new THREE.Vector3(0.35 * sg, 1.25, 20) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5; };
         return tryS(1) <= tryS(-1) ? 1 : -1;
       })();
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.9) * side, sp.by ?? 0.85, -(sp.bz ?? 3.7)), target: new THREE.Vector3(0.35 * side, 1.25, 20), fov: sp.fov ?? 64, minClear: 0.45, bankRoll: 0.1 };
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 2.1) * side, sp.by ?? 1.05, -(sp.bz ?? 4.8)), target: new THREE.Vector3(-0.9 * side, 1.35, 20), fov: sp.fov ?? 62, minClear: 0.45, bankRoll: 0.1 };
+      bike._holdForShot = true;
+      // the rider's cloth was not stepped during the scripted run: make it re-settle at the seat
+      // (otherwise its interpolated anchors stretch it back along the 60 m path → a 'pole' in frame)
+      const S = this.level.player?.scarf;
+      if (S) { S._prevA = null; S.ready = false; }
       this._updateShotCam();
       return true;
     }
@@ -594,7 +599,7 @@ export default class Vehicles {
       const lft = new THREE.Vector3().crossVectors(upS, fw).normalize();
       let best = null, bs = -Infinity;
       for (let k = 0; k < 18; k++) {
-        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(17, 24), h = R.range(0.8, 4.5);
+        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(14, 20), h = R.range(0.8, 4.5);
         const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
         const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
         const view = ship.position.clone().sub(cam).normalize();
