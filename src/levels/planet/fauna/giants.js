@@ -62,8 +62,18 @@ void rig(inout vec3 p, inout vec3 n) {
   // three petal lips peel open and curl back: forward along T at the lobe centres, retracted between them
   // petals peel open forward-and-out (curling back at the tips), notches retract: a real three-jawed maw
   float tip = smoothstep(0.985, 1.0, s);
-  p = C + off * r + T * maw * (lobes * 1.45 - 0.55) * uRad * 0.6 - T * tip * lobes * uRad * 0.35 - off * maw * maw * (1.0 - lobes) * uRad * 0.35;
-  n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.5 * maw);
+  vec3 surf = C + off * r + T * maw * (lobes * 1.45 - 0.55) * uRad * 0.6 - T * tip * lobes * uRad * 0.35 - off * maw * maw * (1.0 - lobes) * uRad * 0.35;
+  if (aGlow > 1.5) {
+    // a real 3D tooth: a cone rooted on the inner wall, raked inward and back toward the gullet (lamprey rows)
+    vec3 D = normalize(-off + T * aRig.w);
+    vec3 L1 = normalize(cross(D, T)), L2 = normalize(cross(L1, D));
+    float h = p.z;
+    p = surf - off * uRad * 0.04 + D * h * aRig.z * uRad + (L1 * p.x + L2 * p.y) * uRad * aRig.z * 0.26 * (1.0 - h);
+    n = normalize(L1 * position.x + L2 * position.y + D * 0.35);
+  } else {
+    p = surf;
+    n = normalize(off - T * clamp(dr, -2.0, 2.0) - T * 0.5 * maw);
+  }
   vWormY = p.y;
 }
 `;
@@ -92,6 +102,17 @@ function buildWormGeo(rings, around) {
     const a = i * (around + 1) + j, b = a + around + 1;
     idx.push(a, a + 1, b, b, a + 1, b + 1); // outward-facing (front = hide, back = inside the maw)
   }
+  // teeth: concentric rings receding into the throat, big at the lips, smaller and denser deeper in
+  const TS = 7;
+  for (const [s0, nT, len, back] of [[0.991, 18, 0.5, -0.25], [0.983, 22, 0.42, -0.45], [0.975, 26, 0.34, -0.6], [0.967, 30, 0.26, -0.75], [0.959, 30, 0.2, -0.9]]) {
+    for (let t = 0; t < nT; t++) {
+      const a0 = ((t + (nT % 4) * 0.25 + s0 * 37) / nT) * TAU, l = len * (0.75 + 0.5 * vnoise(t * 3.1, s0 * 90, 1.7));
+      const b0 = pos.length / 3;
+      for (let k = 0; k < TS; k++) { const q = (k / TS) * TAU; pos.push(Math.cos(q), Math.sin(q), 0); nor.push(Math.cos(q), Math.sin(q), 0); col.push(0.5, 0.45, 0.36); rigA.push(s0, a0, l, back); glow.push(2); }
+      pos.push(0, 0, 1); nor.push(0, 0, 1); col.push(0.62, 0.58, 0.5); rigA.push(s0, a0, l, back); glow.push(2);
+      for (let k = 0; k < TS; k++) idx.push(b0 + k, b0 + (k + 1) % TS, b0 + TS);
+    }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
@@ -114,6 +135,13 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   f = clamp((f - 0.5) * (1.0 + (hv - 0.5) * 0.6) + 0.5, 0.0, 1.0);
   float ang = atan(p.y, p.x);
   float top = p.y * 0.5 + 0.5;
+  if (glow > 1.5) {
+    // ivory enamel, stained at the root, receding rows darken into the gullet
+    float dRow = smoothstep(0.993, 0.958, s);
+    col = mix(vec3(0.16, 0.11, 0.07), vec3(0.62, 0.57, 0.47), smoothstep(0.0, 0.7, p.z)) * mix(1.0, 0.22, dRow) * (0.85 + 0.3 * faNoise(vec3(p.xy * 3.0, s * 900.0)));
+    glow = 0.0;
+    return;
+  }
   if (!gl_FrontFacing) {
     // inside the maw: wet dark flesh, concentric rows of pale crystalline teeth, a furnace glow deep in the throat
     float depth = smoothstep(1.0, 0.94, s);
@@ -121,8 +149,10 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
     float tooth = faLine(fract(ang * 15.0 / 6.2831853 + floor(s * 620.0 / 4.0) * 0.5) - 0.5, 0.2 * (1.0 - rowF)) * smoothstep(0.0, 0.2, rowF) * (1.0 - smoothstep(0.55, 0.85, rowF));
     float wet = faNoise(vec3(s * 300.0, p.x * 6.0, p.y * 6.0));
     // a dark wet cavern: ivory teeth crowd the lips, the throat falls away into near-black with a faint ember far down
-    col = mix(vec3(0.045, 0.014, 0.011) * (0.7 + 0.6 * wet), vec3(0.32, 0.28, 0.22), tooth * (1.0 - depth * 0.8)) * mix(1.0, 0.18, depth);
-    glow = max(glow, pow(depth, 4.0) * 0.16 + 0.004);
+    col = mix(vec3(0.045, 0.014, 0.011) * (0.7 + 0.6 * wet), vec3(0.14, 0.1, 0.08), tooth * 0.5 * (1.0 - depth * 0.8)) * mix(1.0, 0.18, depth);
+    // wet ribbed gullet: concentric folds catching a sheen
+    col *= 0.75 + 0.5 * smoothstep(0.3, 0.9, sin(s * 620.0 * 1.4 + wet * 2.0) * 0.5 + 0.5);
+    glow = max(glow, pow(depth, 4.0) * 0.05 + 0.002);
     return;
   }
   float seam = 1.0 - smoothstep(0.0, 0.04 + 0.03 * hv, min(f, 1.0 - f));

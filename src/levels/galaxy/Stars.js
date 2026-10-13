@@ -191,8 +191,9 @@ void main(){
   float T, L;
   float pick = fract(aRnd.w * 71.3);
   float lf = fract(aRnd.w * 517.3);
-  if (pick < fy * 0.35) { T = mix(9000.0, 28000.0, l * l); L = min(3000.0, 4.0 * pow(1.0 - lf * 0.999, -1.25)); }
-  else if (pick < 0.035) { T = mix(3700.0, 5000.0, l); L = min(1500.0, 6.0 * pow(1.0 - lf * 0.999, -0.9)); }    // K/M giants (orange, not red)
+  // mixed populations (depth + colour cues): blue-white A/B stars everywhere (more in the arms), K/M giants
+  if (pick < fy * 0.35 + 0.07) { T = mix(8500.0, 28000.0, l * l); L = min(3000.0, 3.0 * pow(1.0 - lf * 0.999, -1.25)); }
+  else if (pick < fy * 0.35 + 0.19) { T = mix(3300.0, 4900.0, l); L = min(1500.0, 3.0 * pow(1.0 - lf * 0.999, -0.95)); }    // K/M giants
   // visible field stars are a flux-limited sample: mostly F/G/K, a few A — dim M dwarfs barely register
   else { T = mix(4700.0, 10500.0, pow(l, 1.1)); L = min(60.0, 0.12 * pow(1.0 - lf * 0.9995, -1.0)); }
   vec4 mv = modelViewMatrix * vec4(p, 1.0);

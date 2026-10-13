@@ -264,11 +264,11 @@ function whaleSurface(style) {
 }
 
 const WHALE_STYLE = {
-  ghibli: { back: '#2a3a52', belly: '#e2ddd2', mark: '#f4efe4' },
+  ghibli: { back: '#22324a', belly: '#b9b8b2', mark: '#e8e2d4' },
   moebius: { back: '#d77a6a', belly: '#fde6d2', mark: '#3fb0a6' },
-  pandora: { back: '#1a2648', belly: '#8ab0c8', mark: '#9ad8ff', glow: '#38f6ff' },
+  pandora: { back: '#121a34', belly: '#3a4a66', mark: '#6a9ac8', glow: '#38f6ff' },
   wukong: { back: '#3a3c3e', belly: '#cfcbc2', mark: '#e8e2d4' },
-  default: { back: '#4a5868', belly: '#d8d4cc', mark: '#ece6da' },
+  default: { back: '#3e4a5a', belly: '#b4b0a8', mark: '#e0dace' },
 };
 
 const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _u = new THREE.Vector3(), _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3();
@@ -303,6 +303,18 @@ export class Floaters {
       this.jPalette = glow.map((h) => new THREE.Color(h));
       fauna.root.add(this.jMesh);
       this._jRng = rng;
+      // light pools: each glowing bell spills soft light onto the grass tops beneath it (additive ground disc, night only)
+      const pg = new THREE.PlaneGeometry(2, 2); pg.rotateX(-Math.PI / 2);
+      this.pU = { uNight: this.jU.uNight };
+      this.pMesh = new THREE.InstancedMesh(pg, new THREE.ShaderMaterial({
+        uniforms: this.pU, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        vertexShader: `varying vec2 vUv; varying vec3 vC; void main() { vUv = position.xz; vC = instanceColor; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform float uNight; varying vec2 vUv; varying vec3 vC; void main() { float r2 = dot(vUv, vUv); float a = exp(-r2 * 4.0) * (1.0 - smoothstep(0.7, 1.0, r2)); gl_FragColor = vec4(vC * a * uNight, 1.0); }`,
+      }), this.jMax);
+      this.pMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.jMax * 3), 3);
+      this.pMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.pMesh.frustumCulled = false; this.pMesh.count = 0; this.pMesh.renderOrder = 2;
+      fauna.root.add(this.pMesh);
     }
     if (whales) {
       const style = WHALE_STYLE[A] || WHALE_STYLE.default;
@@ -311,7 +323,7 @@ export class Floaters {
       // living wet hide: a rough skin under a thin clear coat (no brushed-metal sheen)
       // matte leathery hide (no chrome clear coat) + aerial perspective: at 1.5–2 km the leviathan sinks into the sky haze
       this.wHaze = { value: new THREE.Color(0.5, 0.6, 0.75) };
-      const mats = rigMaterial({ roughness: 0.78 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.3, aoMin: 0.6, surface: whaleSurface(style), haze: { color: this.wHaze, dist: 2600, max: 0.6 } });
+      const mats = rigMaterial({ roughness: 0.78 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.3, aoMin: 0.6, surface: whaleSurface(style), haze: { color: this.wHaze, dist: 2600, max: 0.34 }, rim: 0.55 });
       mats.mat.side = THREE.DoubleSide;
       const { mesh, anim } = makeInstanced(geo, mats, 8, { shadow: true });
       mesh.receiveShadow = true;
@@ -405,6 +417,25 @@ export class Floaters {
         n++;
       }
       this.jMesh.count = n;
+      if (this.pMesh) {
+        const pa = this.pMesh.instanceMatrix.array, pc = this.pMesh.instanceColor.array, Rw = this.world.radius;
+        let m = 0;
+        for (let i = 0; i < this.jellies.length && fa.night > 0.05; i++) {
+          const j = this.jellies[i], P = j.p || j.base;
+          if (j._gh === undefined || ((this._pf = (this._pf || 0) + 1) % 23 === i % 23)) { _u.copy(P).normalize(); j._gh = Math.max(this.world.heightAt(_u), this.world.hasOcean ? this.world.seaLevel : -1e9); }
+          _u.copy(P).normalize();
+          const hgt = P.length() - Rw - j._gh;
+          if (hgt > 60) continue;
+          const rad = j.size * 2.2 + hgt * 0.45, k = j.glow * 0.5 * (j.size / 3) * Math.min(1, 9 / Math.max(hgt, 3)) ** 1.2;
+          _v.copy(_u).multiplyScalar(Rw + j._gh + 0.55);
+          tangentBasis(_u, _t1, _t2);
+          writeInstance(pa, m, _v, anchor, _t1, _u, rad);
+          const c0 = this.jPalette[j.col];
+          pc[m * 3] = c0.r * k; pc[m * 3 + 1] = c0.g * k; pc[m * 3 + 2] = c0.b * k;
+          m++;
+        }
+        this.pMesh.count = m; this.pMesh.instanceMatrix.needsUpdate = true; this.pMesh.instanceColor.needsUpdate = true;
+      }
       this.jMesh.instanceMatrix.needsUpdate = true; this.jAnim.needsUpdate = true; this.jMesh.instanceColor.needsUpdate = true;
     }
     if (this.wMesh) {
@@ -429,13 +460,14 @@ export class Floaters {
       this.wMesh.instanceMatrix.needsUpdate = true; this.wAnim.needsUpdate = true;
       this.wU.uGlowColor.value.copy(this.wGlow).multiplyScalar(0.05 + 2.5 * fa.night);
       const lt = fa.level.lighting;
-      if (lt) this.wHaze.value.setRGB(lt.skyColor.r * 2.0 + lt.keyColor.r * 0.03, lt.skyColor.g * 2.0 + lt.keyColor.g * 0.03, lt.skyColor.b * 2.0 + lt.keyColor.b * 0.03);
+      // aerial perspective: the in-scatter colour of the sky near the horizon (never brighter than the sky itself), sinking toward black at night
+      if (lt) { const k = 0.95 * (1 - 0.85 * fa.night); this.wHaze.value.setRGB(lt.skyColor.r * k + lt.keyColor.r * 0.02 * (1 - fa.night), lt.skyColor.g * k + lt.keyColor.g * 0.02 * (1 - fa.night), lt.skyColor.b * k + lt.keyColor.b * 0.02 * (1 - fa.night)); }
     }
   }
 
   clearForced() { this.whales = this.whales.filter((w) => !w.forced); }
 
   dispose() {
-    for (const m of [this.jMesh, this.wMesh]) if (m) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); m.customDepthMaterial?.dispose(); }
+    for (const m of [this.jMesh, this.wMesh, this.pMesh]) if (m) { m.removeFromParent(); m.geometry.dispose(); m.material.dispose(); m.customDepthMaterial?.dispose(); }
   }
 }

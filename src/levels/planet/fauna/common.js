@@ -47,18 +47,25 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   // opts.haze: { color: {value: Color}, dist, max } — aerial perspective for creatures kilometres away
   const hz = opts.haze;
   if (hz) { U.uFaHaze = hz.color; U.uFaHazeDist = { value: hz.dist ?? 2500 }; U.uFaHazeMax = { value: hz.max ?? 0.85 }; }
+  // opts.hair: Kajiya-Kay strand highlights along a combed hair flow (body axis, down the legs);
+  // opts.rim: sky-tinted edge fuzz + sun forward-scatter through the silhouette (fur, hide, membranes)
+  if (opts.hair || opts.rim) {
+    mat.defines = { ...(mat.defines || {}) };
+    if (opts.hair) mat.defines.FA_HAIR = opts.hair.toFixed(3);
+    if (opts.rim) mat.defines.FA_RIM = opts.rim.toFixed(3);
+  }
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     if (hz) sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 uFaHaze; uniform float uFaHazeDist; uniform float uFaHazeMax;')
       .replace('#include <fog_fragment>', '#include <fog_fragment>\n{ float faD = length(vFaUp - cameraPosition); gl_FragColor.rgb = mix(gl_FragColor.rgb, uFaHaze, (1.0 - exp(-faD / uFaHazeDist)) * uFaHazeMax); }');
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\n' + head + '\nvarying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;')
+      .replace('#include <common>', '#include <common>\n' + head + '\nvarying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN; varying vec3 vFaT;')
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\nvec3 faPos = position;\nvFaObj = position; vFaObjN = normal;\nvFaAO = mix(' + aoMin + ', 1.0, smoothstep(-0.85, 0.45, normal.y));\nrig(faPos, objectNormal);\nvGlow = aGlow;')
       .replace('#include <begin_vertex>', 'vec3 transformed = faPos;')
-      .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec4 faW = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nfaW = instanceMatrix * faW;\n#endif\nvFaUp = (modelMatrix * faW).xyz; }');
+      .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec4 faW = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nfaW = instanceMatrix * faW;\n#endif\nvFaUp = (modelMatrix * faW).xyz; }' + HAIR_VERT);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nuniform float uFTime;\nvarying float vGlow; varying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN;\n' + FRAG_NOISE + surf)
+      .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nuniform float uFTime;\nvarying float vGlow; varying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN; varying vec3 vFaT;\n' + FRAG_NOISE + surf)
       .replace('#include <color_fragment>', '#include <color_fragment>\nfloat faGlow = vGlow;\n' + (surf ? 'faSurface(vFaObj, normalize(vFaObjN), diffuseColor.rgb, faGlow);\n' : '') + (opts.surfaceMain || ''))
       .replace('#include <lights_fragment_end>', `{
   vec3 faWN = inverseTransformDirection(geometryNormal, viewMatrix);
@@ -70,6 +77,7 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   iblIrradiance = mix(vec3(dot(iblIrradiance, vec3(0.2126, 0.7152, 0.0722))), iblIrradiance, faSat) * faK;
   radiance *= mix(0.6, 1.0, vFaAO);
 }
+${HAIR_FRAG}
 #include <lights_fragment_end>`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uGlowColor * faGlow;');
   };
@@ -84,6 +92,46 @@ export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
   depth.customProgramCacheKey = () => 'fauna-depth-' + key;
   return { mat, depth };
 }
+
+const HAIR_VERT = `
+#if defined(FA_HAIR)
+{ vec3 faT = aRig.x > 0.5 ? vec3(0.0, -1.0, 0.05) : (aRig.z > 0.0 ? vec3(0.0, -0.75, -0.6) : vec3(0.0, -0.3, -1.0));
+#ifdef USE_INSTANCING
+  faT = mat3(instanceMatrix) * faT;
+#endif
+  vFaT = normalize(mat3(modelViewMatrix) * faT); }
+#endif
+`;
+const HAIR_FRAG = /* glsl */ `
+#if defined(FA_HAIR) || defined(FA_RIM)
+{
+  vec3 faN = normalize(normal), faV = normalize(vViewPosition);
+  float faNV = clamp(dot(faN, faV), 0.0, 1.0);
+#if NUM_DIR_LIGHTS > 0
+  vec3 faL = directionalLights[0].direction; vec3 faLC = directionalLights[0].color;
+#else
+  vec3 faL = vec3(0.0, 1.0, 0.0); vec3 faLC = vec3(0.0);
+#endif
+#ifdef FA_RIM
+  // edge fuzz lit by the sky (soft silhouettes), and the sun scattering through the rim when backlit
+  float faFr = pow(1.0 - faNV, 3.0);
+  irradiance *= 1.0 + faFr * FA_RIM * 1.4;
+  iblIrradiance *= 1.0 + faFr * FA_RIM * 1.4;
+  float faFs = pow(max(0.0, dot(-faV, faL)), 3.0) * pow(1.0 - faNV, 2.0);
+  reflectedLight.directDiffuse += faLC * faFs * FA_RIM * 0.5 * (diffuseColor.rgb + 0.06) * vFaAO;
+#endif
+#ifdef FA_HAIR
+  // Kajiya-Kay: a white primary lobe along the strands + a shifted, albedo-tinted secondary lobe
+  vec3 faT = normalize(vFaT - faN * dot(vFaT, faN));
+  vec3 faHv = normalize(faL + faV);
+  float faT1 = dot(normalize(faT + faN * 0.12), faHv), faT2 = dot(normalize(faT - faN * 0.22), faHv);
+  float faK1 = pow(sqrt(max(0.0, 1.0 - faT1 * faT1)), 80.0), faK2 = pow(sqrt(max(0.0, 1.0 - faT2 * faT2)), 16.0);
+  float faNL = smoothstep(-0.05, 0.35, dot(faN, faL));
+  reflectedLight.directSpecular += faLC * faNL * vFaAO * FA_HAIR * (faK1 * 0.05 + faK2 * 0.09 * diffuseColor.rgb);
+#endif
+}
+#endif
+`;
 
 /** Fragment-stage value noise for per-pixel creature patterns (stable in rest-pose object space). */
 const FRAG_NOISE = /* glsl */ `

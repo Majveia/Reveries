@@ -122,7 +122,7 @@ void main(){
       float ay = abs(pm.y - wy);
       // bulge/bar: smooth unresolved light (M31, NGC 1300) - no shear, no cloud modulation
       float gC = smoothstep(uCoreR * 0.55, uCoreR * 1.25, rr);
-      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * 1.6 * gC;
+      vec3 pmS = pm + vec3(nsh.x - 0.5, 0.0, nsh.z - 0.5) * ay * mix(0.9, 1.6, uInside) * gC;
       vec4 m = galMap(pmS, max(lod + 1.7 * log2(1.0 + ay / uHYoung), 0.0));
       vec4 mS = galMap(pmS, max(lod + 3.0, 0.0));
       // dust is sampled sharper than the light (no height LOD bias, one level finer) and given a
@@ -132,7 +132,7 @@ void main(){
       float ya = pa.y - wy, yb = pb.y - wy;
       float rTap = 1.0 - smoothstep(0.78 * uExtent, 0.98 * uExtent, rr);   // the bounding cylinder is never visible
       // the lane swells and pinches; seen edge-on it stays one thin opaque slit (NGC 891)
-      float hDv = uHDust * mix(0.6 + 0.3 * nsh.y, 0.55 + 0.9 * nsh.y, grazeK);
+      float hDv = uHDust * mix(0.6, mix(0.6 + 0.3 * nsh.y, 0.55 + 0.9 * nsh.y, grazeK), gC);
       float det = 1.0;
       if (uDetail > 0.0 && tm < 3.0) {
         vec4 n1 = texture(uNoise, pm * 1.7);
@@ -164,7 +164,7 @@ void main(){
         float xn = texture(uNoise, pm * vec3(0.22, 0.6, 0.22) + 0.31).b;
         float xn2 = texture(uNoise, pm * vec3(0.9, 1.8, 0.9) + 0.57).r;
         float exB = smoothstep(max(uBulgeScale * 0.8, 0.09 * uR), max(uBulgeScale * 2.2, 0.3 * uR), length(pm.xz));   // keep bulge + bar light smooth (no smoke)
-        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 2.8) * (0.4 + xn2) * 1.5 * exB;
+        tau += mS.b * galSeg(ya, yb, uHDust * 4.0) * seg * uKappa * pow(xn, 3.4) * (0.4 + xn2) * 1.25 * exB;
       }
       vec3 cOld = mix(mix(uColOld, vec3(0.95, 0.9, 0.86), uInside), vec3(0.78, 0.82, 1.0), smoothstep(0.08 * uR, 0.55 * uR, length(pm.xz)) * 0.75);
       vec3 cY = mix(uColYoung, vec3(0.8, 0.88, 1.0), smoothstep(0.3, 1.6, m.r) * 0.6 * (1.0 - uInside));   // white-blue arm ridges

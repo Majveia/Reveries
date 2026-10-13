@@ -55,8 +55,8 @@ export const PALETTE = {
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#625b4e'),
-  suitDark: lin('#3d3934'),
+  suit: lin('#857a63'), // mid khaki: holds a distinct value against dark ground / bark
+  suitDark: lin('#4c463d'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
   scarf: lin('#a3182a'),
@@ -601,7 +601,12 @@ function makePieces(spec, body) {
 
   // ---- helmet ---------------------------------------------------------------------------
   const HC = [0, 1.668, 0.014];
-  const helmetOuter = (x, y, z) => {
+  // Heroic proportions: the whole helmet assembly is authored at its old size and shrunk
+  // about the neck seal (HS), so it no longer reads as a chibi 'bobble head'.
+  const HS = HELM_S, H0 = HELM_P0;
+  const hm = (fn) => (x, y, z) => fn(H0[0] + (x - H0[0]) / HS, H0[1] + (y - H0[1]) / HS, H0[2] + (z - H0[2]) / HS);
+  const hd = (fn) => { const g = hm(fn); return (x, y, z) => g(x, y, z) * HS; };
+  const helmetOuter0 = (x, y, z) => {
     let d = sdEllipsoid(x, y, z, HC[0], HC[1] + 0.004, HC[2] - 0.016, 0.124, 0.134, 0.149); // longer, less of a ball
     // faceted crown: bevelled planes turn the dome into a designed, angular shell
     const px = x - HC[0], py = y - HC[1], pz = z - HC[2];
@@ -615,6 +620,7 @@ function makePieces(spec, body) {
     for (const s of [1, -1]) d = smin(d, sdRoundBox(x, y, z, [s * 0.078, 1.6, 0.06], norm([s, 0, 0.45]), [0, 1, 0], norm([-s * 0.45, 0, 1]), 0.012, 0.05, 0.045, 0.01), 0.022);
     return d;
   };
+  const helmetOuter = hd(helmetOuter0);
   const visorShape = (x, y) => {
     // rounded, slightly wider at the top (2D outline on the front face)
     const yy = y - 1.666;
@@ -623,16 +629,15 @@ function makePieces(spec, body) {
   };
   {
     const f = (x, y, z) => {
-      const o = helmetOuter(x, y, z);
+      const o = helmetOuter0(x, y, z);
       // solid shell; the visor glass and its gasket are clean parametric meshes on top
       let d = smax(o, 1.528 - y, 0.01); // neck opening
       // crest ridge
       const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
       // side pods (asymmetric: a sensor block on the left, a comms disc on the right)
-      d = smin(d, sdRoundBox(x, y, z, [0.13, 1.668, -0.012], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.026, 0.044, 0.062, 0.01), 0.008);
-      d = smin(d, sdCylinder(x, y, z, 0.142, 1.683, 0.03, 0.142, 1.683, 0.062, 0.01, 0.002), 0.003); // sensor lens
-      d = smin(d, sdRoundBox(x, y, z, [-0.128, 1.664, -0.02], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.022, 0.036, 0.05, 0.009), 0.008); // comms pod (angular: a round metal disc read as an 'eye')
+      d = smin(d, sdRoundBox(x, y, z, [0.124, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.02, 0.036, 0.05, 0.01), 0.012); // flush sensor pod (no lens: it read as a second goggle)
+      d = smin(d, sdRoundBox(x, y, z, [-0.122, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.018, 0.034, 0.046, 0.01), 0.014); // comms pod: low, shell-coloured (a dark inset face read as a second goggle)
       // chin / rebreather block under the visor
       d = smin(d, sdRoundBox(x, y, z, [0, 1.575, 0.104], [1, 0, 0], norm([0, 1, -0.35]), norm([0, 0.35, 1]), 0.052, 0.03, 0.034, 0.013), 0.012);
       for (const s of [1, -1]) d = smin(d, sdCylinder(x, y, z, s * 0.044, 1.566, 0.118, s * 0.05, 1.56, 0.142, 0.016, 0.004), 0.004); // filters
@@ -645,7 +650,6 @@ function makePieces(spec, body) {
       color: (x, y, z) => {
         const ax = Math.abs(x);
         if (y < 1.598 && z > 0.07) return graphite;
-        if (ax > 0.118) return gun;
         if (ax < 0.0105 && y > 1.73) return PALETTE.signal;
         if (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6) return graphite;
         return ivory;
@@ -653,20 +657,19 @@ function makePieces(spec, body) {
       mat: (x, y, z) => {
         const ax = Math.abs(x);
         if ((y < 1.598 && z > 0.07) || (z < -0.02 && y < 1.632 - (z + 0.02) * 0.6)) return [0.42, 0.5];
-        if (ax > 0.118) return [0.42, 0.3];
         return [0.28, 0.0];
       },
       split: (x, y, z) => {
         const ax = Math.abs(x);
-        const pod = Math.min(ax - 0.118, 0.022 - Math.hypot(y - 1.662, z + 0.004));
+        const pod = -1; // pods stay ivory (two-tone split there read as a dark goggle window)
         const crest = Math.min(0.0105 - ax, y - 1.73);
         const chin = 1.57 - y;
         const rear = Math.min(-0.02 - z, 1.632 - (z + 0.02) * 0.6 - y); // graphite neck guard
         return -Math.max(pod, chin, rear) + 0 * crest;
       },
       line: (x, y, z) => {
-        if (x > 0.14) return Math.hypot(y - 1.646, z - 0.026) - 0.0035; // status LED (the lens stays dark glass)
-        if (x < -0.146) return Math.hypot(y - 1.682, z + 0.03) - 0.003; // small status LED, off-centre (no 'eye' disc)
+        if (x > 0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // status LED at the rear of the pod
+        if (x < -0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // small status LED at the rear of the pod
         if (y < 1.6 && z < -0.02) return y - 1.582; // rear glow line
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
         return FAR;
@@ -690,6 +693,13 @@ function makePieces(spec, body) {
       bounds: [0.13, 1.66, -0.12, 0.18, 1.84, 0.0], h: 0.0035,
       color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.158, y - 1.82, z + 0.1) - 0.0068, seam: () => FAR,
     });
+  }
+
+  for (const pc of pieces) {
+    if (pc.name !== 'helmet' && pc.name !== 'antenna') continue;
+    pc.f = hd(pc.f);
+    for (const k of ['color', 'mat']) if (pc[k]) pc[k] = hm(pc[k]);
+    for (const k of ['split', 'line', 'seam']) if (pc[k]) pc[k] = hd(pc[k]);
   }
 
   // ---- jetpack ----------------------------------------------------------------------------
@@ -1098,7 +1108,7 @@ export function buildExplorerData(quality = 2) {
     { bone: B.chest, a: [0, 1.38, -0.21], b: [0, 1.16, -0.21], r: 0.11 },
     { bone: B.chest, a: [0.128, 1.38, -0.21], b: [0.128, 1.1, -0.215], r: 0.055 },
     { bone: B.chest, a: [-0.128, 1.38, -0.21], b: [-0.128, 1.1, -0.215], r: 0.055 },
-    { bone: B.head, a: [0, 1.67, 0.012], b: [0, 1.67, 0.012], r: 0.16 },
+    { bone: B.head, a: HELM_C, b: HELM_C, r: 0.16 * HELM_S },
     { bone: B.upperArmL, a: J0(spec, 'upperArmL'), b: J0(spec, 'foreArmL'), r: 0.07 },
     { bone: B.upperArmR, a: J0(spec, 'upperArmR'), b: J0(spec, 'foreArmR'), r: 0.07 },
     { bone: B.foreArmL, a: J0(spec, 'foreArmL'), b: J0(spec, 'handL'), r: 0.055 },
@@ -1152,6 +1162,9 @@ function cullBuried(m, field, thresh) {
 // Visor outline in (u, v) ∈ [-1, 1]²: a superellipse ("squircle") mapped onto the
 // helmet front. x = u·hw(v), y = 1.664 − 1.1·x² + v·0.046.
 const VISOR_N = 7;
+// helmet shrink (about the neck seal) — shared by the shell, the visor glass and the gasket
+const HELM_S = 0.9, HELM_P0 = [0, 1.535, -0.004];
+const HELM_C = [0, 1.668, 0.012].map((c, i) => HELM_P0[i] + (c - HELM_P0[i]) * HELM_S);
 function visorUV(theta, rho) {
   const c = Math.cos(theta), s = Math.sin(theta);
   const u = Math.sign(c) * Math.pow(Math.abs(c), 2 / VISOR_N) * rho;
@@ -1165,10 +1178,10 @@ function visorPoint(f, u, v, out) {
   // mirrored strip, not a single round 'eye'). The band narrows and sweeps down toward
   // the temples like a sports visor.
   const au = Math.abs(u);
-  const phi = u * 1.08;
+  const phi = u * 1.2; // wide continuous wrap (one band of glass, temple to temple)
   const el = -0.06 + v * 0.4 * (1 - 0.42 * au * au) - 0.1 * au * au;
   const dx = Math.sin(phi) * Math.cos(el), dy = Math.sin(el), dz = Math.cos(phi) * Math.cos(el);
-  const cx = 0, cy = 1.668, cz = 0.012;
+  const [cx, cy, cz] = HELM_C;
   let t0 = 0.0, t1 = 0.3;
   for (let k = 0; k < 40; k++) { const tm = (t0 + t1) * 0.5; if (f(cx + dx * tm, cy + dy * tm, cz + dz * tm) < 0) t0 = tm; else t1 = tm; }
   const t = (t0 + t1) * 0.5, e = 0.0008;

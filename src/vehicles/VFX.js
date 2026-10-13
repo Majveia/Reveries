@@ -63,18 +63,26 @@ export class Flame {
         void main(){
           float a = vA;                              // 0 at the nozzle → 1 at the tip
           float facing = vF;                         // 1 = looking through the plume's core
-          float core = pow(facing, 7.0);
-          float sheath = pow(facing, 1.5);
-          float body = pow(1.0 - a, 2.6);
-          // Mach diamonds: bright knots along the hot core, fading downstream
-          float dia = 0.55 + 0.45*pow(max(0.0, sin(a*30.0 - uTime*3.0)), 6.0) * (1.0 - a);
-          float n = vnoise(vec3(vL.xy*7.0, vL.z*4.0 - uTime*36.0 + uSeed));
+          float core = pow(facing, 5.0);
+          float sheath = pow(facing, 1.1);
+          float body = pow(1.0 - a, 1.7);
+          // Mach diamonds: discrete bright knots along the hot core, fading downstream —
+          // they read from the side too (the core line is the silhouette's centre there)
+          float knots = pow(max(0.0, sin(a*24.0 - uTime*2.0)), 10.0) * (1.0 - a) * smoothstep(0.02, 0.12, a);
+          float dia = 0.45 + 1.6*knots;
+          // turbulent, torn sheath: two octaves streaming downstream
+          float n = vnoise(vec3(vL.xy*6.0, vL.z*3.5 - uTime*30.0 + uSeed));
+          float n2 = vnoise(vec3(vL.xy*14.0, vL.z*8.0 - uTime*55.0 + uSeed*1.7));
+          float turb = 0.35 + 0.9*n*(0.55 + 0.9*n2);
           // head-on the core stacks through every layer: damp it so it stays coloured, not a white disc
-          float edgeFade = pow(1.0 - facing*0.6, 1.0) * (0.35 + 0.65*pow(1.0 - a, 2.5));
-          float I = body * (sheath*0.35 + core*dia*0.9) * (0.6 + 0.6*n) * mix(1.0, edgeFade, 0.5);
-          vec3 c = mix(uEdge, uCore, clamp(core*(1.0 - a)*0.85, 0.0, 1.0));
+          float edgeFade = (1.0 - facing*0.55) * (0.35 + 0.65*pow(1.0 - a, 2.5));
+          float I = body * (sheath*0.62*turb + core*dia*1.0*(0.7 + 0.3*n)) * mix(1.0, edgeFade, 0.5);
+          // colour: saturated hot core at the throat → flame colour in the sheath → a faint
+          // violet-blue fringe downstream (combustion afterglow), never flat white
+          vec3 c = mix(uEdge, uCore, clamp(core*(1.0 - a)*0.75, 0.0, 1.0));
+          c = mix(c, uEdge*vec3(0.55, 0.5, 1.6), smoothstep(0.35, 1.0, a)*(1.0 - core)*0.5);
           c = mix(c, uBoostCol + vec3(0.12)*core, uBoost*0.7);
-          float e = 0.3 + uThrottle*2.6 + uBoost*3.0;
+          float e = 0.4 + uThrottle*3.3 + uBoost*3.4;
           gl_FragColor = vec4(c * I * e * 2.2 * uGain * smoothstep(0.0, 0.06, a + 0.01), 1.0);
         }`,
     });
@@ -133,7 +141,7 @@ export class Particles {
           float size = mix(aMeta.z, aMeta.w, sqrt(t));
           gl_PointSize = clamp(size * uScale / max(0.1, -mv.z), 0.0, uMaxPx);
           // near-lens fade: no out-of-focus blobs sweeping past the camera
-          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (1.0 - t) * smoothstep(1.5, 6.0, -mv.z);
+          float fade = smoothstep(0.0, 0.08, t) * (1.0 - t) * (0.6 + 0.4 * (1.0 - t)) * smoothstep(1.5, 6.0, -mv.z);
           vC = vec4(aCol.rgb, abs(aCol.w) * fade); vT = t;
         }`,
       fragmentShader: /* glsl */`
@@ -143,7 +151,7 @@ export class Particles {
           vec2 q = gl_PointCoord*2.0 - 1.0;
           float r2 = dot(q,q);
           if (r2 > 1.0) discard;
-          float a = (1.0 - r2); a *= a;
+          float a = (1.0 - r2); a *= sqrt(a); // fuller body: plumes read as volume, not haze
           // fake lit volume: brighter on the upper side
           float lit = 0.55 + 0.45*(-q.y);
           vec3 c = vC.rgb * (uLight*lit + uAmb);
@@ -384,7 +392,7 @@ export class GroundGlow {
           float d = length(q * vec2(1.6, 0.8));
           float a = exp(-d*d*4.0) * (0.9 + 0.1*sin(uTime*40.0));
           float ring = exp(-pow((d - 0.55)*9.0, 2.0)) * 0.25;
-          gl_FragColor = vec4(uColor * (a + ring) * uI, 1.0);
+          gl_FragColor = vec4(uColor * (a + ring) * uI * (1.0 - smoothstep(0.75, 1.0, max(abs(q.x), abs(q.y)))), 1.0);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);
@@ -410,7 +418,7 @@ export class GlowSprite {
           vec3 ax = normalize(normalMatrix * uAxis);
           vView = max(0.0, dot(ax, normalize(-c.xyz)));   // 1 = looking up the nozzle
           vQ = position.xy * 2.0;
-          c.xy += position.xy * uSize * (0.55 + 0.45 * vView);
+          c.xy += position.xy * uSize * 1.35 * (0.55 + 0.45 * vView);
           c.z += uSize * 0.35;                              // pull toward the camera past the bell lip
           gl_Position = projectionMatrix * c;
         }`,
@@ -419,12 +427,13 @@ export class GlowSprite {
         varying vec2 vQ; varying float vView;
         void main(){
           float r = length(vQ);
-          float core = exp(-r*r*18.0);
-          float halo = exp(-r*r*4.5) * 0.35;
+          float core = exp(-r*r*18.0*1.8);
+          float halo = exp(-r*r*4.5*1.8) * 0.35;
           // tinted core + soft bloom halo: keeps a hue through tonemapping (no flat white discs)
           float halo2 = exp(-r*r*2.2) * 0.12;
-          vec3 c = mix(uColor, uColor*0.45 + vec3(0.55, 0.5, 0.45), core*0.6);
-          gl_FragColor = vec4(c * (core*1.2 + halo + halo2) * uI * (0.35 + 0.65*vView), 1.0);
+          float win = 1.0 - smoothstep(0.55, 0.98, r);   // reaches exactly 0 inside the quad
+          vec3 c = mix(uColor, uColor*0.6 + vec3(0.4, 0.34, 0.28), core*0.45);
+          gl_FragColor = vec4(c * (core*1.2 + halo + halo2) * win * uI * (0.35 + 0.65*vView), 1.0);
         }`,
     });
     this.mesh = new THREE.Mesh(g, this.material);

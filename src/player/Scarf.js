@@ -24,7 +24,7 @@ class Ribbon {
     this.dx = width / (cols - 1);
     this.anchorCount = anchorCount;
     // tapered: full width at the knot, ~60% at the tip
-    this.dxAt = (r) => this.dx * (1 - 0.4 * Math.pow(r / (rows - 1), 1.3));
+    this.dxAt = (r) => this.dx * (1 - 0.55 * Math.pow(r / (rows - 1), 1.3));
     const c = [];
     const add = (a, b, k) => c.push(a, b, 0, k);
     for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
@@ -34,7 +34,7 @@ class Ribbon {
       if (r + 1 < rows && q + 1 < cols) { add(i, i + cols + 1, 0.6); add(i + 1, i + cols, 0.6); }
       // soft bending: the cloth folds into travelling S-waves and curls across its width
       if (r + 2 < rows) add(i, i + 2 * cols, 0.009);
-      if (q + 2 < cols) add(i, i + 2, 0.012);
+      if (q + 2 < cols) add(i, i + 2, 0.005);
     }
     this.con = new Float64Array(c);
     // rest lengths

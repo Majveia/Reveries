@@ -254,6 +254,8 @@ export default class GalaxyLevel {
     // grazing views integrate the disk light along a long chord: keep the band luminous against the lane
     this.volume.march.uniforms.uEmit.value *= 1 + 0.8 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.14)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
+    // (a nebula in view carries the frame: the diffuse volume behind it drops resolution, keeping software renders in budget)
+    if (this.nebulae.enabled) this.volume.scale = Math.min(this.volume.scale, this.engine.shotMode ? 0.6 : 0.45);
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value)
       // seen edge-on the bulge must stand above and below the lane as a compact luminous core
       * (1 + 1.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
@@ -354,7 +356,8 @@ export default class GalaxyLevel {
       edge: async () => {
         // whole disk in frame (tapered needle ends) with a ~2° tilt: the lane crosses the bulge front (Sombrero / NGC 891)
         // longer lens, closer: the bulge sits on the left third and the disk tapers out of frame
-        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.2).setY(P.R * 0.001), P.R * 1.45, 1.1, 0.02, 24);
+        // (in the plane: the lane splits the bulge into two symmetric luminous halves, NGC 891 / Sombrero)
+        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.16), P.R * 1.75, 1.1, 0.006, 30);
         this.engine.postfx?.setGrade?.({ exposure: 1.15 }, 0);
       },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },

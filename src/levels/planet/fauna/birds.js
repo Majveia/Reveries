@@ -16,7 +16,7 @@ const BIRDS = {
   gull: { span: 1.35, body: 0.32, color: '#e8e8e4', belly: '#ffffff', tip: '#1e1e22', flap: 0.75, rate: 4.2, speed: [8, 12], tail: 'fan', neck: 0, glide: 0.6 },
   raptor: { span: 2.1, body: 0.42, color: '#4a3424', belly: '#b89a74', tip: '#1a120c', flap: 0.6, rate: 2.8, speed: [9, 13], tail: 'fan', neck: 0, glide: 0.92 },
   crane: { span: 2.3, body: 0.5, color: '#efeeea', belly: '#ffffff', tip: '#121214', flap: 0.7, rate: 2.4, speed: [10, 12], tail: 'short', neck: 0.65, legs: 0.7, crown: '#c81e1e' },
-  ikran: { span: 3.4, body: 0.75, color: '#1c3a6a', belly: '#5ac8d8', tip: '#ff7a2a', flap: 0.85, rate: 2.2, speed: [13, 18], tail: 'long', neck: 0.35, glow: '#40e8ff' },
+  ikran: { span: 3.4, body: 0.75, color: '#24508a', belly: '#2c6a8a', tip: '#ff7a2a', flap: 0.85, rate: 2.2, speed: [13, 18], tail: 'long', neck: 0.35, glow: '#40e8ff' },
   ray: { span: 2.4, body: 0.6, color: '#f2b8a0', belly: '#fff0e0', tip: '#3fb0a6', flap: 0.5, rate: 1.6, speed: [6, 9], tail: 'long', neck: 0, glide: 0.5 },
 };
 
@@ -51,7 +51,7 @@ void rig(inout vec3 p, inout vec3 n) {
   vec3 faC = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
   float faSpan = uWing.y / 0.225 * length(instanceMatrix[0].xyz);
   float faPx = faSpan * projectionMatrix[1][1] * 450.0 / max(length(faC - cameraPosition), 1.0);
-  p *= clamp(5.0 / max(faPx, 1e-3), 1.0, 4.0);
+  p *= clamp(7.0 / max(faPx, 1e-3), 1.0, 4.0);
 #endif
 }
 `;
@@ -82,31 +82,52 @@ function buildBird(B) {
     ? [[-bl * 0.06, -bl * 0.4], [bl * 0.06, -bl * 0.4], [tw, -bl * 0.4 - tl], [0, -bl * 0.4 - tl * 0.55], [-tw, -bl * 0.4 - tl]]
     : [[-bl * 0.08, -bl * 0.35], [bl * 0.08, -bl * 0.35], [tw, -bl * 0.35 - tl * 0.95], [0, -bl * 0.35 - tl], [-tw, -bl * 0.35 - tl * 0.95]];
   parts.push(paint(membrane(tailOut), (p) => { const t = smooth(0.3, 1, (-p.z - bl * 0.35) / tl); return [lerp(c.r, tip.r, t), lerp(c.g, tip.g, t), lerp(c.b, tip.b, t)]; }, () => [0, 0, 0, 0]));
-  // wings: inner (shoulder→elbow) and outer hand with fringed primaries
+  // wings: one continuous gridded surface from the wing root (buried in the body) through the wrist to the tip,
+  // so the wing never detaches from the body. Feathered birds get slotted primaries cut into the trailing edge;
+  // membrane fliers (ikran, ray) get scalloped trailing edges between finger struts.
+  const memb = B.tail === 'long';
   for (const s of [-1, 1]) {
-    const sh = bl * 0.18, el = S * 0.45;
-    const chord = B.span * (B.neck > 0.5 ? 0.24 : 0.2);
-    const out = [];
-    out.push([sh, bl * 0.18], [el, chord * 0.32], [S * 0.8, chord * 0.12], [S, -chord * 0.1]);
-    // primaries fringe (trailing edge, outer → inner)
-    const nf = 6;
-    for (let k = 0; k < nf; k++) {
-      const u = 1 - k / nf;
-      const x = lerp(S * 0.55, S * 0.98, u), z = -chord * (0.35 + 0.25 * (1 - u));
-      out.push([x, z], [x - S * 0.03, z + chord * 0.12]);
+    const sh = bl * 0.18, el = S * 0.45, root = bl * 0.05;
+    const chord = B.span * (B.neck > 0.5 ? 0.24 : memb ? 0.26 : 0.2);
+    const pl = (pts, x) => { for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const t = (x - pts[i - 1][0]) / Math.max(1e-6, pts[i][0] - pts[i - 1][0]); return lerp(pts[i - 1][1], pts[i][1], clamp(t, 0, 1)); } return pts[pts.length - 1][1]; };
+    const lead = [[root, bl * 0.3], [sh, bl * 0.22], [el, chord * 0.34], [S * 0.8, chord * 0.14], [S, -chord * 0.12]];
+    const trail = [[root, -bl * 0.45], [sh, -chord * 0.5], [el * 0.9, -chord * 0.66], [S * 0.55, -chord * 0.6], [S * 0.98, -chord * 0.3], [S, -chord * 0.12]];
+    const nu = memb ? 28 : 22, nv = 5, nf = memb ? 4 : 6;
+    const pos = [], idx = [];
+    for (let i = 0; i <= nu; i++) {
+      const u = i / nu, x = lerp(root, S, Math.pow(u, 0.9));
+      const zl = pl(lead, x);
+      let zt = pl(trail, x);
+      const hand = smooth(S * 0.5, S * 0.6, x);
+      if (memb) zt += chord * 0.16 * hand * (1 - Math.abs(Math.sin(Math.PI * nf * (x - S * 0.5) / (S * 0.5)))) * (1 - smooth(S * 0.92, S, x)); // scallops between fingers
+      else zt += chord * 0.1 * hand * Math.pow(Math.abs(Math.sin(Math.PI * nf * (x - S * 0.55) / (S * 0.45))), 0.4) - chord * 0.05 * hand; // slotted primaries
+      for (let j = 0; j <= nv; j++) {
+        const v = j / nv, z = lerp(zl, zt, v);
+        const y = 0.05 * chord * Math.sin(Math.PI * Math.pow(v, 0.6)) * (1 - 0.7 * x / S) + (x < sh ? 0.03 * bl * (1 - x / sh) : 0);
+        pos.push(x * s, y, z);
+      }
     }
-    out.push([el * 0.9, -chord * 0.62], [sh, -chord * 0.45]);
-    const g = membrane(out.map(([x, z]) => [x * s, z]), 0.0);
-    // camber: lift the leading edge region slightly
-    const pa = g.attributes.position;
-    for (let i = 0; i < pa.count; i++) { const x = Math.abs(pa.getX(i)), z = pa.getZ(i); pa.setY(i, 0.04 * chord * Math.cos(clamp(z / chord, -1, 1) * 1.5) * (1 - x / S)); }
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) { const a0 = i * (nv + 1) + j, b0 = a0 + nv + 1; idx.push(a0, b0, a0 + 1, a0 + 1, b0, b0 + 1); }
+    let g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+    g.computeVertexNormals();
+    { const n = g.attributes.normal; for (let i = 0; i < n.count; i++) { const ny = n.getY(i); if (ny < 0) n.setXYZ(i, -n.getX(i), -ny, -n.getZ(i)); } }
     parts.push(paint(g, (p) => {
       const ax = Math.abs(p.x) / S; const t = smooth(0.62, 0.9, ax) * (B.tip === B.color ? 0 : 1);
       const tb = smooth(-0.1, -0.5, p.z / chord) * smooth(0.3, 0.6, ax) * (B.neck > 0.5 ? 1 : 0.35); // dark trailing primaries
-      const k = Math.max(t, tb);
+      let k = Math.max(t, tb);
       const base = [lerp(c.r, be.r, 0.15), lerp(c.g, be.g, 0.15), lerp(c.b, be.b, 0.15)];
+      // finger struts / feather shafts: dark lines radiating from the wrist
+      if (memb && ax > 0.45) { const ang = Math.atan2(-(p.z - chord * 0.2), Math.abs(p.x) - el); const st = Math.abs(Math.sin(ang * nf * 1.3)); k = Math.max(k * 0.8, (1 - smooth(0.0, 0.1, st)) * 0.35); }
       return [lerp(base[0], tip.r, k), lerp(base[1], tip.g, k), lerp(base[2], tip.b, k)];
-    }, () => [1, 0, 0, 0], glow));
+    }, (p) => [Math.abs(p.x) > sh ? 1 : 0, 0, 0, 0], glow ? (p) => { const x = Math.abs(p.x); return 0.9 * smooth(chord * 0.09, 0.0, pl(lead, x) - p.z) * smooth(S * 0.15, S * 0.35, x) + 0.5 * smooth(S * 0.9, S, x); } : null));
+  }
+  // membrane fliers: a swept head crest (the ikran's banshee profile) so the hero reads as a creature, not a pill
+  if (memb) {
+    const z0 = headP.z;
+    const crest = membrane([[0, z0 + bl * 0.08], [bl * 0.34, z0 - bl * 0.3], [bl * 0.14, z0 - bl * 0.85], [0, z0 - bl * 0.4]], 0.0);
+    crest.rotateZ(Math.PI / 2); crest.translate(0, headP.y + bl * 0.06, 0);
+    parts.push(paint(crest, (p) => [tip.r * 0.8, tip.g * 0.8, tip.b * 0.8], () => [0, 0, 0, 0], B.glow ? () => 0.4 : null));
   }
   // legs trailing behind (cranes)
   if (B.legs) for (const s of [-1, 1]) {
@@ -136,7 +157,7 @@ export class Birds {
         uFTime: fauna.uniforms.uFTime, uGlowColor: { value: new THREE.Color(B.glow || '#000000') },
         uWing: { value: new THREE.Vector4(B.body * 0.18, B.span * 0.5 * 0.45, B.flap, B.flap * 0.7) }, uLegs: { value: new THREE.Vector2() },
       };
-      const mats = rigMaterial({ roughness: 0.7, side: THREE.DoubleSide }, RIG_GLSL, uni, 'bird-' + id);
+      const mats = rigMaterial({ roughness: 0.7, side: THREE.DoubleSide }, RIG_GLSL, uni, 'bird-' + id, { rim: 0.6 });
       const max = fauna.q.pick(60, 110, 170, 240);
       const { mesh, anim } = makeInstanced(geo, mats, max, { shadow: true });
       mesh.receiveShadow = false;

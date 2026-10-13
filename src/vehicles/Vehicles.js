@@ -66,7 +66,7 @@ export default class Vehicles {
   async init(progress) {
     const level = this.level, w = this.world, engine = this.engine;
     this.mats = vehicleMaterials(engine);
-    this.dust = new Particles(engine.quality.pick(400, 800, 1400, 2000));
+    this.dust = new Particles(engine.quality.pick(500, 1000, 2200, 3000));
     this.spray = new Particles(engine.quality.pick(300, 600, 1000, 1400));
     level.scene.add(this.dust.points, this.spray.points);
     // planet-shine: light bounced off the lit planet below, on vehicles in space (always present → no program churn)
@@ -227,6 +227,7 @@ export default class Vehicles {
 
   onBoard(v) {
     this._shipCamInit = false;
+    if (!this.engine.shotMode) this.engine.postfx?.setGrade?.({ motionBlur: v.type === 'ship' ? 0.4 : 0.32, motionBlurNear: v.type === 'ship' ? 28 : 6 }, 0.5);
     if (v.type === 'ship') v.thrSet = v.landed ? 0 : Math.max(v.thrSet, 0.3);
   }
   onAlight(v) {
@@ -235,6 +236,7 @@ export default class Vehicles {
     this.engine.ui.telemetry?.(null);
     this._setPrompt(null);
     this.streaks.mesh.visible = false;
+    if (!this.engine.shotMode) this.engine.postfx?.setGrade?.({ motionBlur: 0, motionBlurNear: 0 }, 0.5);
     void v;
   }
 
@@ -262,6 +264,7 @@ export default class Vehicles {
     }
     const player = level.player;
     const driving = player?.vehicle || null;
+    { const gv = this.shotCam?.vehicle; if (this.shotGlide && gv && gv._holdForShot) this._glide(dt, gv); }
     for (const v of this.list) {
       let input = null;
       if (this.shotDrive === v) input = this.shotInput;
@@ -284,8 +287,47 @@ export default class Vehicles {
     this._heroLight();
     level.maxNear = camVeh && camVeh.type === 'ship' ? 0.5 : 0;
     if (driving && this.list.includes(driving) && !this.shotCam) this._drive(dt, driving);
+    else if (this.shotCam && this.shotCam.vehicle) this._present(this.shotCam.vehicle, this.shotCam.streaks ?? 0);
     else if (!driving) { this.streaks.mesh.visible = false; }
     if (this.shotCam) this._updateShotCam();
+  }
+
+  /**
+   * Screenshot glide: the posed vehicle keeps moving along its velocity at a constant
+   * clearance (no physics), so the chase camera travels with it — the camera motion blur
+   * smears the ground/sea while the subject stays sharp, and spray/dust/trails are laid
+   * down along a real path instead of piling up on one spot.
+   */
+  _glide(dt, v) {
+    if (v.velocity.lengthSq() < 1) return;
+    const w = this.world, g0 = w.groundAt(v.position, this._gg || (this._gg = {}));
+    const top0 = Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity);
+    if (this._glideClear == null) this._glideClear = v.position.length() - top0;
+    const up0 = _v.copy(v.position).normalize();
+    v.position.addScaledVector(v.velocity, dt);
+    const up1 = _v2.copy(v.position).normalize();
+    // keep the vehicle's attitude relative to the local horizon (rotate with the curvature)
+    _q.setFromUnitVectors(up0, up1);
+    v.quaternion.premultiply(_q);
+    v.velocity.applyQuaternion(_q);
+    const g1 = w.groundAt(v.position, this._gg);
+    const top1 = Math.max(g1.radius, g1.water ? g1.waterRadius : -Infinity);
+    // ease toward the terrain (a hover vehicle follows it; a ship holds its line more stiffly)
+    const want = top1 + this._glideClear, k = v.type === 'bike' ? 0.6 : 0.2;
+    v.position.setLength(v.position.length() + (want - v.position.length()) * k);
+    if (v.speed !== undefined) v.speed = v.velocity.length();
+    // the rider's cloth can't integrate a 1 m/frame scripted glide (it stretches into a long
+    // ribbon): let it re-settle at the seat every frame instead
+    const S = v.type === 'bike' ? this.level.player?.scarf : null;
+    if (S) { S._prevA = null; S.ready = false; }
+  }
+
+  /** Speed presentation for a posed (shot) vehicle: streaks + the bike's boost FOV kick. */
+  _present(v, si) {
+    this.streaks.mesh.visible = si > 0.02;
+    this.streaks.uniforms.uI.value = si;
+    this.streaks.uniforms.uTime.value = this.time;
+    this.streaks.uniforms.uSpeed.value = 1 + (v.boost || 0) * 1.5;
   }
 
   /** Vehicle hero lighting (Materials.js onBeforeCompile): sun rim on silhouettes + sky fill. */
@@ -298,7 +340,7 @@ export default class Vehicles {
     const day = clamp(w.daylight ?? 1, 0, 1);
     if (sun) L.vehRimCol.value.copy(sun.color).multiplyScalar(sI * 0.55); else L.vehRimCol.value.setScalar(sI * 0.55);
     // sky fill: cool in daylight, faint at night, a touch of warmth at dusk
-    L.vehFill.value.setRGB(0.42 + 0.25 * (1 - day), 0.5, 0.62).multiplyScalar(0.03 + 0.09 * day).multiplyScalar(Math.max(sI, 1));
+    L.vehFill.value.setRGB(0.46 + 0.22 * (1 - day), 0.52, 0.6).multiplyScalar(0.022 + 0.065 * day).multiplyScalar(Math.max(sI, 1));
   }
 
   _planetShine(v) {
@@ -520,6 +562,9 @@ export default class Vehicles {
   shotReset() {
     this.shotCam = null; this.autopilot = null; this.shotDrive = null;
     this.forceVortex = 0; this.forceContrail = 0;
+    this.shotGlide = false; this._glideClear = null;
+    this.streaks.mesh.visible = false;
+    this.engine.postfx?.setGrade?.({ motionBlur: 0, motionBlurNear: 0 }, 0);
     for (const v of this.list) v._holdForShot = false;
     const pl = this.level.player;
     if (pl?.vehicle) { try { pl.alight(); } catch (e) { console.warn(e); } }
@@ -535,6 +580,7 @@ export default class Vehicles {
     level.freeCam = null;
     this.shotCam = null; this.autopilot = null; this.shotDrive = null;
     this.forceVortex = 0; this.forceContrail = 0;
+    this.shotGlide = false; this._glideClear = null;
     for (const v of this.list) v._holdForShot = false;
     this.engine.ui.telemetry?.(null);
     this._tOff = 0; this._t0 = this.time = this.engine.time;
@@ -605,11 +651,14 @@ export default class Vehicles {
       // dramatic low chase off the rear quarter, high enough that grass never sits between lens and bike;
       // tilted down so the horizon sits on the upper third and the bike on a lower-third power point
       const side = sp.side ?? (() => {
-        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.9 * sg, 1.55, -4.6), target: new THREE.Vector3(0.35 * sg, 1.25, 20) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
+        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.6 * sg, 1.7, -7.4), target: new THREE.Vector3(-1.2 * sg, 1.2, 25) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
         return tryS(1) <= tryS(-1) ? 1 : -1;
       })();
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.9) * side, sp.by ?? 1.55, -(sp.bz ?? 4.6)), target: new THREE.Vector3(-(sp.tx ?? 1.8) * side, sp.ty ?? -0.6, 20), fov: sp.fov ?? 58, minClear: 1.2, bankRoll: 0.18 };
+      // the boost FOV kick (+14 live) is half-applied: wide enough to feel fast, not fish-eyed
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.6) * side, sp.by ?? 1.7, -(sp.bz ?? 7.4)), target: new THREE.Vector3(-(sp.tx ?? 1.2) * side, sp.ty ?? 1.2, 25), fov: sp.fov ?? 54, minClear: 1.0, bankRoll: 0.22, streaks: sp.streaks ?? 0.22 };
       bike._holdForShot = true;
+      this.shotGlide = true;
+      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.6, motionBlurNear: 10.5 }, 0);
       // the rider's cloth was not stepped during the scripted run: make it re-settle at the seat
       // (otherwise its interpolated anchors stretch it back along the 60 m path → a 'pole' in frame)
       const S = this.level.player?.scarf;
@@ -645,10 +694,11 @@ export default class Vehicles {
       const pos = start.clone().multiplyScalar(Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity) + 30);
       this._boardForShot(ship);
       const hd = this._tangentTo(start, start.clone().addScaledVector(head, 0.01));
-      ship.fly(pos, pos.clone().addScaledVector(hd, 100), 160, start);
+      ship.fly(pos, pos.clone().addScaledVector(hd, 100), 115, start);
       const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
-      this.autopilot = ship; this.apParams = { alt: sp.alt ?? R.range(10, 18), throttle: 0.75, yaw: sp.yaw ?? turn };
-      this.forceVortex = 0.22;
+      // low and a little slower: the sea is torn up right under the hull and the spray stays in frame
+      this.autopilot = ship; this.apParams = { alt: sp.alt ?? R.range(6.5, 10), throttle: 0.48, yaw: sp.yaw ?? turn };
+      this.forceVortex = 0;
       this._simulate(150);
       // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
       const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
@@ -668,7 +718,10 @@ export default class Vehicles {
       }
       const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
       // aim slightly ahead of the ship along its path: the ship sits off-centre, leading the frame
-      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(44, 54), minClear: 1.2, bankRoll: 0.25 };
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(44, 54), minClear: 1.2, bankRoll: 0.25, streaks: sp.streaks ?? 0 };
+      ship._holdForShot = true;
+      this.shotGlide = true;
+      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.55, motionBlurNear: Math.hypot(ox, oy, oz) + 9 }, 0);
       this._updateShotCam();
       return true;
     }

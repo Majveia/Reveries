@@ -388,7 +388,7 @@ export default class Fauna {
     const at = (dist, side, lift = 0) => eye.clone().addScaledVector(fwd, dist).addScaledVector(right, side).normalize().multiplyScalar(R);
     // --- herd on visible open ground
     if (this.herds) {
-      const tries = canopy ? [[60, -6], [70, 8], [52, 0], [85, -12], [100, 10]] : hero ? [[26, -3], [30, 4], [22, 0], [36, -6], [48, 8]] : [[110, -30], [160, 30], [80, -20], [220, 0], [60, 15], [300, -60]];
+      const tries = canopy ? [[60, -6], [70, 8], [52, 0], [85, -12], [100, 10]] : hero ? [[26, -3], [30, 4], [22, 0], [36, -6], [48, 8]] : [[48, -12], [62, 14], [40, 4], [78, -18], [95, 20], [120, 0]];
       for (const [dist, side] of tries) {
         const d = at(dist, side).normalize();
         if (!this.groundOK(d, 0.88, 50)) continue;
@@ -398,6 +398,12 @@ export default class Fauna {
         const dir = gp.clone().sub(eye); const len = dir.length(); dir.divideScalar(len);
         const hit = w.raycast?.(eye, dir, len);
         if (hit && (hit.distance ?? len) < len - 6) continue;
+        // vistas: the herd must stand against land (not skylined on a ridge) and be big enough to read (>= ~18 px tall)
+        if (!hero) {
+          const th = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2), px = 1.6 / (len * th) * 0.5 * (this.engine.renderer?.domElement?.height || 720);
+          if (px < 18) continue;
+          if (!w.raycast?.(eye, dir.clone().addScaledVector(up, 1.2 / len).normalize(), len + 4000)) continue;
+        }
         this.herds.spawnAt(d, hero ? 11 : 9, right.clone().multiplyScalar((this.seed & 1) ? 1 : -1), hero ? eye : null);
         this.showcase.herd = d;
         break;
@@ -441,16 +447,16 @@ export default class Fauna {
       if (cfg.soar && cfg.soar !== 'crane') {
         if (hero) {
           // a hero raptor wheeling close over the lens, silhouetted against open sky
-          const rp = this._frameAt(eye.clone().addScaledVector(fwd, 60), eye, up, right, -0.4, 0.62);
+          const rp = this._frameAt(eye.clone().addScaledVector(fwd, 60), eye, up, right, -0.34, 0.5);
           const rd = rp.clone().normalize(), rg = Math.max(w.heightAt(rd), w.hasOcean ? w.seaLevel : -1e9);
-          this.birds.spawnAt(rd, { kind: cfg.soar, count: 1, alt: Math.max(rp.length() - R - rg, 12), radius: 14 });
+          this.birds.spawnAt(rd, { kind: cfg.soar, count: 1, alt: Math.max(rp.length() - R - rg, 12), radius: 6 });
         }
         this.birds.spawnAt(at(hero ? 220 : 260, hero ? -90 : 80).normalize(), { kind: cfg.soar, count: 2, alt: alt + 40, radius: 50 });
       }
     }
     // --- one leviathan among the clouds: far (aerial perspective sells the scale), big, and against open sky only
     if (this.floaters?.wMesh) {
-      const cands = hero ? [[1700, 0.3, 0.52], [1900, -0.32, 0.55], [2100, 0.05, 0.64], [1500, 0.45, 0.7], [2400, -0.1, 0.74]]
+      const cands = hero ? [[1300, 0.3, 0.52], [1450, -0.32, 0.55], [1600, 0.05, 0.64], [1200, 0.45, 0.68], [1900, -0.1, 0.74]]
         : [[2000, -0.3, 0.55], [2300, 0.35, 0.6], [1800, 0.0, 0.7], [2100, 0.55, 0.5], [2100, -0.55, 0.45], [1600, 0.2, 0.8], [2600, -0.15, 0.38]];
       for (const [dist, nx, ny] of cands) {
         const p = eye.clone().addScaledVector(fwd, dist).addScaledVector(up, dist * 0.25);
@@ -461,6 +467,16 @@ export default class Fauna {
         if (w.raycast?.(eye, dir.clone().addScaledVector(up, 0.02).normalize(), len + 3000)) continue;
         const pd = p.clone().normalize();
         if (p.length() - R - Math.max(w.heightAt(pd), w.hasOcean ? w.seaLevel : -1e9) < 250) continue;
+        // foreground canopy: the sight line must clear the tree tops near the lens (sampled along the ray, both flanks)
+        let leafy = 0;
+        for (const side of [-0.08, 0, 0.08]) {
+          const rd = dir.clone().addScaledVector(right, side).normalize();
+          for (const k of [6, 12, 20, 32, 50, 75, 110, 160, 230]) {
+            const q = eye.clone().addScaledVector(rd, k), qd = q.clone().normalize();
+            if (q.length() - R - w.heightAt(qd) < 32 && this.forestAt(qd) > 0.2) { leafy++; break; }
+          }
+        }
+        if (leafy > 1) continue;
         const hd = right.clone().multiplyScalar(nx > 0 ? -1 : 1).addScaledVector(fwd, 0.25).normalize();
         this.floaters.spawnWhale(p, hd, hero ? 380 : 320);
         // a calf trailing the mother, deeper in the haze

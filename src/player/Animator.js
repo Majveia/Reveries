@@ -397,7 +397,7 @@ export class Animator {
     const walkBob = -0.022 * Math.cos(4 * Math.PI * ph);
     const runBob = -0.032 * Math.cos(4 * Math.PI * (ph - duty * 0.5));
     const bob = lerp(walkBob * Math.min(1, sp / 1.6), runBob, g) * move;
-    const base = lerp(lerp(-0.008, -0.014, g), -0.026, spr) * move - 0.012 * (1 - move);
+    const base = lerp(lerp(-0.008, -0.032, g), -0.04, spr) * move - 0.012 * (1 - move); // running: stance knee flexed ~18°
     p.root.set(swayX + 0.008 * Math.sin(TAU * ph) * move * (1 - g), base + bob + br * 0.002 * (1 - move), 0);
     const pYaw = -Math.cos(TAU * ph) * lerp(0.13, 0.17, g) * move;
     const pRoll = Math.sin(TAU * ph) * 0.06 * move * (1 - g * 0.3) + swayX * 1.5;
@@ -409,7 +409,7 @@ export class Animator {
     // arms counter-swing
     // arms: long relaxed pendulum swing at a walk, a compact driven pump at a run
     // (elbows stay low and close to the ribs, hands pass the hip — never 'T-rex')
-    const A = lerp(lerp(0.42, 0.66, g), 0.9, spr) * move;
+    const A = lerp(lerp(0.42, 0.84, g), 0.95, spr) * move;
     const swingL = -Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const swingR = Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const elBase = lerp(lerp(0.36, 1.32, g), 1.45, spr) * move + 0.22 * (1 - move);

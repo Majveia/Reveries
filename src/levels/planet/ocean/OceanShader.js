@@ -567,10 +567,21 @@ void main(){
   // water column under this fragment: the static depth plus the wave / surf /
   // swash lift (thin sheets of swash running up over the sand)
   float wcol = max(depth + vLift, 0.0);
-  float path = wcol / cosT;
+  // a raised crest / breaker face is a slab of water seen edge-on: the eye
+  // ray crosses metres of it before reaching any seabed (never a window onto
+  // the sand behind the wave), and grazing views through the shallows see a
+  // long slanted path
+  float thick = max(vLift, 0.0) * 5.0 + max(sh, 0.0) * 7.0;
+  float grz = 1.0 - smoothstep(0.06, 0.4, cosV);
+  float path = wcol / cosT + thick + grz * wcol * 3.0;
   vec3 Tr = exp(-uAbsorb * path);
   // what the seabed shows: light travels down to it AND back up to the eye
-  vec3 TrBed = exp(-uAbsorb * (path + wcol * 1.15));
+  // (plus a grey turbidity term: suspended sediment / plankton veil the
+  // bed, so shallows read as a soft gradient, not a lit window onto the sand)
+  vec3 TrBed = exp(-(uAbsorb + 0.13) * (path + wcol * 1.15));
+  // the coarse far terrain LODs under the sea are not trustworthy beyond
+  // ~100 m: the bed fades into the water body there (no hard polygon edges)
+  TrBed *= 1.0 - 0.85 * smoothstep(30.0, 140.0, dist);
   float Tl = dot(Tr, vec3(0.2126, 0.7152, 0.0722));
   float shallowMix = exp(-max(depth, 0.0) * 0.45);
   vec3 bodyAlb = mix(uDeep, uShallow, shallowMix);
@@ -581,7 +592,7 @@ void main(){
   float shelf = exp(-max(depth, 0.0) / 140.0) * farW * smoothstep(-0.5, 6.0, depth);
   float swirl = texture2D(tDetail, vXZ / 23000.0 + vec2(0.3, 0.1)).a * 0.6 + texture2D(tDetail, vXZ / 7100.0 + vec2(0.7, 0.2)).a * 0.4;
   bodyAlb *= mix(1.0, mix(0.88, 1.12, swirl) * (1.0 - 0.3 * smoothstep(60.0, 900.0, depth)), farW);
-  bodyAlb = mix(bodyAlb, vec3(0.03, 0.2, 0.22) * 0.6 + uSSS * 0.015, shelf * shelf * 0.7);
+  bodyAlb = mix(bodyAlb, vec3(0.03, 0.2, 0.22) * 0.6 + uSSS * 0.015, shelf * 0.8);
   // surf zone: churned, sediment-milky turquoise
   float turb = clamp(so.w * 0.55 + (1.0 - smoothstep(0.0, 1.5, depth)) * 0.2, 0.0, 1.0) * step(0.0, depth);
   bodyAlb = mix(bodyAlb, mix(uShallow * 1.5, uSSS * 0.11, 0.4), turb * 0.25);

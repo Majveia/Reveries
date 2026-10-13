@@ -148,6 +148,8 @@ export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao 
   // per-part UV offset: neighbouring parts never show the same panel pattern in the same alignment
   _part = (_part + 1) % 997;
   const du = ((_part * 0.6180339) % 1) * 9.7, dw = ((_part * 0.3819661) % 1) * 9.7;
+  // ...and a per-part scale + quarter-turn, so big parts (wings, fins) never line up into a quilt
+  const us = uvScale * (0.86 + 0.3 * ((_part * 0.7548777) % 1)), swap = _part % 2 === 1;
   for (let i = 0; i < N; i += 3) {
     a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); c.fromBufferAttribute(p, i + 2);
     fn.subVectors(c, b).cross(a.clone().sub(b)).normalize();
@@ -158,10 +160,12 @@ export function finish(g, paint = 0xffffff, uvScale = 0.5, emissiveMask = 0, ao 
       let u, w;
       if (um) { u = um.getX(v); w = um.getY(v); }
       else if (ax >= ay && ax >= az) { u = z; w = y; } else if (ay >= az) { u = x; w = z; } else { u = x; w = y; }
-      uv[v * 2] = u * uvScale + du; uv[v * 2 + 1] = w * uvScale + dw;
+      if (swap) { const t = u; u = w; w = -t; }
+      uv[v * 2] = u * us + du; uv[v * 2 + 1] = w * us + dw;
       const C = fixed || paint(x, y, z, nrm.getX(v), nrm.getY(v), nrm.getZ(v), _c);
       // baked sky occlusion: undersides and inward faces darker (cheap cavity AO)
-      const occ = 1 - ao * (0.5 - 0.5 * nrm.getY(v));
+      // + a low-frequency, non-tiling tone drift across the hull (sun-fade / grime, ±5%)
+      const occ = (1 - ao * (0.5 - 0.5 * nrm.getY(v))) * (1 + 0.05 * Math.sin(x * 1.31 + y * 2.13 + 0.7) * Math.sin(z * 0.83 - x * 0.67 + 1.9));
       col[v * 3] = C.r * occ; col[v * 3 + 1] = C.g * occ; col[v * 3 + 2] = C.b * occ;
     }
   }

@@ -49,7 +49,7 @@ const RIM_GLSL = /* glsl */`
     // stronger when the sun is behind the character (back/edge light)
     float back = 0.2 + 0.8 * pow(saturate(dot(uSunView, -V) * 0.5 + 0.5), 1.5);
     // albedo-tinted: cloth keeps its colour at grazing angles, dark fabric doesn't halo
-    outgoingLight += uRim * fres * back * mix(0.4, 1.0, rvAO) * (0.3 + 1.2 * diffuseColor.rgb);
+    outgoingLight += uRim * fres * back * mix(0.4, 1.0, rvAO) * (0.6 + 0.8 * diffuseColor.rgb);
     // character-only kicker (cinematic edge light from behind-side, like a film set)
     float kd = saturate(dot(normal, uKickDir));
     float edge = smoothstep(0.05, 0.75, 1.0 - nv);
@@ -154,7 +154,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float bumpH = 0.0;
       float macro = rvFbm(bp * 34.0);
       // technical fabric: soft macro wrinkles + fine weave
-      bumpH += (macro - 0.5) * 0.0026;
+      bumpH += (macro - 0.5) * 0.0015 * mix(0.5, 1.0, rvAA(0.06, px)); // derivative bump: keep it soft or it blocks per 2x2 quad
       float weave = sin(bp.x * 2400.0) * sin(bp.y * 2400.0 + bp.z * 1700.0);
       bumpH += weave * 0.00005 * rvAA(0.0026, px);
       if (pat > 0.5 && pat < 1.5) { // ribbed
@@ -188,7 +188,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
   // ---- hard-shell armour (rigid) ---------------------------------------------------------
   const hard = new THREE.MeshPhysicalMaterial({
     vertexColors: true, roughness: 0.3, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.22,
-    envMap: env.texture, envMapIntensity: 1.0, specularIntensity: 0.6,
+    envMap: env.texture, envMapIntensity: 1.3, specularIntensity: 0.6,
   });
   hard.onBeforeCompile = (sh) => {
     bind(sh, { uAccent: U.uAccent, uJet: U.uJet, uColB: { value: new THREE.Color().setRGB(...PALETTE.graphite) } });
@@ -211,12 +211,15 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float seamW = max(px * 0.6, 0.0011);
       // panel seams: a recessed groove with a dark core
       float groove = max(1.0 - smoothstep(seamW * 0.4, seamW * 1.6, abs(seamD)), splitGroove * 0.8);
+      // a groove narrower than ~2 px can't be resolved on the coarse plate mesh: fade it with
+      // distance instead of letting it widen into a chewed cartoon outline
+      groove *= mix(0.35, 1.0, rvAA(0.006, px));
       float bumpH = -groove * 0.0013;
       // smudges / micro wear
       float smudge = rvFbm(bp * 22.0);
       float scratch = rvNoise(vec3(bp.x * 1400.0, bp.y * 60.0, bp.z * 1400.0));
       bumpH += (smudge - 0.5) * 0.00045;
-      diffuseColor.rgb *= 1.0 - groove * 0.55;
+      diffuseColor.rgb *= 1.0 - groove * 0.3;
       diffuseColor.rgb *= 0.94 + 0.1 * smudge;
       // edge wear: paint chipped off convex edges reveals brushed metal; grime settles in creases
       float curv = vAO.y;

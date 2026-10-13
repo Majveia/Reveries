@@ -68,13 +68,13 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   ], { seg: 24 }), RED, UVS));
 
   // canopy: big clear bubble well forward, framed, with a sill
-  const CZ = 1.25, CY = 0.36;
+  const CZ = 1.2, CY = 0.4; // tall bubble: the pilot's helmet sits inside it, Swordfish-style
   const can = new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.56);
-  can.scale(0.5, 0.52, 1.55); can.translate(0, CY, CZ);
+  can.scale(0.57, 0.62, 1.68); can.translate(0, CY, CZ);
   glass.push(finish(can, 0xffffff, 1));
-  const frame = new THREE.TorusGeometry(1, 0.04, 8, 64); frame.rotateX(Math.PI / 2); frame.scale(0.5, 1, 1.56); frame.translate(0, CY + 0.02, CZ);
+  const frame = new THREE.TorusGeometry(1, 0.04, 8, 64); frame.rotateX(Math.PI / 2); frame.scale(0.57, 1, 1.69); frame.translate(0, CY + 0.02, CZ);
   metal.push(finish(frame, GUN, 1));
-  const bow = new THREE.TorusGeometry(1, 0.032, 6, 48, Math.PI); bow.rotateY(Math.PI / 2); bow.scale(1, 0.53, 0.62); bow.translate(0, CY, CZ - 0.25);
+  const bow = new THREE.TorusGeometry(1, 0.032, 6, 48, Math.PI); bow.rotateY(Math.PI / 2); bow.scale(1, 0.63, 0.7); bow.translate(0, CY, CZ - 0.25);
   metal.push(finish(bow, GUN, 1));
   // pilot: seat back, torso, helmet with a lit visor; instrument coaming glows under the glass
   metal.push(finish(box(0.36, 0.5, 0.1, 0, 0.52, 0.42), DARK, 2));
@@ -85,7 +85,7 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
 
   // nose lance (the swordfish bill): thick root, collars, muzzle
   // slim needle (a rapier, not a cannon): faired into the nose, thin collars
-  metal.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 7.0], 0.07, 0.035, 16), STEEL, 2));
+  metal.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 7.0], 0.1, 0.045, 16), STEEL, 2));
   paint.push(finish(cyl([0, -0.1, 4.3], [0, -0.1, 5.0], 0.12, 0.075, 18), RED, UVS));
   metal.push(finish(cyl([0, -0.1, 5.5], [0, -0.1, 5.6], 0.075, 0.07, 14), TRIM, 2));
   metal.push(finish(cyl([0, -0.1, 6.95], [0, -0.1, 7.4], 0.05, 0.04, 12), GUN, 2));
@@ -388,7 +388,12 @@ export function buildBike(M, { seed = 1, livery = 0 } = {}) {
   const discs = [];
   for (const [z, r] of pods) {
     // emissive rim bands on both faces of each repulsor wheel (visible from the side/chase)
-    for (const s of [1, -1]) { const ring = new THREE.TorusGeometry(r * 0.8, 0.018, 6, 48); ring.rotateY(Math.PI / 2); ring.translate(s * 0.115, 0.08, z); discs.push(ring); }
+    for (const s of [1, -1]) {
+      const ring = new THREE.TorusGeometry(r * 0.8, 0.026, 6, 48); ring.rotateY(Math.PI / 2); ring.translate(s * 0.115, 0.08, z); discs.push(ring);
+      // inner field ring + glowing lens at the hub: the repulsor reads as a live emitter, not a tyre
+      const ring2 = new THREE.TorusGeometry(r * 0.47, 0.014, 6, 40); ring2.rotateY(Math.PI / 2); ring2.translate(s * 0.116, 0.08, z); discs.push(ring2);
+      discs.push(new THREE.CircleGeometry(r * 0.2, 20).rotateY(s * Math.PI / 2).translate(s * 0.118, 0.08, z));
+    }
     const d = new THREE.CircleGeometry(r * 0.5, 24); d.rotateX(Math.PI / 2); d.translate(0, -0.33, z);
     discs.push(d);
   }

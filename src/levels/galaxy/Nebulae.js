@@ -26,7 +26,7 @@ const FRAG = /* glsl */ `
 precision highp float;
 ${COLOR_GLSL}
 uniform sampler3D uNoise;
-uniform vec3 uCenter; uniform float uRadius, uSeed, uKind, uRot, uSteps, uGain, uFade, uScale, uFrameJ;
+uniform vec3 uCenter; uniform float uRadius, uSeed, uKind, uRot, uSteps, uGain, uFade, uScale, uFrameJ, uFrameN;
 uniform vec2 uRes;
 varying vec3 vWorld;
 
@@ -47,8 +47,8 @@ float cliffH(vec3 xw){
   s += (nz(vec3(h * 0.13, 0.13) + SP).r - 0.5) * 2.6;                 // broad terrain
   s += (nz(vec3(h * 0.42, 0.57) + SP).b - 0.71) * 0.9;                // ridged peaks
   if (uKind < 0.5) {
-    float cl = nz(vec3(h * 0.27, 0.33) + SP * 1.7).b;
-    s += pow(smoothstep(0.8, 0.97, cl), 1.5) * 0.8;                  // columns rising toward the cluster
+    float cl = nz(vec3(h * 0.27, 0.33) + SP * 1.7).a;
+    s += pow(smoothstep(0.4, 0.62, cl), 1.3) * 0.95;                 // solid columns rising toward the cluster
   }
   // 3D erosion: knobs, overhangs, eroded globules (two rotated lattices)
   s += (nz(xw * 0.9 + SP).b - 0.71) * 0.30;
@@ -130,7 +130,7 @@ void main(){
   if (t1 <= t0) discard;
   float N = uSteps;
   float dt = (t1 - t0) / N;
-  float jit = fract(ign(gl_FragCoord.xy) + uFrameJ);
+  float jit = fract(ign(gl_FragCoord.xy + 5.588238 * uFrameN) + 0.5 * uFrameJ * step(64.0, uFrameN));
   vec3 col = vec3(0.0);
   float T = 1.0;
   vec3 cHa = vec3(1.0, 0.09, 0.07), cOIII = vec3(0.05, 0.62, 1.0), cSII = vec3(1.0, 0.36, 0.08);
@@ -173,9 +173,9 @@ void main(){
       float limb = clamp(stepU * 1.2 / max(dHG, 1e-4), 1.0, 7.0);
       float wL = pow((limb - 1.0) / 6.0, 0.8);                    // silhouettes / skyline glow, faces stay modest
       float knR = nz(RT * x * 3.7 + SP * 0.7).b;
-      col += T * I * (0.012 + 0.16 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.88, 0.7), wL);
+      col += T * I * (0.02 + 0.34 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.88, 0.7), wL);
     }
-    e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.45) * 7.0;               // ionization front
+    e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.5) * 9.5;               // ionization front
     float sigD = dust * 88.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
     e += sigD * I * vec3(1.0, 0.55, 0.26) * 0.12 * (0.25 + hg);
@@ -219,7 +219,7 @@ export class Nebulae {
     this.list = list;
     this.enabled = false;
     const q = engine.quality;
-    this.scale = engine.shotMode ? 0.85 : q.pick(0.35, 0.45, 0.5, 0.6);
+    this.scale = engine.shotMode ? 0.7 : q.pick(0.35, 0.45, 0.5, 0.6);
     this.scene = new THREE.Scene();
     this.stars = new THREE.Group();
     const sphere = new THREE.IcosahedronGeometry(1, 3);
@@ -231,8 +231,8 @@ export class Nebulae {
         blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
         uniforms: {
           uNoise: { value: noise3D }, uCenter: { value: n.pos.clone() }, uRadius: { value: n.radius }, uSeed: { value: (n.seed % 1) + n.index * 0.37 },
-          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 112 : q.pick(36, 52, 72, 96) },
-          uGain: { value: 1.6 }, uFade: { value: 1 }, uScale: { value: 1 }, uFrameJ: { value: 0 }, uRes: { value: new THREE.Vector2() },
+          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 96 : q.pick(36, 52, 72, 96) },
+          uGain: { value: 1.6 }, uFade: { value: 1 }, uScale: { value: 1 }, uFrameJ: { value: 0 }, uFrameN: { value: 0 }, uRes: { value: new THREE.Vector2() },
         },
       });
       const mesh = new THREE.Mesh(sphere, m);
@@ -322,7 +322,7 @@ export class Nebulae {
     this._camKey.copy(cm);
     this._accN = still ? Math.min(this._accN + 1, this.engine.shotMode ? 64 : 16) : 1;
     const f = (this._f = ((this._f || 0) + 1) % 64);
-    for (const it of this.items) it.mat.uniforms.uFrameJ.value = (f * 0.6180339) % 1;
+    for (const it of this.items) { it.mat.uniforms.uFrameJ.value = (f * 0.6180339) % 1; it.mat.uniforms.uFrameN.value = f; }
     const src = this.acc[this._accI], dst = this.acc[1 - this._accI];
     this.accMat.uniforms.tNew.value = this.rt.texture; this.accMat.uniforms.tOld.value = src.texture;
     this.accMat.uniforms.uW.value = 1 / this._accN;

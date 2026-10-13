@@ -35,7 +35,7 @@ function hullCanvases(seed = 7) {
   split(0, 0, N, N, 0);
   for (const [x, y, w, h] of panels) {
     // flat panels, near-uniform tone (no domes: they read as quilting at chase distance)
-    const t = 230 + rng.range(-6, 6);
+    const t = 226 + rng.range(-13, 13); // ±6% per-panel tone: hand-laid plates, not one sheet
     a.fillStyle = `rgb(${t},${t},${t})`; a.fillRect(x, y, w, h);
     const ro = 64 + rng.range(-8, 16);
     r.fillStyle = `rgb(${ro},${ro},${ro})`; r.fillRect(x, y, w, h);
@@ -139,7 +139,8 @@ export function vehicleMaterials(engine) {
   // lacquered paint: roughness comes straight from the map (≈0.25 panels, 0.85 grooves) under a glossy clear coat
   const paint = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, vertexColors: true, map, roughnessMap, bumpMap, bumpScale: 0.5,
-    metalness: 0.18, roughness: 1.0, clearcoat: 0.45, clearcoatRoughness: 0.16, envMapIntensity: 0.9,
+    // lacquer over primer (not a semi-metal): a hard glossy clear coat carries the sky/sunset sweep
+    metalness: 0.0, roughness: 1.0, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 1.0,
     sheen: 0.0, specularIntensity: 0.8,
   });
   const metal = new THREE.MeshStandardMaterial({
@@ -156,6 +157,12 @@ export function vehicleMaterials(engine) {
           vec3 hN = normalize(normal);
           totalEmissiveRadiance += diffuseColor.rgb * vehFill * (0.75 + 0.25 * hN.y);
         }`).replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        {
+          // diffuse ambient (sky probe + ground bounce) loses most of its chroma on the livery:
+          // a meadow's green bounce must not turn cream paint lime (direct sun keeps its colour)
+          const vec3 hL3 = vec3(0.2126, 0.7152, 0.0722);
+          reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, hL3)), reflectedLight.indirectDiffuse, 0.4);
+        }
         {
           // sun rim, masked by the sun's actual visibility here (shadow maps): direct diffuse
           // received vs. what an unshadowed surface would get → no rim glowing inside shadows

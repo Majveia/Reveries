@@ -31,7 +31,7 @@ const SPECIES = {
     horns: 'antlers', tail: 0.12, ears: 0.15, back: '#5e4b3b', belly: '#c8b8a0', pattern: 'mane', patternColor: '#ddd2c0', hoof: '#201a16', size: [0.95, 1.2], count: [6, 12] },
   // Pandora six-limbed-looking grazer: dark indigo hide with glowing cyan stripes and a head fan
   hexa: { bodyLen: 0.85, bodyR: 0.42, bodyW: 0.33, legLen: 1.0, legR: 0.07, neckLen: 0.72, neckUp: 0.85, headLen: 0.42, headR: 0.12,
-    horns: 'fan', tail: 0.5, ears: 0.0, back: '#2e4278', belly: '#7a9cc0', pattern: 'stripes', patternColor: '#3fd8ff', glow: 1, hoof: '#101420', size: [1.0, 1.3], count: [6, 12] },
+    horns: 'fan', tail: 0.5, ears: 0.0, back: '#2a1d5c', belly: '#4a3f7e', pattern: 'stripes', patternColor: '#3fd8ff', glow: 1, hoof: '#101420', size: [1.0, 1.3], count: [6, 12] },
   // Moebius / Rick / frontier stilt walker: tiny round body on very long legs, long neck
   stilt: { bodyLen: 0.55, bodyR: 0.45, bodyW: 0.4, legLen: 2.4, legR: 0.06, neckLen: 1.1, neckUp: 1.2, headLen: 0.42, headR: 0.12,
     horns: 'crest', tail: 0.5, ears: 0.0, back: '#e6d2b8', belly: '#fbf1e0', pattern: 'spots', patternColor: '#c45a50', hoof: '#3a2a2a', size: [1.0, 1.35], count: [4, 9] },
@@ -138,7 +138,7 @@ function buildSpecies(spec, Q = 2) {
     const dors = smooth(0.06, 0.0, Math.abs(p.x)) * smooth(0.6, 0.95, n.y) * 0.3;
     const sock = p.y < L * 0.5 && p.y > 0.06 ? smooth(L * 0.5, L * 0.2, p.y) * 0.5 : 0;
     // pale rump patch (antelope): breaks the silhouette at distance like a real herd
-    if (S.rump && p.y > L * 0.75) { const rp = smooth(-0.15, -0.6, n.z) * smooth(-S.bodyLen * 0.2, -S.bodyLen * 0.45, p.z); c = [lerp(c[0], belly.r, rp), lerp(c[1], belly.g, rp), lerp(c[2], belly.b, rp)]; }
+    if (S.rump && p.y > L * 0.75) { const rp = smooth(-0.45, -0.85, n.z) * smooth(-S.bodyLen * 0.55, -S.bodyLen * 0.8, p.z) * smooth(S.bodyW * 0.5, S.bodyW * 0.2, Math.abs(p.x)) * 0.85; c = [lerp(c[0], belly.r, rp), lerp(c[1], belly.g, rp), lerp(c[2], belly.b, rp)]; }
     const k = 1 - dors - sock;
     const ao = 0.75 + 0.25 * up;
     const v = 0.85 + 0.3 * nz;
@@ -181,9 +181,18 @@ function buildSpecies(spec, Q = 2) {
   const head = loft(HP.map(([s, x, yt, yb]) => ({ c: h0.clone().addScaledVector(hdir, s * HL).add(V(0, -0.05 * HR * Math.sin(s * Math.PI), 0)), rx: x * HR * 0.82, yt: yt * HR, yb: yb * HR, sq: 0.2, rig: [0, 0, 1, 0] })), AR - 2);
   const muzzle = h0.clone().addScaledVector(hdir, HL);
   const headC = h0.clone().addScaledVector(hdir, HL * 0.28);
+  const eyeL = headC.clone().add(V(HR * 0.66, HR * 0.38, 0)), eyeR = headC.clone().add(V(-HR * 0.66, HR * 0.38, 0));
+  const nosL = muzzle.clone().add(V(HR * 0.22, HR * 0.12, -HL * 0.04)), nosR = muzzle.clone().add(V(-HR * 0.22, HR * 0.12, -HL * 0.04));
   parts.push(paint(head, (p, n) => {
     const c = coat(p, n, 0); const d = p.distanceTo(muzzle) / HL;
     const m = smooth(0.24, 0.06, d); // dark wet nose
+    // sculpt cues the loft cannot hold: sunken eye socket + brow, nostril slits, jaw line shadow, cheek highlight
+    const eyeD = Math.min(p.distanceTo(eyeL), p.distanceTo(eyeR)) / HR;
+    const sock = smooth(0.5, 0.18, eyeD) * 0.55, brow = smooth(0.62, 0.42, eyeD) * smooth(0.3, 0.6, p.y - eyeL.y + HR * 0.6) * 0.12;
+    const nos = smooth(0.13, 0.05, Math.min(p.distanceTo(nosL), p.distanceTo(nosR)) / HR) * 0.8;
+    const jaw = smooth(-0.1, -0.6, n.y) * smooth(0.25, 0.7, d) * 0.35;
+    const ks = (1 - sock) * (1 - nos) * (1 - jaw) * (1 + brow);
+    c[0] *= ks; c[1] *= ks; c[2] *= ks;
     const w = S.pattern === 'flank' ? smooth(0.42, 0.3, d) * smooth(0.12, 0.2, d) * 0.6 : 0; // pale muzzle ring
     return [lerp(lerp(c[0], 0.9, w), 0.04, m), lerp(lerp(c[1], 0.86, w), 0.035, m), lerp(lerp(c[2], 0.8, w), 0.03, m)];
   }));
@@ -352,8 +361,8 @@ export class Herds {
       const sheen = new THREE.Color(spec.back).lerp(new THREE.Color(spec.belly), 0.5).multiplyScalar(0.9);
       // soft fur silhouette (fuzz brightens grazing angles); luminous species get a bioluminescent rim so the body reads at night
       const fuzz = `{ vec3 faVd = normalize(vViewPosition); float faR = pow(1.0 - abs(dot(normalize(vNormal), faVd)), 3.0);
-        diffuseColor.rgb *= 1.0 + 0.45 * faR;${spec.glow ? ' faGlow = max(faGlow, 0.16 * faR + 0.015);' : ''} }`;
-      const mats = rigMaterial({ roughness: 0.86 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35, sheen, surfaceMain: fuzz });
+        diffuseColor.rgb *= 1.0 + 0.45 * faR;${spec.glow ? ' faGlow = max(faGlow, 0.1 * faR + 0.008);' : ''} }`;
+      const mats = rigMaterial({ roughness: 0.86 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35, sheen, surfaceMain: fuzz, hair: spec.glow ? 0.25 : 0.55, rim: spec.glow ? 0.25 : 0.7 });
       const max = fauna.q.pick(24, 48, 80, 120);
       // no shadow-map casting (thin legs alias into dithered streaks at cascade
       // resolution): each animal gets an analytic soft contact shadow instead
@@ -431,24 +440,68 @@ export class Herds {
     return herd;
   }
 
-  /** Wildlife-photography staging: a diagonal line of action with depth, a sentinel looking at the lens, one walking in, a juvenile. */
+  /** Wildlife-photography staging: depth clusters (a foreground pair, a loose mid-group, stragglers), Poisson spacing,
+   *  mixed headings and behaviours (grazing heads-down, a sentinel watching the lens, one walking), juveniles beside adults. */
   _heroPose(herd, eye, rng) {
     const R = this.world.radius, ms = herd.members, n = ms.length, S = herd.sp.spec;
     _v.copy(eye).sub(_u.copy(herd.dir).multiplyScalar(R));
-    let ex = _v.dot(herd.t1), ez = _v.dot(herd.t2); const el = Math.hypot(ex, ez) || 1;
+    const ex = _v.dot(herd.t1), ez = _v.dot(herd.t2), el = Math.hypot(ex, ez) || 1;
     const tx = ex / el, tz = ez / el, lx = -tz, lz = tx; // toward the eye / lateral
-    const span = 3.2 + n * 1.1 * S.bodyLen;
+    const BL = S.bodyLen * 2; // nose-to-rump of a unit animal
+    const sgn = rng.float() < 0.5 ? -1 : 1;
+    // cluster centres in the herd plane: [lateral, depth (+ = toward the lens), radius, members]
+    const nFore = Math.min(2, n), nStr = n > 6 ? 2 : n > 3 ? 1 : 0, nMid = n - nFore - nStr;
+    const clusters = [
+      [sgn * -2.2 * BL, 0.32 * el, 1.3 * BL, nFore],
+      [sgn * 1.0 * BL, -0.05 * el, 2.6 * BL, nMid],
+      [sgn * 4.8 * BL, -0.45 * el, 2.0 * BL, nStr],
+    ];
+    const pts = [];
+    let k = 0;
+    for (const [cl, cd, cr, cn] of clusters) for (let j = 0; j < cn; j++, k++) {
+      const m = ms[k];
+      m.scale = rng.range(0.85, 1.15) * (S.size[0] + S.size[1]) * 0.5;
+      // Poisson-disc: best of 24 darts (the one farthest from everybody placed so far)
+      let best = null, bd = -1;
+      for (let t = 0; t < 24; t++) {
+        const a = rng.range(0, TAU), r = Math.sqrt(rng.float()) * cr;
+        const px = cl + Math.cos(a) * r, pz = cd + Math.sin(a) * r * 0.7;
+        let dmin = 1e9;
+        for (const q of pts) dmin = Math.min(dmin, Math.hypot(px - q[0], pz - q[1]) / (q[2] + m.scale));
+        if (dmin > bd) { bd = dmin; best = [px, pz]; }
+        if (dmin > 1.6 * BL) break;
+      }
+      pts.push([best[0], best[1], m.scale]);
+    }
+    // hard separation (no interpenetration), in lens-space lateral/depth
+    for (let it = 0; it < 12; it++) for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const a = pts[i], b = pts[j], dx = b[0] - a[0], dz = b[1] - a[1], d = Math.hypot(dx, dz) || 1e-3;
+      const min = 0.85 * BL * (a[2] + b[2]);
+      if (d < min) { const p = (min - d) * 0.5 / d; a[0] -= dx * p; a[1] -= dz * p; b[0] += dx * p; b[1] += dz * p; }
+    }
+    const base = Math.atan2(lz, lx) + (sgn > 0 ? Math.PI : 0); // the herd drifts across the frame
     for (let i = 0; i < n; i++) {
-      const m = ms[i], u = n > 1 ? i / (n - 1) - 0.5 : 0;
-      // diagonal: the near end sits left-and-close, the far end right-and-deep
-      const along = u * span * 1.5 + rng.range(-0.6, 0.6), depth = -u * span * 1.1 + rng.range(-1.2, 1.2) + (i % 3 === 1 ? -span * 0.25 : 0);
-      m.x = lx * along + tx * depth; m.z = lz * along + tz * depth; m.tx = m.x; m.tz = m.z;
+      const m = ms[i], [pl, pd] = pts[i];
+      m.x = lx * pl + tx * pd; m.z = lz * pl + tz * pd; m.tx = m.x; m.tz = m.z;
       this._sample(herd, m);
       const toEye = Math.atan2(ez - m.z, ex - m.x);
-      if (i === 1 || i === Math.floor(n * 0.6)) { m.state = 'look'; m.graze = 0; m.timer = 60; m.head = toEye + rng.range(-0.5, 0.5); }
-      else if (i === 2) { m.state = 'walk'; m.timer = 60; m.head = toEye + 0.7; m.tx = m.x + Math.cos(m.head) * 30; m.tz = m.z + Math.sin(m.head) * 30; m.speed = 1.1; }
-      else { m.state = 'graze'; m.graze = 1; m.timer = 60; }
-      if (i === n - 1 && n > 4) m.scale = S.size[0] * 0.6;
+      m.head = base + rng.range(-1.2, 1.2);
+      m.timer = 60;
+      if (i === 1 || (n > 7 && i === nFore + 2)) { m.state = 'look'; m.graze = 0; m.head = toEye + rng.range(-0.35, 0.35) + (i === 1 ? 0.9 : 0); }
+      else if (i === nFore) { m.state = 'walk'; m.graze = 0; m.head = base + rng.range(-0.3, 0.3); m.tx = m.x + Math.cos(m.head) * 30; m.tz = m.z + Math.sin(m.head) * 30; m.speed = 1.1; }
+      else if (rng.float() < 0.25) { m.state = 'look'; m.graze = 0; }
+      else { m.state = 'graze'; m.graze = 1; }
+      m.tint = 0.92 + rng.float() * 0.16; m.hue = rng.range(-0.08, 0.08);
+    }
+    // juveniles shadow an adult of the mid-group
+    for (const ji of [n - nStr - 1, n > 9 ? nFore + 1 : -1]) {
+      if (ji <= nFore || ji >= n) continue;
+      const j = ms[ji], ad = ms[ji - 1];
+      j.scale = S.size[0] * 0.58;
+      const off = ad.head + Math.PI * 0.5 * (rng.float() < 0.5 ? 1 : -1);
+      j.x = ad.x + Math.cos(off) * BL * 0.75 * ad.scale - Math.cos(ad.head) * BL * 0.2; j.z = ad.z + Math.sin(off) * BL * 0.75 * ad.scale - Math.sin(ad.head) * BL * 0.2;
+      j.tx = j.x; j.tz = j.z; j.head = ad.head + rng.range(-0.4, 0.4); j.state = ad.state === 'walk' ? 'look' : ad.state; j.graze = ad.graze;
+      this._sample(herd, j);
     }
   }
 
@@ -534,7 +587,7 @@ export class Herds {
         }
         // separation
         let sx = 0, sz = 0;
-        const minD = S.bodyLen * 2.6 * m.scale;
+        const minD = S.bodyLen * (m.scale < 0.75 ? 1.2 : 2.0) * m.scale;
         for (let j = 0; j < ms.length; j++) {
           if (j === i) continue;
           const o = ms[j], dx = m.x - o.x, dz = m.z - o.z, d2 = dx * dx + dz * dz;

@@ -236,7 +236,7 @@ export class Bike {
     const sp = Math.abs(this._s || 0);
     const driven = !!input;
     this.flame.set(driven ? 0.25 + this.throttle * 0.75 : 0.06, this.boost, t);
-    this.model.hoverMat.color.setRGB(0.42, 1.0, 1.25).multiplyScalar(5 + this.throttle * 4 + this.boost * 6);
+    this.model.hoverMat.color.setRGB(0.42, 1.0, 1.25).multiplyScalar(9 + this.throttle * 7 + this.boost * 9); // reads in daylight
     // ground light pool
     const up = this.up;
     const g = w.groundAt(this.position, _g);
@@ -246,7 +246,7 @@ export class Bike {
     if (this.glow.mesh.visible) {
       this.glow.mesh.position.copy(up).multiplyScalar(top + 0.06);
       this.glow.mesh.quaternion.copy(this.quaternion);
-      this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * 1.9 * (1 - w.daylight) ** 2;
+      this.glow.uniforms.uI.value = (1.1 + this.throttle * 0.8 + this.boost * 0.8) * clamp(1.4 - hgt / 4, 0, 1) * (this.overWater ? 0.7 : 1) * 1.9 * (0.3 + 0.7 * (1 - w.daylight) ** 2); // a faint cyan pool survives daylight
       this.glow.uniforms.uTime.value = t;
     }
     // contact shadow, softening and spreading with clearance
@@ -264,12 +264,12 @@ export class Bike {
     _p.copy(this.model.nozzles[0].pos).add(_v.set(0, 0.1, 0.25));
     this.body.updateMatrixWorld();
     _p.applyMatrix4(this.body.matrixWorld);
-    this.lightTrail.push(_p, clamp((sp - 12) / 40, 0, 1) * (0.6 + this.boost) * (1 - 0.85 * w.daylight));
+    this.lightTrail.push(_p, clamp((sp - 12) / 40, 0, 1) * (0.6 + this.boost) * (1 - w.daylight) ** 2); // a tail-light trail only reads after dusk
     this.lightTrail.uniforms.uLight.value.setScalar(1.6 + this.boost * 1.6);
     // dust / spray
     if (sp > 6 && hgt < 4) {
       const P = this.overWater ? sys.spray : sys.dust;
-      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 140 : 130) * (1 + this.boost * 2.2) * sys.fxScale;
+      const rate = clamp(sp / 40, 0, 1.6) * (this.overWater ? 180 : 190) * (1 + this.boost * 2.2) * sys.fxScale;
       this._emitAcc += rate * dt;
       const fwd = this.heading, left = _v2.crossVectors(up, fwd).normalize();
       const dc = sys.dustColor;
@@ -282,7 +282,7 @@ export class Bike {
         vel.addScaledVector(this.velocity, 0.35);
         if (this.overWater) P.emit(_p, vel, 0.8 + Math.random() * 0.7, 0.3, 2.0 + Math.random() * 1.5, 0.85, 0.9, 0.95, 0.5, t, true);
         else if (Math.random() < 0.3) P.emit(_p, vel.addScaledVector(up, 1.5 + Math.random() * 2), 0.5 + Math.random() * 0.5, 0.06, 0.12, dc.r * 0.55, dc.g * 0.7, dc.b * 0.45, 0.9, t, true); // grass / grit kicked up
-        else P.emit(_p, vel, 1.8 + Math.random() * 2.0, 0.8, 3.0 + Math.random() * 3.5, dc.r, dc.g, dc.b, 0.4, t, false);
+        else P.emit(_p, vel, 1.8 + Math.random() * 2.0, 0.9, 3.8 + Math.random() * 4.0, dc.r, dc.g, dc.b, 0.7, t, false);
       }
     }
   }

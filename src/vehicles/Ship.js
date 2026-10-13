@@ -52,7 +52,7 @@ export class Ship {
     this.manualRollT = 0;
     // VFX
     this.flames = model.nozzles.map((n, i) => {
-      const f = new Flame({ radius: n.r, length: n.len, core: i ? [0.8, 0.9, 1.0] : [1.0, 0.86, 0.7], edge: i ? [0.35, 0.5, 1.0] : [1.0, 0.38, 0.1] });
+      const f = new Flame({ radius: n.r * 1.08, length: n.len * 1.45, core: i ? [0.8, 0.9, 1.0] : [1.0, 0.86, 0.7], edge: i ? [0.35, 0.5, 1.0] : [1.0, 0.38, 0.1] });
       f.mesh.position.copy(n.pos);
       model.group.add(f.mesh);
       return f;
@@ -68,7 +68,7 @@ export class Ship {
     this._coreS = new THREE.Color(0.75, 0.9, 1.0); this._edgeS = new THREE.Color(0.25, 0.45, 1.0);
     this.shadow = new BlobShadow();
     this._sprayAcc = 0;
-    this.vortex = model.wingtips.map(() => new Trail(16, { width: 0.05, grow: 14, color: [0.9, 0.94, 1.0], minStep: 1.8, erode: 0.9, curl: 0.35, fadeK: 2.6 }));
+    this.vortex = model.wingtips.map(() => new Trail(16, { width: 0.16, grow: 9, color: [0.9, 0.94, 1.0], minStep: 1.8, erode: 0.9, curl: 0.35, fadeK: 2.6 }));
     this.contrail = new Trail(96, { width: 1.4, color: [1, 1, 1], minStep: 6, additive: false, curl: 0.25, fadeK: 1.2 });
     this.plasma = new Plasma(6.5);
     this.object3d.add(this.plasma.mesh);
@@ -369,8 +369,9 @@ export class Ship {
       if (i === 0) { f.uniforms.uCore.value.copy(this._coreA).lerp(this._coreS, sp); f.uniforms.uEdge.value.copy(this._edgeA).lerp(this._edgeS, sp); }
     });
     const cold = this.landed && !driven;
-    const hotI = cold ? 0.18 : 1.3 + thr * 2.6 + this.boost * 2.2; // capped ~6: hot, but keeps its hue
-    M.hotMat.color.setRGB(lerp(1, 0.5, sp), lerp(0.72, 0.78, sp), lerp(0.45, 1, sp)).multiplyScalar(hotI);
+    // capped ~3.5: the turbine face keeps its orange → red-rim gradient through the tonemapper
+    const hotI = cold ? 0.18 : 0.9 + thr * 1.5 + this.boost * 1.1;
+    M.hotMat.color.setRGB(lerp(1, 0.42, sp), lerp(0.5, 0.66, sp), lerp(0.2, 1, sp)).multiplyScalar(hotI);
     this.glows.forEach((g, i) => {
       g.mesh.visible = !cold;
       g.uniforms.uI.value = (0.6 + thr * 1.6 + this.boost * 2.0) * (i ? 0.8 : 1);
@@ -419,7 +420,7 @@ export class Ship {
     }
     if (!this.landed && clear < 28 && this.speed > 25) {
       const P = g.water ? sys.spray : sys.dust;
-      const rate = clamp(this.speed / 120, 0, 1.6) * (1 - clear / 28) * (g.water ? 240 : 70) * sys.fxScale * (1 + this.boost);
+      const rate = clamp(this.speed / 120, 0, 1.6) * Math.sqrt(1 - clear / 28) * (g.water ? 640 : 110) * sys.fxScale * (1 + this.boost);
       this._sprayAcc += rate * dt;
       const fw = _v2.copy(this.velocity).addScaledVector(upN, -this.velocity.dot(upN)).normalize();
       const lf = _v3.crossVectors(upN, fw).normalize();
@@ -429,7 +430,11 @@ export class Ship {
         const side = Math.random() < 0.5 ? -1 : 1, back = 1 + Math.random() * 13; // downwash under the hull → rooster tail
         _p.copy(this.position).addScaledVector(upN, -clear + 0.2).addScaledVector(fw, -back).addScaledVector(lf, side * (0.3 + Math.random() * 1.2));
         const vel = _v.copy(fw).multiplyScalar(this.speed * (0.1 + Math.random() * 0.12)).addScaledVector(lf, side * (2 + Math.random() * 5)).addScaledVector(upN, g.water ? 6 + Math.random() * 9 : 1 + Math.random() * 3);
-        if (g.water) P.emit(_p, vel, 0.45 + Math.random() * 0.6, 0.9, 5 + Math.random() * 4.5, 0.92, 0.95, 0.98, 0.62, t, true);
+        if (g.water) {
+          // rooster tail (tall, falling) + a low downwash mist sheet hugging the sea
+          if (Math.random() < 0.6) P.emit(_p, vel, 0.7 + Math.random() * 0.8, 1.2, 6 + Math.random() * 5, 1.25, 1.28, 1.3, 0.9, t, true);
+          else P.emit(_p, vel.multiplyScalar(0.6).addScaledVector(lf, side * 6), 1.2 + Math.random() * 1.0, 3.0, 10 + Math.random() * 6, 1.1, 1.14, 1.18, 0.5, t, false);
+        }
         else P.emit(_p, vel, 1.8 + Math.random() * 1.5, 1.0, 5 + Math.random() * 4, dc.r, dc.g, dc.b, 0.3, t, false);
       }
     }

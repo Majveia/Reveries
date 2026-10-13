@@ -68,7 +68,7 @@ export default class Player {
     this.visorFX = new VisorFX();
     this._fwd = new THREE.Vector3(); this._right = new THREE.Vector3();
     this._eye = new THREE.Vector3();
-    this._eyeBind = new THREE.Vector3(0, 1.672, 0.06);
+    this._eyeBind = new THREE.Vector3(0, 1.658, 0.054);
   }
 
   get mode() { return this.level.mode; }
@@ -561,7 +561,10 @@ export default class Player {
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
       if (S.wind.length() > cap) S.wind.setLength(cap);
-    } else S.airOffset.set(0, 0, 0);
+      // a frozen instant of a gusting wind: livelier travelling S-waves + curl swirls, so the
+      // settled ribbon carries folds and a twist instead of its static streaming equilibrium
+      S.flutter = 30; S.turbulence = 13;
+    } else { S.airOffset.set(0, 0, 0); S.flutter = 18; S.turbulence = 7.5; }
     // screenshot poses: once settled the cloth holds its (rippled) instant, so temporal AA
     // never smears a moving ribbon across a frozen frame
     const hold = this.shotPose && this.engine.shotMode && S.ready && this._scarfHeld;
@@ -640,7 +643,10 @@ export default class Player {
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    addSc(U.uKick.value.copy(key).multiplyScalar(0.62), skyC, 0.5).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(1.05), skyC, 0.6).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    // overcast / fog: the key is weak, but the hero must still separate from dark ground
+    { const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11, floor = 0.15 * w.daylight;
+      if (kl < floor) U.uKick.value.multiplyScalar(kl > 1e-4 ? floor / kl : 0).add(kl > 1e-4 ? _c.setRGB(0, 0, 0) : _c.setRGB(floor, floor, floor * 1.05)); }
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
@@ -690,9 +696,32 @@ export default class Player {
       score -= this._occlusion(cp, camH, up, 25, 0.5) * 3;
       // nothing dark (trunk, wall, crown) directly behind the hero silhouette
       score -= this._occlusion(piv, camH, up, 24, 0.2) * 6;
+      // hard reject: a tree within 12 m of the lens anywhere inside the horizontal frame
+      // (a trunk filling a third of the frame, or merging with the dark suit behind it)
+      score -= this._trunksInFrame(cp, camH, up, 12, 0.62) * 10;
       if (!best || score > best.score) best = { score, camH };
     }
     return best.camH;
+  }
+
+  /** Count tree colliders standing inside the horizontal frame within maxD of the lens. */
+  _trunksInFrame(from, dirH, up, maxD, halfFov) {
+    const cols = this.world.colliders;
+    if (!cols) return 0;
+    let n = 0;
+    const rel = _v;
+    for (const c of cols) {
+      if (c.type !== 'cylinder' || !c.flora) continue;
+      rel.copy(c.center).sub(from);
+      rel.addScaledVector(up, -rel.dot(up));
+      const d = rel.length();
+      if (d > maxD + 2 || d < 1e-3) continue;
+      const fwd = rel.dot(dirH) / d;
+      if (fwd < 0) continue;
+      const crown = c.height > 2.5 ? Math.min(3, c.height * 0.3) : c.radius;
+      if (Math.acos(clamp(fwd, -1, 1)) - Math.atan(crown / d) < halfFov) n += 1 - 0.5 * Math.max(0, d - 4) / maxD;
+    }
+    return n;
   }
 
   /** Colliders (trees, rocks, buildings) blocking a view cone: Σ angular size within maxD. */
@@ -837,22 +866,31 @@ export default class Player {
       // streaming back toward the lens. The camera yaw is searched for a clean frame:
       // no near cliffs / walls filling the view, settlement visible over the terrain.
       const portrait = this.level.camera.aspect < 1;
-      const speed = 3.7;
-      const gait = THREE.MathUtils.smoothstep(speed, 2.6, 4.6);
-      const duty = THREE.MathUtils.lerp(0.6, 0.29, gait);
-      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.06], leanAdd: 0.15, air: 2.2 };
+      const speed = 5.2; // a real run gait: flight phase, heel kick, driven arm pump
+      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.06], leanAdd: 0.12, air: 2.4 };
       cam.view = 'third';
-      cam.distance = portrait ? 2.55 : 2.5; cam.shoulder = portrait ? 0.1 : 0.58;
+      cam.distance = portrait ? 3.0 : 2.5; cam.shoulder = portrait ? 0.25 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.24 : 1.12; // slightly low, heroic angle
-      const camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
+      cam.pivotHeight = portrait ? 1.35 : 1.12; // slightly low, heroic angle
+      let camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
       // 3/4 profile: the wrap visor and the face side of the helmet read from the lens
       this.ctl.setFacing(turn(camH, -0.95));
+      if (level.floraClear) {
+        // set-piece clearing (as for 'fp'): no tree on the lens -> hero corridor, none hugging
+        // the silhouette from behind (dark bark swallowing the suit)
+        const hp = this.ctl.pos;
+        for (const [d, r] of [[-cam.distance, 3.5], [0, 3], [6, 5]]) level.floraClear(hp.clone().addScaledVector(camH, d), r);
+      }
       // passing / push-off instant: the rear foot rolls onto its toe behind the hips while the
       // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
-      this.anim.phase = duty * 0.78 + 0.5;
+      // run 'contact' key pose: lead foot just planted ahead (knee soft), trailing heel kicked
+      // up high behind, arms at full counter-swing, pelvis and chest counter-rotated
+      this.anim.phase = 0.035;
       this.anim.freezePhase = true;
-      cam.snap(this.ctl.pos, up, camH, portrait ? -0.1 : -0.13);
+      // debug: ?pclose=1 (harness --extra "pclose=1") frames the head close up for look-dev
+      const pclose = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pclose');
+      if (pclose) { cam.distance = 1.1; cam.shoulder = 0; cam.pivotHeight = 1.5; if (pclose === '2') camH = turn(camH, -1.9); }
+      cam.snap(this.ctl.pos, up, camH, portrait ? -0.06 : -0.13);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);
