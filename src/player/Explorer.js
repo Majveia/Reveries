@@ -644,8 +644,9 @@ function makePieces(spec, body) {
       const crest = smax(sdBox(x, y, z, 0, 1.775, -0.03, 0.008, 0.05, 0.11, 0.005), o - 0.003, 0.004);
       d = smin(d, crest, 0.006);
       // side pods (asymmetric: a sensor block on the left, a comms disc on the right)
-      d = smin(d, sdRoundBox(x, y, z, [0.118, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.016, 0.034, 0.048, 0.012), 0.026); // flush sensor pod (no lens: it read as a second goggle)
-      d = smin(d, sdRoundBox(x, y, z, [-0.118, 1.664, -0.03], [1, 0, 0], norm([0, 1, 0.25]), norm([0, -0.25, 1]), 0.016, 0.032, 0.046, 0.012), 0.026); // comms pod: low, shell-coloured (a dark inset face read as a second goggle)
+      // side pods: soft ear bulges blended into the shell (flat-faced pods with a status LED
+      // read as a second dark goggle window from the 3/4-rear hero camera)
+      for (const sx of [1, -1]) d = smin(d, sdEllipsoid(x, y, z, sx * 0.11, 1.658, -0.026, 0.03, 0.046, 0.056), 0.03);
       // chin / rebreather block under the visor
       d = smin(d, sdRoundBox(x, y, z, [0, 1.575, 0.104], [1, 0, 0], norm([0, 1, -0.35]), norm([0, 0.35, 1]), 0.052, 0.03, 0.034, 0.013), 0.012);
       for (const s of [1, -1]) d = smin(d, sdCylinder(x, y, z, s * 0.044, 1.566, 0.118, s * 0.05, 1.56, 0.142, 0.016, 0.004), 0.004); // filters
@@ -679,8 +680,6 @@ function makePieces(spec, body) {
         return -Math.max(pod, chin, rear) + 0 * crest;
       },
       line: (x, y, z) => {
-        if (x > 0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // status LED at the rear of the pod
-        if (x < -0.13) return Math.hypot(y - 1.646, z + 0.05) - 0.003; // small status LED at the rear of the pod
         // (no rear glow line: under the neck guard it read as a second visor 'eye')
         // visor wrap: a thin light band continuing the visor gasket around the helmet sides
         return FAR;
@@ -700,8 +699,8 @@ function makePieces(spec, body) {
     // antenna on the left pod
     pieces.push({
       name: 'antenna', bone: B.head,
-      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.146, 1.69, -0.045, 0.158, 1.82, -0.1, 0.0035), sdSphere(x, y, z, 0.158, 1.82, -0.1, 0.0065)),
-      bounds: [0.13, 1.66, -0.12, 0.18, 1.84, 0.0], h: 0.0035,
+      f: (x, y, z) => Math.min(sdCapsule(x, y, z, 0.128, 1.68, -0.04, 0.158, 1.82, -0.1, 0.0035), sdSphere(x, y, z, 0.158, 1.82, -0.1, 0.0065)),
+      bounds: [0.1, 1.65, -0.12, 0.18, 1.84, 0.0], h: 0.0035,
       color: () => graphite, mat: () => [0.35, 0.6], line: (x, y, z) => Math.hypot(x - 0.158, y - 1.82, z + 0.1) - 0.0068, seam: () => FAR,
     });
   }

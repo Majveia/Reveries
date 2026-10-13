@@ -155,7 +155,7 @@ vec4 diskSample(vec3 hit, vec3 v){
   // emissivity: Novikov–Thorne flux shape with a sharp ISCO peak; HDR so the inner edge blooms
   float em = tp * tp * (0.35 + 0.65 * tp * tp) * (1.0 + 4.0 * exp(-x * 13.0));
   vec3 bb = blackbody(T);
-  bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.5), 0.0);   // photographic saturation (blue approaching / red receding side)
+  bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.75), 0.0);   // photographic saturation (blue approaching / red receding side)
   vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.88 + 0.24 * n3);
   return vec4(c * alpha, alpha);
 }
@@ -287,7 +287,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.65 }, uTmax: { value: 8800 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.5 }, uTmax: { value: 7400 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

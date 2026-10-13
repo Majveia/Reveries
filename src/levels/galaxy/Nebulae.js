@@ -82,7 +82,8 @@ vec3 field(vec3 x){
   float gasN = nz(RT * xw * 0.22 + SP * 1.3).r;
   float gasF = nz(xw * 1.3 + SP).g;
   float gasW = nz(RT * xw * 3.1 + SP).b;
-  float gas = e * smoothstep(0.4, 0.62, gasN) * (0.15 + 1.6 * gasF * gasF) * (0.3 + 0.9 * gasW);
+  // (ridged channel cubed: the Hα envelope breaks into filaments and sheets instead of a flat wash)
+  float gas = e * smoothstep(0.4, 0.62, gasN) * (0.15 + 1.6 * gasF * gasF) * (0.12 + 2.2 * gasW * gasW * gasW);
   float dust = 0.0, skin = 0.0;
   if (uKind < 1.5) {
     float hg = cliffH(xw);
@@ -179,7 +180,7 @@ void main(){
       col += T * I * (0.03 + 0.8 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.9, 0.74), wL);
     }
     e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.55) * 14.0;               // ionization front
-    float sigD = dust * 88.0;
+    float sigD = dust * 130.0;   // (dense: pillars and cliffs read as solid bodies, not translucent sheets)
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
     e += sigD * I * vec3(1.0, 0.55, 0.26) * 0.12 * (0.25 + hg);
     e += sigD * vec3(0.9, 0.3, 0.16) * 0.0035 * (0.3 + ion);                      // Hα-reddened light on shadowed dust

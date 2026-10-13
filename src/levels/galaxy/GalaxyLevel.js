@@ -78,7 +78,7 @@ export default class GalaxyLevel {
       this.nebStars = this.stars.addPoints(this.nebulae.clusterGeo, 0.0022);
       // the O stars of the young cluster: big PSFs with JWST 6+2 diffraction spikes
       this.nebStars.material.uniforms.uMaxPx.value = 34; this.nebStars.material.uniforms.uPxScale.value = 3.6;
-      this.nebStars.material.uniforms.uNoExt = { value: 1 };   // the nebula volume does their extinction
+      this.nebStars.material.uniforms.uNoExt.value = 1;   // the nebula volume does their extinction
       this.stars.group.remove(this.nebStars);
       this.overlay2.add(this.nebStars);
     }
@@ -359,7 +359,7 @@ export default class GalaxyLevel {
         // whole disk in frame (tapered needle ends) with a ~2° tilt: the lane crosses the bulge front (Sombrero / NGC 891)
         // longer lens, closer: the bulge sits on the left third and the disk tapers out of frame
         // (in the plane: the lane splits the bulge into two symmetric luminous halves, NGC 891 / Sombrero)
-        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.16), P.R * 1.75, 1.1, 0.006, 30);
+        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.2), P.R * 1.5, 1.1, 0.006, 24);
         this.engine.postfx?.setGrade?.({ exposure: 1.15 }, 0);
       },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },

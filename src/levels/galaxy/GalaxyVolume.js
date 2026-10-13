@@ -173,9 +173,9 @@ void main(){
       vec3 cY = mix(uColYoung, vec3(0.8, 0.88, 1.0), smoothstep(0.3, 1.6, m.r) * 0.6 * (1.0 - uInside));   // white-blue arm ridges
       // box/peanut bulge: the inner old light (bar) is vertically thickened (face-on brightness kept,
       // since both profiles integrate to 1), so edge-on a luminous bulge stands above and below the lane
-      float pk = (1.0 - uInside) * 0.7 * exp(-pow(length(pm.xz) / (0.2 * uR), 2.0));
+      float pk = (1.0 - uInside) * 0.4 * exp(-pow(length(pm.xz) / (0.2 * uR), 2.0));
       float pOk = mix(pO, galSeg(ya, yb, uHOld * 1.7), pk);
-      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, mix(0.85, 0.6, gC) * (1.0 - uInside)) * cOld * (pOk + pT * uThick * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
+      vec3 j = starCl * (m.r * cY * pY * uYoungGain + mix(m.g, mS.g, mix(0.85, 0.6, gC) * (1.0 - uInside)) * cOld * (pOk + pT * uThick * gC * (1.0 - uInside)) * mix(1.0, smoothstep(0.0, uNearFade * 3.0, tm), uInside) + m.a * uColHII * pD * 2.1 * det * smoothstep(0.3, 2.0, tm) * (1.0 - 0.7 * uInside)) * uEmit;
       j += m.b * pD * uColDustGlow * uEmit * grazeK;
       j *= rTap;   // (no glow at grazing angles: the lane must absorb, not paint orange)
       float near = smoothstep(0.0, uNearFade, tm);

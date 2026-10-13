@@ -561,6 +561,10 @@ export default class Player {
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
       if (S.wind.length() > cap) S.wind.setLength(cap);
+      // the posed stride reaches the right hand forward: a side-wind toward the explorer's left
+      // keeps the streaming tail clear of that arm (an ambient crosswind toward the right
+      // draped it over the forearm like a flag on a pole)
+      S.wind.multiplyScalar(0.4).addScaledVector(_v2.crossVectors(ctl.up, ctl.facing).normalize(), 0.32 * Math.max(sp, 1.5));
       // a frozen instant of a gusting wind: livelier travelling S-waves + curl swirls, so the
       // settled ribbon carries folds and a twist instead of its static streaming equilibrium
       S.flutter = 30; S.turbulence = 13;

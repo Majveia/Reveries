@@ -267,7 +267,8 @@ export class Stars {
   _mat(vert, frag, extra) {
     const m = new THREE.ShaderMaterial({
       vertexShader: vert, fragmentShader: frag,
-      uniforms: { ...this.U, ...extra },
+      // (uNoExt always present: materials sharing one program would otherwise inherit a stale value)
+      uniforms: { uNoExt: { value: 0 }, ...this.U, ...extra },
       blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, transparent: true,
     });
     return m;
