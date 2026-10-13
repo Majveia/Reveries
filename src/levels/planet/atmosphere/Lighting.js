@@ -59,7 +59,7 @@ void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix *
 
 // Moonlit sky scattering is kept below the physical ratio so nights stay OLED-deep
 // (the moon still keys the ground at full strength).
-const MOON_SKY = 0.4;
+const MOON_SKY = 0.2; // moonlit sky scattering: low, so the stars and the galaxy band own the night sky
 
 export class PlanetLighting {
   constructor(level) {

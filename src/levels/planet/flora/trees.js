@@ -47,6 +47,27 @@ const FADE_V = /* glsl */ `
   vLFade = 0.0;
 #endif
 `;
+// Foliage between the lens and the player (and right at the lens) dissolves
+// away with a hard cut (a static dither rim reads as a stipple veil when the
+// camera sits inside a crown), so a crown never smothers the frame.
+const CLEAR_GLSL = /* glsl */ `
+uniform vec3 uPlayer; uniform vec3 uAnchor;
+float fl_keep(vec3 wp) {
+  vec3 d = wp - cameraPosition;
+  float k = step(3.0, length(d));
+  vec3 pw = uPlayer + uAnchor;
+  vec3 S = pw + normalize(pw) * 1.1 - cameraPosition;
+  float L2 = dot(S, S);
+  if (L2 < 3600.0) {
+    float t = dot(d, S) / L2;
+    if (t < 1.0) {
+      float r = length(d - S * max(t, 0.0));
+      k = min(k, max(step(2.2, r), step(0.9, t)));
+    }
+  }
+  return k;
+}
+`;
 const BARK_FRAG = /* glsl */ `
 float fl_vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float a = fl_h(i), b = fl_h(i + vec2(1.0, 0.0)), c = fl_h(i + vec2(0.0, 1.0)), d = fl_h(i + vec2(1.0, 1.0));
@@ -56,12 +77,13 @@ float fl_vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
 function barkMaterial(U, depth = false) {
   const mat = depth ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
-    sh.vertexShader = 'attribute vec3 aWind;\nvarying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nuniform vec2 uFade;\n' + WIND_GLSL + sh.vertexShader
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_APPLY + FADE_V + '\nvBUv = uv; vBGlow = aWind.z;');
+    sh.vertexShader = 'attribute vec3 aWind;\nvarying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nvarying vec3 vBWP;\nuniform vec2 uFade;\nuniform float uHueVar;\n' + WIND_GLSL + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_APPLY + FADE_V + '\nvBUv = uv; vBGlow = aWind.z * (1.0 - uHueVar * 0.5 * (0.5 + 0.5 * sin(uTime * 0.6 - dot(flBase, vec3(0.031, 0.017, 0.023)))));\nvBWP = (modelMatrix * flIM * vec4(transformed, 1.0)).xyz;');
     if (depth) return;
-    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + IGN_GLSL + BARK_FRAG + sh.fragmentShader
+    sh.fragmentShader = 'varying vec2 vBUv;\nvarying float vBGlow;\nvarying float vLFade;\nvarying vec3 vBWP;\nuniform float uNight;\nuniform vec3 uGlowCol;\nfloat fl_h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' + IGN_GLSL + CLEAR_GLSL + BARK_FRAG + sh.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
   if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
+  if (fl_keep(vBWP) < 0.5) discard;
   // bark furrows, faded to their mean where they would alias (no shimmering streaks)
   float flFw = fwidth(vBUv.x * 9.0) + fwidth(vBUv.y * 2.7);
   float flAA = 1.0 - smoothstep(0.35, 1.2, flFw);
@@ -80,7 +102,7 @@ function barkMaterial(U, depth = false) {
     vec3 flGr = sign(flDet) * (dFdx(flHt) * flR1 + dFdy(flHt) * flR2);
     normal = normalize(abs(flDet) * normal - flGr);
   }`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += mix(diffuseColor.rgb, uGlowCol, 0.75) * vBGlow * flSpot * (0.06 + 3.0 * uNight);');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += mix(diffuseColor.rgb, uGlowCol, 0.75) * vBGlow * flSpot * flSpot * (0.03 + 3.4 * uNight);');
   }, depth ? 'flora-bark-depth' : 'flora-bark');
 }
 
@@ -89,20 +111,22 @@ function leafMaterial(U, map, depth = false) {
     ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.42 })
     : new THREE.MeshStandardMaterial({ vertexColors: true, map, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });
   return patchMaterial(mat, U, (sh) => {
-    sh.vertexShader = 'attribute vec3 aWind;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nuniform vec2 uFade;\n' + WIND_GLSL + sh.vertexShader
+    sh.vertexShader = 'attribute vec3 aWind;\nvarying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec2 uFade;\nuniform float uHueVar;\n' + WIND_GLSL + sh.vertexShader
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 ${WIND_APPLY}
 ${FADE_V}
-  vLGlow = aWind.z;
+  // glow breathes in slow waves rolling through the forest (biolum worlds)
+  vLGlow = aWind.z * (1.0 - uHueVar * 0.55 * (0.5 + 0.5 * sin(uTime * 0.6 - dot(flBase, vec3(0.031, 0.017, 0.023)))));
+  vLHue = fl_hash2(flBase.xz * 0.0713 + flBase.y * 0.0131);
   vec3 flWP = (modelMatrix * flIM * vec4(transformed, 1.0)).xyz;
+  vLWP = flWP;
   vLBack = pow(max(dot(normalize(flWP - cameraPosition), uKeyDir), 0.0), 2.5);`);
     if (depth) return;
-    sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nuniform vec3 uKeyColor;\nuniform vec3 uKeyDir;\nuniform float uNight;\nuniform vec3 uGlowCol;\n' + IGN_GLSL + sh.fragmentShader
+    sh.fragmentShader = 'varying float vLGlow;\nvarying float vLBack;\nvarying float vLFade;\nvarying vec3 vLWP;\nvarying float vLHue;\nuniform vec3 uKeyColor;\nuniform vec3 uKeyDir;\nuniform float uNight;\nuniform vec3 uGlowCol;\nuniform float uHueVar;\n' + IGN_GLSL + CLEAR_GLSL + sh.fragmentShader
       .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
   if (fl_ign(gl_FragCoord.xy) < vLFade) discard;
-  // dissolve foliage cards that come within ~2.5 m of the lens (dithered, no pop)
-  float flNear = smoothstep(0.45, 1.7, length(vViewPosition));
-  if (flNear < 1.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > flNear) discard;`)
+  // clear the lens and the camera -> player sightline (narrow dithered rim, no stipple veil)
+  if (fl_keep(vLWP) < 0.5) discard;`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
       .replace('#include <opaque_fragment>', `// warm sunlit rims, cool blue-green shade side (depth inside the crown)
   float flNdl = dot(normal, normalize((viewMatrix * vec4(uKeyDir, 0.0)).xyz));
@@ -113,9 +137,13 @@ ${FADE_V}
   // beads) instead of flooding whole cards: luminance-keyed mask with falloff
   vec3 flTx = texture2D(map, vMapUv).rgb;
   float flL = clamp(dot(flTx, vec3(0.333)), 0.0, 1.0);
-  // whole leaf softly lit from within, veins and leaflets brighter (no salt-and-pepper speckle)
-  float flGM = 0.08 + 1.35 * smoothstep(0.5, 0.95, flL);
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.72) * vLGlow * flGM * (0.05 + 3.6 * uNight);
+  // emissive hierarchy: hot veins / beads / leaflet tips, a faint inner glow,
+  // dark leaf mass between them (true blacks survive at night)
+  float flGM = 0.03 + 2.6 * smoothstep(0.64, 0.97, flL) * smoothstep(0.64, 0.97, flL) + 0.25 * smoothstep(0.5, 0.75, flL);
+  // per-tree hue from the palette family (cyan / violet / mint) on biolum worlds
+  vec3 flGC = uGlowCol;
+  if (uHueVar > 0.5) flGC = vLHue < 0.5 ? uGlowCol : vLHue < 0.78 ? vec3(0.62, 0.38, 1.0) : vec3(0.36, 1.0, 0.7);
+  outgoingLight += mix(diffuseColor.rgb, flGC, 0.8) * vLGlow * flGM * (0.03 + 4.6 * uNight);
 #include <opaque_fragment>`);
   }, depth ? 'flora-leaf-depth' : 'flora-leaf');
 }
@@ -129,7 +157,10 @@ ${FADE_V}
 // side and glow with soft HDR gradients at night. A dithered crossfade hides
 // the mesh ↔ impostor switch.
 const IMP_AZ = 8, IMP_EL = 3, IMP_ELSTEP = 0.6109; // 0°, 35°, 70°
-const IGN_GLSL = /* glsl */ `float fl_ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+// the dither pattern shifts every frame when TAA is on (uDitherT), so crossfades
+// resolve into smooth blends instead of a static stipple
+const IGN_GLSL = /* glsl */ `uniform float uDitherT;
+float fl_ign(vec2 p) { p += vec2(47.0, 17.0) * uDitherT; return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 `;
 const IMP_VERT = /* glsl */ `
 attribute vec3 iPos;   // base, relative to anchor
@@ -144,6 +175,8 @@ varying vec2 vIUv;
 flat varying vec4 vIF;   // az0, az1, el0, el1
 flat varying vec3 vIW;   // az weight, el weight, variant
 varying float vIGlow;
+varying float vIHue;
+uniform float uHueVar;
 varying float vIBack;
 varying float vIFade;
 varying vec3 vIX;
@@ -169,6 +202,8 @@ const IMP_BODY = /* glsl */ `
   vec3 p = iCtr + iBR * (position.x * iC.w + iSw) + iBU * position.y * iC.w;
   vec3 objectNormal = iVd;
   vICol = iCol; vIGlow = iDat.y;
+  { vec3 iW = iPos + uAnchor; vIHue = fl_hash2(iW.xz * 0.0713 + iW.y * 0.0131);
+    vIGlow *= 1.0 - uHueVar * 0.55 * (0.5 + 0.5 * sin(uTime * 0.6 - dot(iW, vec3(0.031, 0.017, 0.023)))); }
   vIUv = position.xy * 0.5 + 0.5;
   vIF = vec4(iA0, iA1, iE0, iE0 + 1.0); vIW = vec3(iWa, iWe, iDat.x);
   vIX = iXa; vIUp = iUp;
@@ -183,7 +218,7 @@ function impostorMaterial(U, alb, nrm) {
       .replace('#include <begin_vertex>', 'vec3 transformed = p;');
     sh.fragmentShader = `uniform sampler2D uImpAlb; uniform sampler2D uImpNrm; uniform vec3 uImpGrid;
 varying vec3 vICol; varying vec2 vIUv; flat varying vec4 vIF; flat varying vec3 vIW;
-varying float vIGlow; varying float vIBack; varying float vIFade; varying vec3 vIX; varying vec3 vIUp;
+varying float vIGlow; varying float vIHue; uniform float uHueVar; varying float vIBack; varying float vIFade; varying vec3 vIX; varying vec3 vIUp;
 uniform vec3 uKeyColor; uniform vec3 uKeyDir; uniform float uNight; uniform vec3 uGlowCol;
 ${IGN_GLSL}
 vec2 fl_impUV(float a, float e) {
@@ -207,7 +242,9 @@ vec2 fl_impUV(float a, float e) {
   outgoingLight *= mix(vec3(0.86, 0.95, 1.08), vec3(1.06, 1.0, 0.9), smoothstep(-0.3, 0.6, iNdl));
   outgoingLight += diffuseColor.rgb * vec3(1.05, 1.1, 0.75) * uKeyColor * (0.04 + 0.6 * vIBack) * 0.45;
   // bioluminescence: soft baked mask (veins, leaflets, strands), HDR so it blooms
-  outgoingLight += mix(diffuseColor.rgb, uGlowCol, 0.7) * vIGlow * iNrm.a * 2.0 * (0.03 + 3.2 * uNight);
+  vec3 iGC = uGlowCol;
+  if (uHueVar > 0.5) iGC = vIHue < 0.5 ? uGlowCol : vIHue < 0.78 ? vec3(0.62, 0.38, 1.0) : vec3(0.36, 1.0, 0.7);
+  outgoingLight += mix(diffuseColor.rgb, iGC, 0.75) * vIGlow * iNrm.a * 2.2 * (0.02 + 3.8 * uNight);
 #include <opaque_fragment>`);
   }, 'flora-impostor-oct');
 }
@@ -227,7 +264,7 @@ void main() {
   if (t.a < 0.5) discard;
   gAlb = vec4(sqrt(clamp(t.rgb * vC, 0.0, 1.0)), 1.0);
   float lum = dot(t.rgb, vec3(0.333));
-  float gm = uLeaf > 0.5 ? 0.28 + 1.25 * smoothstep(0.5, 0.95, lum) : 0.35;
+  float gm = uLeaf > 0.5 ? 0.08 + 1.5 * smoothstep(0.62, 0.95, lum) : 0.2;
   gNrm = vec4(normalize(vN) * 0.5 + 0.5, clamp(vG * gm * 0.5, 0.0, 1.0));
 }`;
 
@@ -251,6 +288,8 @@ export class Trees {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind, uGlowCol: { value: new THREE.Color(T.glowCol || '#7fe6ff') },
       uFade: { value: new THREE.Vector2(this.meshRange - q.pick(12, 16, 22, 22), this.meshRange + q.pick(12, 16, 22, 22)) },
+      uPlayer: fl.uniforms.uPlayer, uDitherT: fl.uniforms.uDitherT,
+      uHueVar: { value: fl.profile.glowPools ? 1 : 0 },
     };
     this.U = U;
     this.barkMat = barkMaterial(U); this.barkDepth = barkMaterial(U, true);
@@ -549,6 +588,7 @@ export class Trees {
     const mLo = this.U.uFade.value.x, mHi = this.U.uFade.value.y, mLo2 = mLo * mLo, mHi2 = mHi * mHi;
     const wantCol = new Set();
     const pools = this.flora.profile.glowPools ? [] : null;
+    const blk = !!(fl.sight || fl.clearZones?.length);
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
       const frac = TIER_FRAC[c.data.tier];
@@ -559,6 +599,7 @@ export class Trees {
         const fd = d2 < 90000 ? 1 : thinAt(Math.sqrt(d2));
         if (t.rank >= fd) continue;
         t.fs = 1 + 0.42 * (1 - fd) / 0.78; // thinned forests: survivors grow
+        if (blk && fl.blocked(t.x, t.y, t.z)) continue;
         if (pools && t.v.glow > 0.3 && d2 < 160 * 160) pools.push(d2, t);
         if (d2 < mHi2 && fl.castsInView(dx, dy, dz, (t.v.crown || 3) * t.scale + 1, (t.v.height || 10) * t.scale)) t.v.list.push(t);
         if (d2 > mLo2 && fl.inView(dx, dy, dz, (t.v.impR || 8) * t.scale * (t.fs || 1))) imp.push(t);

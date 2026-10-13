@@ -288,7 +288,7 @@ void main(){
     // sodium amber suburbs vs LED-white downtowns
     vec3 lc = mix(uLights, vec3(0.95, 0.95, 1.0) * dot(uLights, vec3(0.33)) * 1.2, smoothstep(0.2, 0.8, snoise(sd * 30.0 + 11.0) * 0.5 + 0.5) * 0.6 + cores * 0.25);
     lights *= (uCiv - 1.0) * 1.3;
-    emis += lc * lights * night * 17.0 * (1.0 - cloud * 0.8);
+    emis += lc * lights * night * 13.0 * (1.0 - cloud * 0.8);
   }
 #endif
   col += emis * (1.0 - cloud * 0.6);

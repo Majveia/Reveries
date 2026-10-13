@@ -37,7 +37,7 @@ export default class CosmosLevel {
     this.grade = {
       exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
       blackPoint: 0.008, blackToe: 0.03, vignette: 0.32, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.3, bloomRadius: 0.35, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
+      bloomStrength: 0.3, bloomRadius: 0.55, bloomThreshold: 1.0, bloomKnee: 0.25, streak: 0.05,
     };
     this.L = BOX;
     this.halos = [];
@@ -72,7 +72,7 @@ export default class CosmosLevel {
     this._applyHalos(await this.sim.readHaloGridAsync(), true);
     if (this.ref[0]) this.home.set(this.ref[0].x, this.ref[0].y, this.ref[0].z);
 
-    this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(16384, 32768, 65536, 131072), subs: e.quality.pick(2, 3, 4, 6) });
+    this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(32768, 65536, 131072, 262144), subs: e.quality.pick(2, 3, 4, 6) });
     this.scene.add(this.web.galaxies);
     this.lights = new ClusterLights(e.quality.pick(48, 64, 96, 128));
     this.scene.add(this.lights.points);
@@ -86,7 +86,7 @@ export default class CosmosLevel {
       minDistance: 1.5, maxDistance: 900, autoRotate: e.shotMode ? 0 : 0.018, damping: 5,
     });
     this._buildMarkers();
-    this.deep = new DeepField(seedFrom(e.universe.seed, 'deep-field'), e.quality.pick(2500, 4000, 6000, 8000));
+    this.deep = new DeepField(seedFrom(e.universe.seed, 'deep-field'), e.quality.pick(5000, 10000, 18000, 26000));
     this.scene.add(this.deep.points);
     progress(1, 'the cosmic web');
   }
@@ -298,9 +298,9 @@ export default class CosmosLevel {
     p.shimmer = 1;
     // inside, the fog-integrated column of the whole periodic box forms a uniform floor: raise the
     // black floor with it so voids stay true black and only discrete structure reads
-    p.floor = 0.6 + 0.65 * inside;
+    p.floor = 0.4 + 0.75 * inside;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
-    p.smooth = 3.2 * (1 + 1.3 * p.early); p.sharpA = 4 + 40 * p.early;
+    p.smooth = 3.2 * (1 + 0.9 * p.early); p.sharpA = 4 + 6 * p.early;
     p.dim = 1; p.lights = 1;
     // seen whole, the box projects 200 Mpc of web per pixel: a lower gain keeps a tonal ladder
     // (violet sheets → cyan filaments → gold nodes) instead of a saturated cyan ball
@@ -474,8 +474,13 @@ export default class CosmosLevel {
 
   _shots() {
     return {
-      // the whole periodic volume as one luminous object at z≈0: the resolution scale is sub-pixel
-      hero: async () => { this.mode = 'live'; this._shotP = null; this._pose(this.home, this._heroOffset(1.65 * this.L, HERO.yaw, 0.38), 34, 0.0, 0.0); },
+      // z≈0 from just inside the periodic volume: the web fills the frame edge to edge and recedes
+      // into violet aerial perspective (never a particle ball floating in a black frame)
+      hero: async () => {
+        this.mode = 'live'; this._shotP = null;
+        const o = this._dbg || {};
+        this._pose(this.home, this._heroOffset((o.hd ?? 0.62) * this.L, HERO.yaw + (o.hy ?? 0.3), o.hp ?? 0.28), o.hf ?? 58, o.hs ?? 0.0, o.hl ?? 0.0);
+      },
       // z≈5: the delicate proto-web, a dim ember lattice in which only the rarest peaks have ignited
       early: async () => { this.mode = 'early'; this._shotP = { floor: 0.0, gain: 0.45, a0: 70, galaxies: 0.12, lights: 0 }; this._pose(this.home, this._heroOffset(0.85 * this.L, HERO.yaw + 0.4, 0.3), 40, 0.0, 0); },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last

@@ -50,10 +50,13 @@ function flowerGeometry() {
   idx.push(0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4);
   const c0 = pos.length / 3;
   pos.push(0, 0.15, 0); part.push(2);
-  const P = 10;
+  // five rounded, cupped petals (no pointed clip-art stars): radius follows a
+  // lobed rose curve, the rim lifts into a shallow cup
+  const P = 20;
   for (let k = 0; k < P; k++) {
-    const a = (k / P) * Math.PI * 2, r = k % 2 === 0 ? 1 : 0.38;
-    pos.push(Math.cos(a) * r, (k % 2 === 0 ? 0.32 : 0.05), Math.sin(a) * r); part.push(k % 2 === 0 ? 1 : 1.5);
+    const a = (k / P) * Math.PI * 2, lobe = Math.pow(Math.abs(Math.cos(a * 2.5)), 0.55);
+    const r = 0.3 + 0.7 * lobe;
+    pos.push(Math.cos(a) * r, 0.04 + 0.34 * r * r, Math.sin(a) * r); part.push(lobe > 0.6 ? 1 : 1.5);
   }
   for (let k = 0; k < P; k++) idx.push(c0, c0 + 1 + k, c0 + 1 + ((k + 1) % P));
   const g = new THREE.InstancedBufferGeometry();
@@ -184,7 +187,9 @@ const BLADE_BODY = /* glsl */ `
   vec3 bn = normalize(cross(side, tang));
   if (dot(bn, toC) > 0.0) bn = -bn;
   bn = normalize(bn + side * position.x * 1.4);
-  bn = normalize(mix(bn, gUp, 0.5));
+  // mostly terrain-facing normals: the sward takes the same light as the ground
+  // it grows from (blades never read as dark pins on a bright lawn)
+  bn = normalize(mix(bn, gUp, 0.74));
   vec3 bc = fl_unpack(aDat.w);
 #ifdef FLOWER
   if (part > 0.5) {
@@ -201,7 +206,7 @@ const BLADE_BODY = /* glsl */ `
 #else
   // deep root occlusion inside the sward, sunlit tips; per-blade jitter fades
   // with distance so the far field resolves to the clump colour, not noise
-  float ao = mix(0.24, 1.0, smoothstep(0.0, 0.8, t));
+  float ao = mix(0.46, 1.0, smoothstep(0.0, 0.42, t));
   vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
   vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * mix(0.86 + 0.28 * rnd, 1.0, smoothstep(8.0, 35.0, dC));
   // glowing blades come in patches (a few metres across), not as uniform frost
@@ -212,7 +217,7 @@ const BLADE_BODY = /* glsl */ `
   vGX = vec2(position.x * 2.0, smoothstep(14.0, 4.0, dC));
 #endif
   float back = pow(max(dot(normalize(toC), uKeyDir), 0.0), 5.0);
-  vTrans *= 0.22 + 1.6 * back;
+  vTrans *= 0.3 + 1.6 * back;
 #ifdef GLOWPOOL
   // soft pools of light under glowing crowns (inverse-square-ish, smooth cut)
   vPool = 0.0;
@@ -268,7 +273,7 @@ const LITTER_BODY = /* glsl */ `
   vec3 t1 = normalize(cross(ref, gUp)); vec3 t2 = cross(gUp, t1);
   vec3 side = t1 * cos(aDat.x) + t2 * sin(aDat.x);
   vec3 fwd = cross(gUp, side);
-  float sz = aDat.y * vis * clamp(dC / uR0, 1.0, 2.0);
+  float sz = aDat.y * vis * clamp(dC / uR0, 1.0, 1.3);
   float curl = aDat.z * dot(position.xz, position.xz);
   vec3 p = base + (side * position.x + fwd * position.z) * sz + gUp * (0.015 + curl * sz);
   vLUv = position.xz * 2.0;
@@ -301,7 +306,7 @@ export class Grass {
   init() {
     const fl = this.flora, q = fl.engine.quality, w = this.world, P = this.P;
     const qd = q.pick(0.28, 0.46, 1, 1.35);
-    this.dens0 = P.density * 62 * qd;              // blades per m² inside r0
+    this.dens0 = P.density * 70 * qd;              // blades per m² inside r0
     this.fdens0 = (this.F?.density || 0) * 9 * qd;  // flowers per m² inside r0 (in patches)
     this.r0 = q.pick(6, 8, 10, 13);                 // full density inside r0
     this.fallK = q.pick(3.4, 3.1, 2.5, 2.2);         // density ∝ (r0/d)^fallK beyond (blades widen to keep cover)
@@ -317,7 +322,7 @@ export class Grass {
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind,
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
       uR0: { value: this.r0 }, uFallK: { value: this.fallK }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
-      uGlow: { value: P.glow || 0 }, uTransK: { value: 0.22 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
+      uGlow: { value: P.glow || 0 }, uTransK: { value: 0.42 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
       uGlowPts: fl.uniforms.uGlowPts,
     };
     this.pools = !!fl.profile.glowPools;
@@ -488,7 +493,7 @@ export class Grass {
         _c.multiplyScalar(0.84 + 0.3 * (n3 * 0.5 + 0.5));
         _c.r *= 1 + 0.16 * n3; _c.b *= 1 - 0.12 * n3;
         let hh = THREE.MathUtils.lerp(P.h[0], P.h[1], r3 * r3) * (0.75 + 0.5 * (n1 * 0.5 + 0.5)) * (0.55 + 0.45 * g) * (0.4 + 0.6 * clr);
-        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2);
+        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2) * (P.wK ?? 1.4); // broad blades: a closed sward
         let yaw = r2 * 6.2832 + u * 31.4;
         if (clump) {
           hh *= clump[2]; yaw = clump[3] + (r2 - 0.5) * 1.3;

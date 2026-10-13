@@ -153,7 +153,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     vec3 P = ro + rd * t;
     vec3 wx = cloudWeather(P);
     if (wx.r < 0.02) continue;
-    float lod = max(lod0, step(18000.0, t));
+    float lod = max(lod0, step(30000.0 + 6000.0 * jit, t)); // dithered LOD edge: no visible seam
     // near-field fade: flying through the deck shows soft wisps, not a smeared wall
     float d = cloudDensityW(P, wx, lod) * graze * smoothstep(20.0, 320.0, t);
     if (d <= 0.002) continue;
@@ -184,27 +184,39 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     float ms = 0.0, a = 1.0, b = 1.0, c = 1.0;
     for (int o = 0; o < 4; o++) {
       ms += a * exp(-od * b) * mix(phase, 0.0795775, 1.0 - c);
-      a *= 0.55; b *= 0.45; c *= 0.5;
+      a *= 0.55; b *= 0.32; c *= 0.5;
     }
+    // diffusion floor: light that random-walks around a shadowing tower (sides of a cumulus in
+    // the shadow of its neighbour read blue-grey, never as charcoal holes)
+    ms += 0.035 / (1.0 + 0.08 * od);
     // silver lining: only the thinnest, least-shadowed margins, a fraction of the main lobe
     ms += 0.12 * silverPh * exp(-od) * (1.0 - smoothstep(0.0, 0.25, d));
     float powder = 1.0 - exp(-ext * 380.0);
-    powder = mix(1.0, powder, 0.7 * smoothstep(-0.2, 0.6, -cosK));
-    vec3 Sk = uKeyE * Tl * ms * powder * 3.14159;
+    powder = mix(1.0, powder, 0.3 + 0.45 * smoothstep(-0.2, 0.6, -cosK));
+    // Schneider in-scatter probability: thin outer wisps and the flat bases scatter less light
+    // toward the eye than the dense, high interior → dark crevices between bright billows
+    float depthP = 0.06 + pow(clamp(d * 0.85, 0.0, 1.0), mix(0.5, 1.6, hl));
+    float vertP = pow(clamp(cRemap(hl, 0.04, 0.22, 0.25, 1.0), 0.25, 1.0), 0.8);
+    // (not when backlit: there the thin margins must glow — the silver lining)
+    float inP = mix(1.0, clamp(depthP, 0.0, 1.0) * vertP, 0.55 * smoothstep(0.75, 0.1, cosK));
+    vec3 Sk = uKeyE * Tl * ms * powder * inP * 3.14159;
     if (key2) {
       // moon: two shape-only light samples, same multiple-scattering octaves
-      float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.12, 1.0) * 0.24 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
-      float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.5) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.25) * 0.0795775;
+      float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.04, lod) * 0.08 + cloudDensity(P + uKey2Dir * shellH * 0.16, 1.0) * 0.2 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
+      float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.32) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.1) * 0.0795775;
+      // moonlit silver rims on the thin margins
+      ms2 += 0.2 * hg(cosK2, 0.9) * exp(-od2) * (1.0 - smoothstep(0.0, 0.3, d));
       Sk += uKey2E * transmittanceToLight(r, dot(upL, uKey2Dir)) * ms2 * 3.14159;
     }
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
     // vertical gradient within each cloud (relative to its own top): luminous tops,
     // blue-grey (never charcoal) bases lit by the ground bounce
-    float ambOcc = exp(-d * sigma * 40.0);
+    float ambOcc = exp(-d * 1.4);
     vec3 skyA = cloudSkyAmb(upL, r);
     float muSun = dot(upL, uSunDir);
     vec3 gndA = uGroundAlbedo * (uSunE * transmittanceToLight(uRb + 2.0, muSun) * max(muSun, 0.0) / PI + skyA) + uCityGlow;
-    vec3 Sa = (skyA * (0.32 + 0.68 * sqrt(hl)) + gndA * 0.5 * (1.0 - hl)) * (0.6 + 0.4 * ambOcc) * PI * 0.3;
+    // tops see the whole sky dome, bases a blue-grey mix of sky and ground bounce
+    vec3 Sa = (skyA * (0.38 + 0.62 * sqrt(hl)) + gndA * 0.55 * (1.0 - hl)) * (0.55 + 0.45 * ambOcc) * PI * 0.36;
     vec3 S = (Sk + Sa) * uCloudAlbedo * (1.0 - 0.45 * wx.b);
     float st = exp(-ext * dt);
     float Tprev = T;
@@ -288,9 +300,9 @@ void main(){
 
 // Weather presets → cloud field.
 export const CLOUD_PRESETS = {
-  clear: { coverage: 0.34, type: 0.35, wet: 0.0, bands: 0.5, density: 0.035 },
-  cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.032 },
-  rain: { coverage: 0.72, type: 0.75, wet: 0.7, bands: 0.5, density: 0.06 },
+  clear: { coverage: 0.34, type: 0.35, wet: 0.0, bands: 0.5, density: 0.06 },
+  cumulus: { coverage: 0.6, type: 0.7, wet: 0.05, bands: 0.6, density: 0.065 },
+  rain: { coverage: 0.72, type: 0.75, wet: 0.7, bands: 0.5, density: 0.08 },
   storm: { coverage: 0.8, type: 0.95, wet: 0.9, bands: 0.4, density: 0.07 },
   fog: { coverage: 0.38, type: 0.3, wet: 0.15, bands: 0.4, density: 0.04 },
   snow: { coverage: 0.66, type: 0.3, wet: 0.5, bands: 0.5, density: 0.05 },

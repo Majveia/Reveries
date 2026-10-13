@@ -137,7 +137,7 @@ void main(){
   vec4 o = vec4(0.0);
 
   // ---- spiral coordinates (matches Universe.galaxySample) -----------------------
-  float young = 0.0, dust = 0.0, hii = 0.0, old = 0.0;
+  float young = 0.0, dust = 0.0, hii = 0.0, old = 0.0, sweptK = 0.0, barMask = 0.0;
   if (uArms > 0.5 && uType != 3.0 && uType != 4.0 && uType != 2.0) {
     float lr = log(max(rq, 0.3) / uR0);
     float armPh = (tq - uK * lr) * uArms / TAU;
@@ -195,7 +195,15 @@ void main(){
     float hiiBand = exp(-pow(phi + 0.02, 2.0) / (2.0 * 0.1 * 0.1));
     hii = knot * cplx * hiiBand * (0.4 + clump) * inner * edge * exp(-r / (0.42 * uR)) * 4.5 * uSF;
     // old disk is mildly enhanced in the arms (density wave)
-    old = disk * (0.3 + 0.9 * exp(-phi * phi / (2.0 * 0.4 * 0.4)));
+    // barred galaxies: the bar sweeps the inner disk clean (NGC 1300) — off the bar and off the
+    // arms the old-light floor and the diffuse dust drop away, so the inter-arm reads velvet dark
+    float aB = uR * uBar * 0.56;
+    float barEnv = uBar > 0.0 ? exp(-0.5 * (pow(p.x / (aB * 1.15), 4.0) + pow(p.y / (uR * 0.07), 2.0))) : 1.0;
+    sweptK = uBar > 0.0 ? smoothstep(0.03 * uR, 0.09 * uR, r) * (1.0 - smoothstep(0.38 * uR, 0.6 * uR, r)) * (1.0 - barEnv) : 0.0;
+    float armEnv = exp(-phi * phi / (2.0 * 0.4 * 0.4));
+    old = disk * (mix(0.3, 0.07, sweptK) + 0.9 * armEnv * (1.0 - 0.45 * sweptK));
+    young *= 1.0 - 0.55 * sweptK * (1.0 - arm);
+    dust *= 1.0 - 0.6 * sweptK * (1.0 - armEnv);
   } else if (uType == 3.0) {
     // irregular: clumpy, offset star-forming complexes
     vec2 c = p + vec2(0.15, -0.1) * uR;
@@ -232,11 +240,14 @@ void main(){
     // super-Gaussian body plus an exponential ridge along its axis
     float bar = exp(-0.5 * (pow(p.x * p.x / (a * a), 2.4) + pow(p.y * p.y / (b * b * 0.55), 1.5)));
     float barRidge = exp(-abs(p.x) / (0.35 * a)) * exp(-0.5 * p.y * p.y / (b * b * 0.3));
+    // the bar body is swept clean of mottled disk dust: only its straight leading-edge lanes remain
+    barMask = exp(-0.5 * (pow(p.x / (a * 1.05), 4.0) + pow(p.y / (b * 1.8), 2.0)));
+    dust *= 1.0 - 0.85 * barMask;
     // (moderate amplitude: the bar must keep its elongated shape through the tonemap, not clip to an oval)
-    old += bar * 2.3 + barRidge * 1.6;
+    old += bar * 2.9 + barRidge * 2.2;
     // ansae: brightened bar ends where the bar meets the arms
     old += 1.4 * exp(-0.5 * (pow((abs(p.x) - a * 0.92) / (0.12 * a), 2.0) + p.y * p.y / (b * b * 0.8)));
-    young += bar * smoothstep(0.35, 0.9, abs(p.x) / a) * 0.5 * (0.4 + clumpBar(p));
+    young += bar * smoothstep(0.7, 1.0, abs(p.x) / a) * 0.3 * (0.4 + clumpBar(p));   // star formation only at the bar ends
     // leading-edge bar lanes: offset, curved (S-shaped through the centre), wandering in width,
     // fragmented into filaments, swinging out into the inner arm lanes at the bar ends
     float sx = sign(p.x), ax = abs(p.x) / a;
@@ -249,7 +260,7 @@ void main(){
     float bfil = ridge2(vec2(p.x * 2.5, p.y * 6.0) + 21.0, 4);
     dust += ln * along * (0.12 + 2.2 * smoothstep(0.45, 0.72, bfil)) * 6.5;
     // dust spurs feathering off the lanes across the bar
-    dust += pow(ridge2(vec2(p.x * 9.0 + p.y * 3.0, p.y * 2.0), 3), 5.0) * bar * 0.9;
+    dust += pow(ridge2(vec2(p.x * 9.0 + p.y * 3.0, p.y * 2.0), 3), 10.0) * bar * 0.7;   // hairline spurs only
     // nuclear star-forming ring / mini spiral
     float nr = exp(-pow(r - 0.035 * uR, 2.0) / (2.0 * pow(0.008 * uR, 2.0)));
     young += nr * 1.5; hii += nr * smoothstep(0.3, 0.0, worley(q * 14.0).x) * 3.0;
@@ -271,7 +282,7 @@ void main(){
   old *= exp(-dd * 0.9);
   hii *= exp(-dd * 0.8);
   // diffuse dust disk with a longer scale length than the starlight (edge-on lanes span the disk)
-  if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0);
+  if (uType != 2.0) dust += (0.45 + 0.6 * flocD * flocD) * exp(-r / (0.5 * uR)) * edge * (uType == 4.0 ? 0.3 : 1.0) * (1.0 - 0.7 * sweptK) * (1.0 - 0.8 * barMask);
   o = vec4(young, old, dust * uDust, hii);
   gl_FragColor = max(o, 0.0);
 }`;

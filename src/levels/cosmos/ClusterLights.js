@@ -44,11 +44,53 @@ void main(){
   // intracluster light: de Vaucouleurs envelope truncated at R200, so voids stay true black
   float ri = sqrt(r2) / vIcl;
   float icl = 0.03 * exp(-pow(ri, 0.5) * 5.0) * exp(-ri * ri) * (1.0 - smoothstep(0.6, 1.0, sqrt(r2)));
-  vec2 a = abs(q);
-  float sp = exp(-a.y * 2.2) * exp(-a.x / vCore * 6.0) + exp(-a.x * 2.2) * exp(-a.y / vCore * 6.0);
+  float sp = 0.0;                                          // hexagonal (JWST) diffraction pattern
+  for (int k = 0; k < 3; k++) {
+    float an = 1.5707963 + float(k) * 1.0471976;
+    vec2 e = vec2(cos(an), sin(an));
+    sp += exp(-abs(dot(q, vec2(-e.y, e.x))) * 2.2) * exp(-abs(dot(q, e)) / vCore * 6.0);
+  }
   float v = core + icl * vCore * 0.25 + 0.16 * sp * vSpike * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
   gl_FragColor = vec4(vCol * v, 1.0);
 }`;
+
+
+// Member galaxies: each massive halo is resolved into a swarm of 40 cluster members (projected
+// NFW-like radial distribution inside R200, Schechter-like luminosities, red-sequence ellipticals
+// with random ellipticity and orientation) — substructure, not a smeared blob.
+const MVERT = /* glsl */ `
+attribute float aLum; attribute vec3 aShape;   // ellipticity, angle, colour seed
+uniform float uProj; uniform float uFog; uniform float uFogNear; uniform float uGain; uniform float uPxK;
+varying vec3 vCol; varying vec3 vShape; varying float vPx;
+void main(){
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  float dist = -mv.z;
+  gl_Position = projectionMatrix * mv;
+  if (dist < 0.4 || aLum <= 0.0 || uGain <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); return; }
+  // physical size ~ 30-80 kpc → a few px when close, sub-pixel (energy-conserving) when far
+  float sz = (0.035 + 0.05 * aLum) * uProj / dist;
+  float px = clamp(sz * 2.0, 1.0, 9.0 * uPxK);
+  gl_PointSize = px;
+  vPx = px;
+  float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
+  float area = max(1.0, sz * sz * 2.0);
+  float b = uGain * tr * aLum * 2400.0 / max(dist * dist, 25.0) * min(4.0, area) / area * (px * px / max(px * px, 1.0));
+  vCol = mix(vec3(1.0, 0.72, 0.46), vec3(1.0, 0.9, 0.78), aShape.z) * b;
+  vShape = aShape;
+}`;
+const MFRAG = /* glsl */ `
+varying vec3 vCol; varying vec3 vShape; varying float vPx;
+void main(){
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float c = cos(vShape.y), s = sin(vShape.y);
+  vec2 q = vec2(c * p.x + s * p.y, (-s * p.x + c * p.y) / mix(1.0, 0.45, vShape.x * step(2.5, vPx)));
+  float r2 = dot(q, q);
+  if (r2 > 1.0) discard;
+  // de Vaucouleurs-ish: bright nucleus, extended envelope
+  float v = exp(-sqrt(r2) * 5.0) * 1.6 + 0.25 * exp(-r2 * 3.0);
+  gl_FragColor = vec4(vCol * v, 1.0);
+}`;
+const NMEM = 40;
 
 export class ClusterLights {
   constructor(max = 96) {
@@ -72,6 +114,44 @@ export class ClusterLights {
     this.points = new THREE.Points(g, this.material);
     this.points.frustumCulled = false;
     this.points.renderOrder = 6;
+
+    // resolved cluster members of the top halos
+    this.nTop = Math.min(max, 28);
+    const nm = this.nTop * NMEM;
+    this.mOff = new Float32Array(nm * 3);
+    const mg = new THREE.BufferGeometry();
+    this.mPos = new Float32Array(nm * 3);
+    this.mLum = new Float32Array(nm);
+    const mShape = new Float32Array(nm * 3);
+    let hs = 0x9e3779b9;
+    const rnd = () => { hs ^= hs << 13; hs >>>= 0; hs ^= hs >>> 17; hs ^= hs << 5; hs >>>= 0; return hs / 4294967296; };
+    for (let i = 0; i < nm; i++) {
+      // projected-NFW-like radius (concentrated, long tail) inside R200, isotropic direction
+      const u = rnd(), r = Math.min(1, 0.08 + 0.92 * Math.pow(u, 1.6));
+      const z = rnd() * 2 - 1, ph = rnd() * Math.PI * 2, rr = Math.sqrt(1 - z * z);
+      this.mOff[i * 3] = Math.cos(ph) * rr * r; this.mOff[i * 3 + 1] = z * r; this.mOff[i * 3 + 2] = Math.sin(ph) * rr * r;
+      // Schechter-like: many faint, a few bright members
+      const l = rnd();
+      this.mLum[i] = 0.15 + 1.6 * l * l * l * l;
+      mShape[i * 3] = rnd(); mShape[i * 3 + 1] = rnd() * Math.PI; mShape[i * 3 + 2] = rnd();
+    }
+    this.mLumBase = this.mLum.slice();
+    mg.setAttribute('position', new THREE.BufferAttribute(this.mPos, 3));
+    mg.setAttribute('aLum', new THREE.BufferAttribute(this.mLum, 1));
+    mg.setAttribute('aShape', new THREE.BufferAttribute(mShape, 3));
+    mg.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+    mg.setDrawRange(0, 0);
+    const U = this.material.uniforms;
+    this.memMaterial = new THREE.ShaderMaterial({
+      vertexShader: MVERT, fragmentShader: MFRAG,
+      uniforms: { uProj: U.uProj, uFog: U.uFog, uFogNear: U.uFogNear, uGain: U.uGain, uPxK: U.uPxK },
+      depthTest: false, depthWrite: false, transparent: true,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+    });
+    this.members = new THREE.Points(mg, this.memMaterial);
+    this.members.frustumCulled = false;
+    this.members.renderOrder = 6;
+    this.points.add(this.members);
   }
 
   /** halos: list; place(h, out) → world position (nearest periodic image). */
@@ -86,6 +166,22 @@ export class ClusterLights {
     const g = this.points.geometry;
     g.attributes.position.needsUpdate = true; g.attributes.aMass.needsUpdate = true;
     g.setDrawRange(0, n);
+    // members follow their halo (R200 ∝ M^1/3; 1.6 Mpc/h at 1e15), richness ∝ mass
+    const nt = Math.min(this.nTop, n);
+    for (let i = 0; i < nt; i++) {
+      const lm = this.mass[i];
+      const R = 1.63 * Math.pow(10, (lm - 2) / 3);
+      const rich = Math.max(0, Math.min(1, (lm + 0.3) / 2.2));
+      const cx = this.pos[i * 3], cy = this.pos[i * 3 + 1], cz = this.pos[i * 3 + 2];
+      for (let j = 0; j < NMEM; j++) {
+        const k = i * NMEM + j;
+        this.mPos[k * 3] = cx + this.mOff[k * 3] * R; this.mPos[k * 3 + 1] = cy + this.mOff[k * 3 + 1] * R; this.mPos[k * 3 + 2] = cz + this.mOff[k * 3 + 2] * R;
+        this.mLum[k] = j < NMEM * rich ? this.mLumBase[k] : 0;
+      }
+    }
+    const mg = this.members.geometry;
+    mg.attributes.position.needsUpdate = true; mg.attributes.aLum.needsUpdate = true;
+    mg.setDrawRange(0, nt * NMEM);
     const u = this.material.uniforms;
     u.uProj.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     u.uPxK.value = height / 720;
@@ -95,5 +191,5 @@ export class ClusterLights {
     u.uTime.value = time;
   }
 
-  dispose() { this.points.geometry.dispose(); this.material.dispose(); }
+  dispose() { this.points.geometry.dispose(); this.material.dispose(); this.members.geometry.dispose(); this.memMaterial.dispose(); }
 }

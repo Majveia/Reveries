@@ -370,6 +370,11 @@ export default class Player {
     this.mats.uniforms.uFPHide.value = fpView ? 1 : 0;
 
     // ---- visual root (smoothed step-ups) ------------------------------------------------
+    // a held screenshot pose is a single frozen instant: no ground re-snapping on a steep
+    // slope, no step smoothing, no animation filtering — or TAA ghosts the body (the held
+    // scarf stays crisp while the figure smears)
+    const holdBody = !!this.shotPose && this.engine.shotMode && this._scarfHeld;
+    if (holdBody && this._shotPos) { ctl.pos.copy(this._shotPos); this._stepOff = 0; }
     const r = ctl.pos.length();
     if (ctl.grounded && this._wasGrounded) {
       const dr = r - this._lastR;
@@ -396,7 +401,7 @@ export default class Player {
     const g = {};
     const self = this;
     this.anim.update({
-      dt, speed: sp ? sp.speed : Math.hypot(ctl.vel.dot(fwd), ctl.vel.dot(left)),
+      dt: holdBody ? 0 : dt, speed: sp ? sp.speed : Math.hypot(ctl.vel.dot(fwd), ctl.vel.dot(left)),
       state, vy: ctl.vUp, accel: sp ? { x: 0, z: 0 } : ctl.accelLocal, turnRate: sp ? 0 : ctl.turnRate, leanAdd: sp?.leanAdd || 0,
       lookYaw, lookPitch, lookFree: !sp,
       groundFn(footPos, outN) {
@@ -431,7 +436,13 @@ export default class Player {
   _renderShadow() {
     const sun = this.level.sun;
     if (this.catcher) this.catcher.object.visible = false;
-    if (!sun || !this.group.visible || this.mats.uniforms.uFPHide.value > 0.5) { this.charShadow.uniforms.uCSOn.value = 0; return; }
+    if (!sun || !this.group.visible || this.mats.uniforms.uFPHide.value > 0.5) {
+      // first person: the hidden body (and the scarf) must not drop long hard sun-map streaks
+      // across the view — the shadow-depth pass ignores the FP discard
+      this.charShadow.uniforms.uCSOn.value = 0;
+      if (this.mats.uniforms.uFPHide.value > 0.5) this._setSunCast(false);
+      return;
+    }
     const L = _v.copy(sun.position).sub(sun.target.position);
     if (L.lengthSq() < 1e-8) { this.charShadow.uniforms.uCSOn.value = 0; return; }
     L.normalize();
@@ -462,7 +473,7 @@ export default class Player {
     cat.object.visible = onFoot && alt < 4;
     // the catcher + CharShadow carry the explorer's shadow on foot: skip the sun shadow map then
     const sunCast = !cat.object.visible;
-    if (this._sunCast !== sunCast) { this._sunCast = sunCast; for (const m of Object.values(this.rig.meshes)) m.castShadow = sunCast; }
+    this._setSunCast(sunCast);
     if (cat.object.visible) {
       const up = this.ctl.up;
       const elev = clamp(L.dot(up), 0.05, 1);
@@ -513,6 +524,13 @@ export default class Player {
     }
   }
 
+  _setSunCast(v) {
+    if (this._sunCast === v) return;
+    this._sunCast = v;
+    for (const m of Object.values(this.rig.meshes)) m.castShadow = v;
+    for (const m of this.scarf?.meshes || []) m.castShadow = v;
+  }
+
   _stepScarf(dt) {
     const anim = this.anim, grp = this.group, ctl = this.ctl, w = this.world;
     for (let k = 0; k < 2; k++) {
@@ -538,10 +556,10 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.air ?? this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 0.95);
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.55).addScaledVector(ctl.up, sp * 0.12);
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
-      const cap = 0.3 * Math.max(sp, 1.5);
+      const cap = 0.5 * Math.max(sp, 1.5);
       if (S.wind.length() > cap) S.wind.setLength(cap);
     } else S.airOffset.set(0, 0, 0);
     // screenshot poses: once settled the cloth holds its (rippled) instant, so temporal AA
@@ -617,18 +635,18 @@ export default class Player {
     const key = L?.keyColor ? _c2.copy(L.keyColor) : _c2.copy(sun.color).multiplyScalar(sun.intensity);
     const skyC = L?.skyColor || _c3.setRGB(0.3, 0.45, 0.7).multiplyScalar(w.daylight);
     // rim: key-tinted by day, sky-fed under overcast, a cool sliver of sky light at night
-    addSc(U.uRim.value.copy(key).multiplyScalar(0.16), skyC, 0.5).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    addSc(U.uRim.value.copy(key).multiplyScalar(0.36), skyC, 0.6).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
     // character kicker: behind-side, on the sun's side of the frame (view space)
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    addSc(U.uKick.value.copy(key).multiplyScalar(0.32), skyC, 0.45).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(0.62), skyC, 0.5).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
     const spr = this.vehicle ? 0 : clamp((this.ctl.speed - SPEED.run) / (SPEED.sprint - SPEED.run), 0, 1);
     const breathe = 1 + 0.14 * Math.sin(U.uTime.value * Math.PI * 0.5) + 0.35 * spr + 0.5 * this._jet;
-    U.uAccent.value.copy(this.mats.accentBase || (this.mats.accentBase = U.uAccent.value.clone())).multiplyScalar((0.8 + night * 0.6) * breathe);
+    U.uAccent.value.copy(this.mats.accentBase || (this.mats.accentBase = U.uAccent.value.clone())).multiplyScalar((1.5 + night * 0.4) * breathe);
     // Image-based light: prefer the level's sky-derived environment (physically
     // consistent with the atmosphere); fall back to our small gradient sky.
     const ext = this.level.lighting?.envMap || null;
@@ -687,7 +705,9 @@ export default class Player {
       rel.addScaledVector(up, -along);
       const d = rel.length();
       if (d > maxD + c._r || d < 1e-3) continue;
-      const size = c.type === 'cylinder' ? c.radius : c.type === 'box' ? Math.max(c.half.x, c.half.z) : c.radius;
+      // trees: the crown (not the trunk collider) is what cuts into a hero frame
+      const crown = c.type === 'cylinder' && c.flora && c.height > 2.5 ? Math.min(5, c.height * 0.42) : 0;
+      const size = c.type === 'cylinder' ? Math.max(c.radius, crown) : c.type === 'box' ? Math.max(c.half.x, c.half.z) : c.radius;
       const fwd = rel.dot(dirH) / d;
       const ang = Math.acos(clamp(fwd, -1, 1)) - Math.atan(size / d);
       if (ang > halfAngle) continue;
@@ -751,6 +771,7 @@ export default class Player {
     if (this._shotPivot != null) { this.cam.pivotHeight = this._shotPivot; this._shotPivot = null; }
     this.cam.distance = 3.6; this.cam.shoulder = 0.38;
     this.anim.freezePhase = false;
+    if (this._shotFocus) { this._shotFocus = false; this.engine.postfx?.setGrade?.({ dofFocus: 0 }, 0); }
     this.ctl.frozen = false;
   }
 
@@ -791,12 +812,14 @@ export default class Player {
       const duty = THREE.MathUtils.lerp(0.6, 0.29, gait);
       this.shotPose = { state: 'ground', speed, look: [-0.45, 0.04], leanAdd: 0.1, air: 3.3 };
       cam.view = 'third';
-      cam.distance = portrait ? 2.55 : 2.6; cam.shoulder = portrait ? 0.1 : 0.62;
+      cam.distance = portrait ? 2.55 : 2.5; cam.shoulder = portrait ? 0.1 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.36 : 1.36;
+      cam.pivotHeight = portrait ? 1.3 : 1.22;
       const camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
       this.ctl.setFacing(turn(camH, -0.62));
-      this.anim.phase = duty * 0.14 + 0.5; // near arm forward in profile, far arm back
+      // passing / push-off instant: the rear foot rolls onto its toe behind the hips while the
+      // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
+      this.anim.phase = duty * 0.78 + 0.5;
       this.anim.freezePhase = true;
       cam.snap(this.ctl.pos, up, camH, portrait ? -0.1 : -0.13);
     } else if (name === 'fp') {
@@ -821,6 +844,11 @@ export default class Player {
     }
     this.ctl.frozen = true;
     this.ctl.vel.set(0, 0, 0); this.ctl.vUp = 0;
+    this._shotPos = this.ctl.pos.clone();
+    // hero framing: focus on the explorer, not on whatever sits at the screen centre (an
+    // off-centre hero would otherwise be thrown into bokeh — cyan accent speckle, a ghost body)
+    const focus = name === 'character' ? Math.hypot(cam.distance, cam.shoulder) + 0.1 : name === 'vista' ? Math.hypot(cam.distance, cam.shoulder) : 0;
+    if (focus || this._shotFocus) { this._shotFocus = !!focus; this.engine.postfx?.setGrade?.({ dofFocus: focus }, 0); }
     // converge the animation (smoothed params), the cloth and the environment
     const a = this.anim;
     a.speed = this.shotPose.speed; a.gait = THREE.MathUtils.smoothstep(a.speed, 2.6, 4.6); a.sprint = 0;

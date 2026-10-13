@@ -395,24 +395,24 @@ export class Animator {
     }
     // pelvis
     const walkBob = -0.022 * Math.cos(4 * Math.PI * ph);
-    const runBob = -0.045 * Math.cos(4 * Math.PI * (ph - duty * 0.5));
+    const runBob = -0.032 * Math.cos(4 * Math.PI * (ph - duty * 0.5));
     const bob = lerp(walkBob * Math.min(1, sp / 1.6), runBob, g) * move;
-    const base = lerp(lerp(-0.012, -0.028, g), -0.035, spr) * move - 0.014 * (1 - move);
+    const base = lerp(lerp(-0.008, -0.014, g), -0.026, spr) * move - 0.012 * (1 - move);
     p.root.set(swayX + 0.008 * Math.sin(TAU * ph) * move * (1 - g), base + bob + br * 0.002 * (1 - move), 0);
     const pYaw = -Math.cos(TAU * ph) * lerp(0.13, 0.17, g) * move;
     const pRoll = Math.sin(TAU * ph) * 0.06 * move * (1 - g * 0.3) + swayX * 1.5;
     // whole-body lean & bank applied at the hips
     qYXZ(p.D[B.hips], this.lean * 0.55, pYaw, this.bank + pRoll);
     qYXZ(p.D[B.spine], this.lean * 0.35 + 0.02 * br * (1 - move), -pYaw * 0.6, -pRoll * 0.7);
-    qYXZ(p.D[B.chest], this.lean * 0.15 - 0.025 * br * (1 - move) + g * 0.04 * Math.abs(Math.sin(TAU * ph)), -pYaw * 1.6, -pRoll * 0.4 - this.bank * 0.25);
-    qYXZ(p.D[B.neck], -this.lean * 0.4, pYaw * 1.0, pRoll * 0.5);
+    qYXZ(p.D[B.chest], this.lean * 0.15 - 0.025 * br * (1 - move) + g * 0.04 * Math.abs(Math.sin(TAU * ph)), -pYaw * 1.9, -pRoll * 0.4 - this.bank * 0.25);
+    qYXZ(p.D[B.neck], -this.lean * 0.5 - 0.05 * move, pYaw * 1.2, pRoll * 0.5);
     // arms counter-swing
     // arms: long relaxed pendulum swing at a walk, a compact driven pump at a run
     // (elbows stay low and close to the ribs, hands pass the hip — never 'T-rex')
-    const A = lerp(lerp(0.45, 0.92, g), 1.0, spr) * move;
+    const A = lerp(lerp(0.42, 0.66, g), 0.9, spr) * move;
     const swingL = -Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const swingR = Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
-    const elBase = lerp(lerp(0.32, 0.86, g), 1.2, spr) * move + 0.22 * (1 - move);
+    const elBase = lerp(lerp(0.36, 1.32, g), 1.45, spr) * move + 0.22 * (1 - move);
     this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.16 - Math.max(0, -swingL) * 0.22, elBase + Math.max(0, swingR) * 0.16 - Math.max(0, -swingR) * 0.22, lerp(0.08, 0.16, g * move), 0.3 * g * move);
     // shoulders lift with breathing / run; the forward-swinging arm's shoulder protracts
     for (const [S, s, sw] of [['L', 1, swingL], ['R', -1, swingR]]) qYXZ(p.D[B['clav' + S]], 0, -s * clamp(sw, -1, 1) * 0.13 * move, s * (0.03 * br * (1 - move) + 0.04 * g * move));

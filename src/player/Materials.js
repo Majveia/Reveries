@@ -330,10 +330,10 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float tone = 0.86 + 0.14 * rvFbm(vec3(across * 3.0, along * 6.0, 0.0));
       diffuseColor.rgb *= tone;
       // reverse side: a darker, less saturated lining — twists read as two-sided cloth
-      if (!gl_FrontFacing) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11))), 0.25) * 0.66;
+      if (!gl_FrontFacing) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11))), 0.15) * 0.85;
       // rolled hem: the edges fold over (darker, raised), giving the ribbon visible thickness
       float hemE = smoothstep(0.0, 0.055, min(across, 1.0 - across));
-      diffuseColor.rgb *= mix(0.5, 1.0, hemE);
+      diffuseColor.rgb *= mix(0.72, 1.0, hemE);
       bumpH += (1.0 - hemE) * 0.0014;
       // woven value variation (dyed yarn batches)
       diffuseColor.rgb *= 0.9 + 0.1 * sin(along * 41.0 + across * 3.0) * sin(along * 7.3);
@@ -370,14 +370,15 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       // embroidered (raised thread, ~55% contrast), not printed
       diffuseColor.rgb = mix(diffuseColor.rgb, gold * 0.8, bline * 0.55 + glyph * 0.32);
       bumpH += (glyph + bline * 0.6) * 0.00035;
-      rvEmit = uGlyph * (glyph * (0.01 + 1.4 * uGlow) + bline * 0.03 * uGlow);
+      rvEmit = uGlyph * (glyph * (0.05 + 1.4 * uGlow) + bline * 0.03 * uGlow);
       // frayed tip: loose threads of uneven length
       {
         float tip = vCloth.w;
-        float strand = across * 15.0;
+        // a short, dense fringe of fine threads (reads as cloth, never as a comb)
+        float strand = across * 36.0;
         float sid = floor(strand);
-        float fr = 1.0 - (0.025 + 0.05 * rvHash(vec3(sid, 2.3, 8.1)));
-        if (tip > fr && abs(fract(strand) - 0.5) > 0.2) discard;
+        float fr = 1.0 - (0.008 + 0.022 * rvHash(vec3(sid, 2.3, 8.1)));
+        if (tip > fr && abs(fract(strand) - 0.5) > 0.3) discard;
         float hem = smoothstep(fr - 0.012, fr - 0.004, tip) * (1.0 - step(fr, tip));
         diffuseColor.rgb *= 1.0 - hem * 0.45;
       }
@@ -398,7 +399,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
   const scarfColor = new THREE.Color().setRGB(...PALETTE.scarf);
   const clothParams = {
     color: scarfColor, roughness: 0.82, metalness: 0, sheen: 1, sheenRoughness: 0.45,
-    sheenColor: new THREE.Color('#ff8a6a'), envMap: env.texture, envMapIntensity: 0.45,
+    sheenColor: new THREE.Color('#ff7a5c'), envMap: env.texture, envMapIntensity: 0.6,
   };
   const collar = new THREE.MeshPhysicalMaterial(clothParams);
   collar.onBeforeCompile = clothShader(false);

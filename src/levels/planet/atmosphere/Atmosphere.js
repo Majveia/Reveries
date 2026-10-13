@@ -211,8 +211,18 @@ export default class Atmosphere {
       const L = this.level.lighting;
       const sunKey = L ? !L.keyIsMoon : true;
       const cov = c.uniforms.uCloudCov.value;
-      u.uGroundShadow.value = sunKey ? 0.34 * Math.min(1, cov) * (L ? L.sunVisible : 1) : 0;
-      u.uShadowAmt.value = 0.5;
+      // gate both by the sun's local elevation: at dusk the ground is already in the planet's
+      // shadow, a cloud shadow there reads as a black decal
+      const upF = _v.copy(ctx.cameraPosition).normalize();
+      const elF = upF.dot(this.world.sunDir);
+      const sunVis = L ? L.sunVisible : 1;
+      const elK = THREE.MathUtils.smoothstep(elF, 0.02, 0.15);
+      u.uGroundShadow.value = sunKey ? 0.34 * Math.min(1, cov) * sunVis * elK : 0;
+      // in-scatter shadow (crepuscular shafts) only from below the deck: seen from above, the
+      // shadowed air column under every cloud extrudes into a dark blot beside it. Capped.
+      const altF = ctx.cameraPosition.length() - m.Rb;
+      const belowK = 1 - THREE.MathUtils.smoothstep(altF, c.baseH * 0.6, c.baseH);
+      u.uShadowAmt.value = 0.35 * sunVis * elK * belowK;
       u.uFrameJit.value = this.engine.shotMode ? -1 : ((this._jf = ((this._jf || 0) + 1) % 64) * 0.618034) % 1;
       // march the sky (for crepuscular shafts) only when inside the air and the sun is low-ish
       const up = _v.copy(ctx.cameraPosition).normalize();
@@ -221,6 +231,10 @@ export default class Atmosphere {
       // comes from the sky-view LUT. Opt back in for experiments with ?atmo=shafts.
       u.uMarchSky.value = this.dbg.has('shafts') && this.engine.quality.level >= 2 && el > -0.05 && el < 0.5 && ctx.cameraPosition.length() < m.Rt ? 1 : 0;
     }
+    // dust storms: a strong aerosol forward lobe keeps the sun's position readable through the haze
+    const ws = this.level.weatherState;
+    const aTarget = ws && (ws.kind === 'dust' || ws.kind === 'ash') ? 0.6 : 0.22;
+    u.uAureole.value += (aTarget - u.uAureole.value) * (this.engine.shotMode ? 1 : 0.05);
     ctx.fullscreen(this.mat, output);
   }
 

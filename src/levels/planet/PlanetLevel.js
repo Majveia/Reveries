@@ -68,7 +68,7 @@ export default class PlanetLevel {
     const A = this.aesthetic;
     this.grade = {
       exposure: 1.0, contrast: 1.04, saturation: 1.04, bloomStrength: 0.05, vignette: 0.26, grain: 0.03, chroma: 0.0018, temperature: 0, tint: 0,
-      look: this.planet.aesthetic || 'filmic', ao: 1.0, aoRadius: 2.2, aoDistance: 450, autoExposure: 0.7, // PostFX: per-aesthetic film look + GTAO + eye adaptation
+      look: this.planet.aesthetic || 'filmic', ao: 1.0, aoRadius: 2.2, aoDistance: 450, autoExposure: 0.7, clarity: 0.2, // PostFX: per-aesthetic film look + GTAO + eye adaptation
       ...(A?.grade || {}),
     };
   }

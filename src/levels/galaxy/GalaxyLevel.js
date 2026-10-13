@@ -76,6 +76,8 @@ export default class GalaxyLevel {
     this.overlay2 = new THREE.Scene();
     if (this.nebulaList.length) {
       this.nebStars = this.stars.addPoints(this.nebulae.clusterGeo, 0.0022);
+      // the O stars of the young cluster: big PSFs with JWST 6+2 diffraction spikes
+      this.nebStars.material.uniforms.uMaxPx.value = 34; this.nebStars.material.uniforms.uPxScale.value = 3.6;
       this.stars.group.remove(this.nebStars);
       this.overlay2.add(this.nebStars);
     }
@@ -227,12 +229,17 @@ export default class GalaxyLevel {
     this.gu.uKappa.value = THREE.MathUtils.lerp(6.5, 9.0, inside);
     this.volume.march.uniforms.uEmit.value = THREE.MathUtils.lerp(1.0, 1.8, inside);
     // emission within ~1.5 kpc resolves into the point-star layers; dust keeps absorbing → rifts
-    this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 1.6, inside);
+    this.volume.march.uniforms.uNearFade.value = THREE.MathUtils.lerp(this.volume.march.uniforms.uNearFade.value, 0.3, inside);
+    // inside the disk the HII / cluster-haze sprites would read as blurry blobs: the volume + nebulae carry them
+    if (this.stars.blobMat) this.stars.blobMat.uniforms.uGain.value *= 1 - inside;
     const graze = Math.abs(this.camera.position.y) / Math.max(1e-6, this.camera.position.length());
     // grazing views: the midplane lane must read as an opaque silhouette (NGC 891 / Sombrero)
     this.gu.uKappa.value *= 1 + 0.9 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
-    this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value);
+    this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value)
+      // seen edge-on the bulge must stand above and below the lane as a compact luminous core
+      * (1 + 1.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
+    this.volume.march.uniforms.uNucleus.value = 16 * (1 + 2.0 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
 
     // markers: visible within ~a kpc of the camera
     const mu = this.stars.markMat.uniforms;
@@ -272,7 +279,7 @@ export default class GalaxyLevel {
       const hi = this.hover >= 0 ? this.hover : this.selected;
       if (hi >= 0 && hi !== 0) {
         const s = this.stars.systems[hi];
-        this.hoverEl.textContent = s.star.name;
+        if (this._shotTag && hi === this.selected) this.hoverEl.innerHTML = this._shotTag; else this.hoverEl.textContent = s.star.name;
         this.hoverEl.style.opacity = this._placeLabel(this.hoverEl, s.pos) ? '1' : '0';
       } else this.hoverEl.style.opacity = '0';
       if (this.g.id === 0) {
@@ -321,12 +328,13 @@ export default class GalaxyLevel {
   get shots() {
     const P = this.P;
     return {
-      hero: async () => { this._pose(new THREE.Vector3(P.R * 0.1, P.R * 0.02, -P.R * 0.06), P.R * 1.62, 0.55, 0.64); },
+      hero: async () => { this._pose(new THREE.Vector3(0, 0, 0), P.R * 1.78, 0.55, 0.6); },
       // long lens from outside the disk (no near-side disk "floor" under the camera): the disk spans
       // the frame, a 1° tilt bends the black midplane lane across the luminous bulge
       edge: async () => {
-        this._pose(new THREE.Vector3(0, P.R * 0.001, 0), P.R * 1.9, 1.1, 0.007, 24);
-        this.engine.postfx?.setGrade?.({ exposure: 1.4 }, 0);   // the edge-on disk is faint: expose up
+        // whole disk in frame (tapered needle ends) with a ~2° tilt: the lane crosses the bulge front (Sombrero / NGC 891)
+        this._pose(new THREE.Vector3(0, P.R * 0.001, 0), P.R * 1.9, 1.1, 0.035, 36);
+        this.engine.postfx?.setGrade?.({ exposure: 1.15 }, 0);
       },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },
       nebula: async () => {
@@ -337,12 +345,13 @@ export default class GalaxyLevel {
         this._pose(n.pos.clone().add(new THREE.Vector3(0, n.radius * 0.2, 0)), n.radius * 0.8, n.rot + 0.6, 0.25);
       },
       stars: async () => {
-        // among the stars of the home neighbourhood, in the disk plane, looking out through the
-        // disk (Aurelia sits inside the bar): the dusty disk becomes a Milky-Way-like band
+        // among the stars of the home neighbourhood, looking in toward the galactic centre (the
+        // Sagittarius view). Aurelia sits ~0.5 kpc below the midplane, so the dusty disk lies
+        // above it: the band of the inner disk + bulge glow crosses the frame, the unobscured
+        // stars of the lower disk fill the foreground (a midplane camera sees only black dust)
         const s = this.stars.systems[0];
-        // looking in toward the galactic centre (the Sagittarius view): warm bulge, star clouds, rifts
         const yaw = Math.atan2(s.pos.x, s.pos.z);
-        this._pose(s.pos, 0.035, yaw + 0.85, 0.05);
+        this._pose(s.pos, 0.035, yaw + 0.32, 0.06, 64);
         this._ownLabels = true;
         this.hoverEl.style.display = ''; this.homeEl.style.display = '';
         this.select(0);

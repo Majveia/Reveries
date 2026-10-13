@@ -36,6 +36,7 @@ const vec3 STAR = vec3(0.0, 0.42, 0.0);
 const mat3 RT = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);   // 2nd lattice: breaks tiling
 
 vec3 SP;
+float gHG = -1.0;   // signed height above the dust skyline at the last field() sample
 // signed height above the dust skyline (>0 = inside the dust) for cliffs / pillars
 float cliffH(vec3 xw){
   // secondary 3D domain warp (rotated lattice): overhangs and erosion instead of extruded
@@ -85,6 +86,7 @@ vec3 field(vec3 x){
   float dust = 0.0, skin = 0.0;
   if (uKind < 1.5) {
     float hg = cliffH(xw);
+    gHG = hg;
     float wall = smoothstep(0.0, 0.02, hg);
     dust = wall * (0.7 + 0.9 * nz(xw * 2.0 + SP).g) * (0.55 + 0.9 * nz(RT * xw * 7.0 + SP).b * nz(xw * 17.0).g) * e;
     dust += smoothstep(0.84, 0.96, nz(RT * xw * 0.8 + SP).b) * exp(-max(-hg, 0.0) * 6.0) * 0.25 * e;
@@ -135,13 +137,22 @@ void main(){
   vec3 cStar = vec3(0.75, 0.85, 1.0);
   float stepU = dt / uRadius;
   vec3 rdl = rd; rdl.xz = rot(uRot) * rdl.xz;
+  float prevHG = -1.0;
+  bool walled = false;
   for (int i = 0; i < 160; i++) {
     if (float(i) >= N) break;
     float t = t0 + (float(i) + jit) * dt;
     vec3 x = (ro + rd * t - uCenter) / uRadius;
     x.xz = rot(uRot) * x.xz;
+    gHG = -1.0;
     vec3 f = field(x);
     float gas = f.x, dust = f.y, skin = f.z;
+    // ray pierces the dust surface between two samples: a sub-step event, so the ionization front
+    // stays razor sharp regardless of step size; limb-brightened where the ray grazes the skyline
+    float dHG = gHG - prevHG;
+    bool hitWall = !walled && uKind < 1.5 && prevHG < 0.0 && gHG >= 0.0 && i > 0;   // first (visible) surface only
+    walled = walled || hitWall;
+    prevHG = gHG;
     if (gas + dust + skin < 0.003) continue;
     vec3 sd = STAR - x; float rs = length(sd);
     vec3 toS = sd / max(rs, 1e-4);
@@ -158,6 +169,12 @@ void main(){
     float ionC = smoothstep(0.5, 0.85, ion);
     vec3 gcol = mix(mix(cHa, cSII, 0.3), cOIII, ionC) * mix(1.0, 0.55, ionC * (1.0 - ionC) * 4.0);
     vec3 e = gas * I * gcol * 0.55;
+    if (hitWall) {
+      float limb = clamp(stepU * 1.2 / max(dHG, 1e-4), 1.0, 7.0);
+      float wL = pow((limb - 1.0) / 6.0, 0.8);                    // silhouettes / skyline glow, faces stay modest
+      float knR = nz(RT * x * 3.7 + SP * 0.7).b;
+      col += T * I * (0.012 + 0.16 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.88, 0.7), wL);
+    }
     e += skin * I * mix(cSII, vec3(1.0, 0.82, 0.55), 0.45) * 7.0;               // ionization front
     float sigD = dust * 88.0;
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
@@ -173,7 +190,8 @@ void main(){
   vec3 sw = STAR; sw.xz = rot(-uRot) * sw.xz;
   vec3 sc = uCenter + sw * uRadius;
   float bd = length(cross(sc - ro, rd)) / uRadius;
-  col += cStar * (exp(-bd * bd / 0.00003) * 2.5 + exp(-bd / 0.05) * 0.07) * T * step(0.0, dot(sc - ro, rd));
+  col += cStar * (exp(-bd * bd / 0.000004) * 0.8 + exp(-bd / 0.05) * 0.07)   // (the cluster's stars carry the cores + spikes)
+          * T * step(0.0, dot(sc - ro, rd));
   col *= uGain * uFade;
   float alpha = (1.0 - T) * uFade;
   gl_FragColor = vec4(col, alpha);
@@ -213,7 +231,7 @@ export class Nebulae {
         blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
         uniforms: {
           uNoise: { value: noise3D }, uCenter: { value: n.pos.clone() }, uRadius: { value: n.radius }, uSeed: { value: (n.seed % 1) + n.index * 0.37 },
-          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 128 : q.pick(36, 52, 72, 96) },
+          uKind: { value: KIND_ID[n.kind] ?? 0 }, uRot: { value: n.rot }, uSteps: { value: engine.shotMode ? 112 : q.pick(36, 52, 72, 96) },
           uGain: { value: 1.6 }, uFade: { value: 1 }, uScale: { value: 1 }, uFrameJ: { value: 0 }, uRes: { value: new THREE.Vector2() },
         },
       });

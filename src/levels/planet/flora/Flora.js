@@ -47,6 +47,7 @@ export default class Flora {
       uNight: { value: 0 },
       uCam: { value: new THREE.Vector3() },
       uPlayer: { value: new THREE.Vector3(1e9, 0, 0) },
+      uDitherT: { value: 0 }, // per-frame dither offset (TAA resolves crossfades)
       // nearest glowing trees (xyz rel. anchor, w = pool radius m): light pools
       // on the grass beneath bioluminescent crowns at night
       uGlowPts: { value: Array.from({ length: 16 }, () => new THREE.Vector4(1e9, 0, 0, 1)) },
@@ -64,6 +65,7 @@ export default class Flora {
     if (!this.profile) return; // barren world
     this.level.scene.add(this.group);
     this.level.flora = this;
+    this.level.floraClear = (pos, r) => this.clear(pos, r);
     const q = this.engine.quality;
     const P = this.profile;
     const steps = [];
@@ -148,7 +150,24 @@ export default class Flora {
 
   // 'flora' screenshot preset: the landmark tree from ~170 m across its
   // meadow (forest, undergrowth and rocks in the foreground)
+  /** Keep trees out of a sphere (vehicles, cameras, set pieces): level.floraClear(pos, r). */
+  clear(pos, r) { (this.clearZones ||= []).push({ p: pos.clone(), r2: r * r }); if (this.trees?.layer) this.trees.layer.dirty = true; }
+
+  // true when a tree base at (x,y,z) sits in a cleared zone or the shot sightline
+  blocked(x, y, z) {
+    const S = this.sight;
+    if (S) {
+      const dx = x - S.a.x, dy = y - S.a.y, dz = z - S.a.z;
+      const t = Math.max(0, Math.min(S.len, dx * S.d.x + dy * S.d.y + dz * S.d.z));
+      const ex = dx - S.d.x * t, ey = dy - S.d.y * t, ez = dz - S.d.z * t, r = S.r0 + S.k * t;
+      if (t < S.len - S.stop && ex * ex + ey * ey + ez * ez < r * r) return true;
+    }
+    for (const Z of this.clearZones || []) { const dx = x - Z.p.x, dy = y - Z.p.y, dz = z - Z.p.z; if (dx * dx + dy * dy + dz * dz < Z.r2) return true; }
+    return false;
+  }
+
   shot(name, spot) {
+    this.sight = null;
     if (name !== 'flora' || !this.trees?.landmark) return false;
     const w = this.world, L = this.trees.landmark;
     const up = L.position.clone().normalize();
@@ -170,6 +189,11 @@ export default class Flora {
     const pos = best.dir.clone().multiplyScalar(w.radius + best.h + 1.8);
     const tgt = L.position.clone().addScaledVector(up, L.height * 0.42);
     this.level.freeCam = { position: pos, target: tgt };
+    // a meadow opens between the lens and the giant: no ordinary tree may
+    // stand in the sightline cone (it widens toward the landmark's crown)
+    const base = L.position.clone(), d = base.clone().sub(pos), len = d.length();
+    this.sight = { a: pos.clone(), d: d.normalize(), len, r0: 6, k: Math.max(0.1, (L.crown || L.height * 0.5) / len), stop: 0 };
+    if (this.trees.layer) this.trees.layer.dirty = true;
     return true;
   }
 
@@ -195,6 +219,8 @@ export default class Flora {
     }
     const U = this.uniforms;
     U.uCam.value.copy(_cam).sub(this.anchor);
+    this._fr = ((this._fr || 0) + 1) % 16;
+    U.uDitherT.value = this.engine.quality.level >= 2 && this.level.grade?.taa !== 0 ? this._fr : 0;
     const player = this.level.player?.position;
     if (player && this.level.mode === 'onfoot') U.uPlayer.value.copy(player).sub(this.anchor);
     else U.uPlayer.value.set(1e9, 0, 0);
@@ -212,6 +238,12 @@ export default class Flora {
     if (this.grass?.meshFar) this.grass.meshFar.visible = this.grass.mesh.visible;
     if (this.grass?.meshMid) this.grass.meshMid.visible = this.grass.mesh.visible;
     try { this.trees?.update(_cam, _cam, col, budget * 0.6, force); } catch (e) { this._err('trees', e); }
+    // biolum worlds: the sward flares softly where the player walks (the
+    // last glow-pool slot follows them every frame)
+    if (this.profile.glowPools && player && this.level.mode === 'onfoot') {
+      const G = U.uGlowPts.value, pu = _v.copy(player).normalize();
+      G[G.length - 1].set(player.x - this.anchor.x + pu.x * 0.3, player.y - this.anchor.y + pu.y * 0.3, player.z - this.anchor.z + pu.z * 0.3, 1.7);
+    }
     try { if (this.rocks && alt < 1500) this.rocks.update(_cam, col, budget * 0.4, force); } catch (e) { this._err('rocks', e); }
     for (const m of this.motes || []) { try { m.update(_cam); } catch (e) { this._err('motes', e); } }
     this._first = false;

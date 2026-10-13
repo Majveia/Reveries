@@ -115,18 +115,28 @@ function drawFrond(ctx, S, rng) {
 }
 
 function drawStrands(ctx, S, rng) {
-  // hanging strands with beads (willow / Tree-of-Souls / glowing vines)
-  for (let i = 0; i < 26; i++) {
-    const x = S * (0.08 + 0.84 * rng.float()), len = S * (0.55 + rng.float() * 0.42);
-    const l = 0.5 + rng.float() * 0.18, c = Math.round(255 * l);
-    ctx.strokeStyle = `rgb(${c},${c},${c})`; ctx.lineWidth = 3.2;
-    ctx.beginPath(); ctx.moveTo(x, 0);
-    const sw = (rng.float() - 0.5) * S * 0.08;
-    ctx.quadraticCurveTo(x + sw, len * 0.5, x + sw * 0.4, len); ctx.stroke();
-    for (let k = 0; k < 9; k++) {
-      const t = rng.float(), px = x + sw * (2 * t * (1 - t)) + sw * 0.4 * t * t, py = len * t;
-      ctx.fillStyle = `rgb(255,255,255)`; ctx.beginPath(); ctx.ellipse(px, py, 2.2 + rng.float() * 2.5, 3 + rng.float() * 3, 0, 0, Math.PI * 2); ctx.fill();
+  // hanging strands with beads (willow / Tree-of-Souls / glowing vines): few,
+  // thick, softly tapered cords (thin ones alias into barcode lines at range)
+  // with fat luminous beads, the hot points of the glow hierarchy
+  for (let i = 0; i < 9; i++) {
+    const x = S * (0.1 + 0.8 * (i + 0.2 + rng.float() * 0.6) / 9), len = S * (0.5 + rng.float() * 0.46);
+    const l = 0.46 + rng.float() * 0.12, c = Math.round(255 * l);
+    const sw = (rng.float() - 0.5) * S * 0.07;
+    ctx.strokeStyle = `rgb(${c},${c},${c})`; ctx.lineCap = 'round';
+    for (let seg = 0; seg < 4; seg++) {
+      const t0 = seg / 4, t1 = (seg + 1) / 4;
+      ctx.lineWidth = S * 0.03 * (1 - 0.55 * t0);
+      const px = (t) => x + sw * (2 * t * (1 - t)) + sw * 0.4 * t * t;
+      ctx.beginPath(); ctx.moveTo(px(t0), len * t0); ctx.lineTo(px(t1), len * t1); ctx.stroke();
     }
+    for (let k = 0; k < 5; k++) {
+      const t = 0.25 + 0.75 * rng.float(), px = x + sw * (2 * t * (1 - t)) + sw * 0.4 * t * t, py = len * t;
+      const r = S * (0.014 + 0.014 * rng.float());
+      ctx.fillStyle = 'rgb(255,255,255)'; ctx.beginPath(); ctx.ellipse(px, py, r, r * 1.3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    // a heavier glowing pod at the tip
+    const tx = x + sw * 0.4, r = S * 0.022;
+    ctx.fillStyle = 'rgb(255,255,255)'; ctx.beginPath(); ctx.ellipse(tx, len, r, r * 1.6, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
 

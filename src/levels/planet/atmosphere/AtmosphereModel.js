@@ -120,7 +120,13 @@ void atmoMedium(float r, out vec3 scatR, out vec3 scatM, out vec3 ext){
 #ifdef ATMO_FOG_NOISE
     dF *= atmoFogNoise(gAtmoP);
 #endif
-    scatM += uFogColor * dF * uFog.w;
+    // Fog and dust are optically thick sideways: high-order multiple scattering makes their
+    // radiance nearly isotropic (bright banks from every side, a luminous ochre dome in a dust
+    // storm instead of a dark anti-sun sky). Approximate it by routing part of the scattering
+    // through the symmetric (Rayleigh-shaped) phase; the forward lobe keeps the rest.
+    vec3 sF = uFogColor * dF * uFog.w;
+    scatM += sF * 0.55;
+    scatR += sF * 0.45;
     ext += vec3(dF);
   }
 }
@@ -491,7 +497,9 @@ export class AtmosphereModel {
     const ms = tauM / colM;
     u.uBetaMs.value.set(mc.r / mx, mc.g / mx, mc.b / mx).multiplyScalar(ms * 0.92);
     u.uBetaMe.value.set(ms, ms, ms);
-    u.uMieG.value = THREE.MathUtils.clamp(0.83 - 0.06 * haze - 0.04 * w.dust, 0.74, 0.86); // dust keeps a bright aureole
+    // coarse dust scatters more isotropically (a luminous ochre dome, not a dark anti-sun sky);
+    // the sharp forward aureole is drawn separately (Atmosphere uAureole) so the sun stays readable
+    u.uMieG.value = THREE.MathUtils.clamp(0.83 - 0.06 * haze - 0.4 * w.dust, 0.64, 0.86);
     // Ozone (only where there is life to make it).
     const life = THREE.MathUtils.clamp(this.planet.life ?? 0.4, 0, 1);
     const oc = 0.45 * T, ow = 0.25 * T;

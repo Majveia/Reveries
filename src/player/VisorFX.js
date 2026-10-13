@@ -28,7 +28,7 @@ export class VisorFX {
           vec2 q = vec2(p.x * uAspect, p.y);
           float r = length(p * vec2(0.92, 1.0));
           // barrel refraction + chromatic fringe grow toward the rim (kept very low)
-          float k = 0.008 * uAmount * r * r;
+          float k = 0.004 * uAmount * r * r * smoothstep(0.6, 1.05, r); // clean centre, sub-pixel fringe only at the glass edge
           vec2 dir = p * k * 0.5;
           vec3 col;
           col.r = texture2D(tInput, vUv - dir * 1.2).r;

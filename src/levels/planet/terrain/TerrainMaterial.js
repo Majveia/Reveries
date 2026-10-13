@@ -362,7 +362,7 @@ const FRAG_SURFACE = /* glsl */`
     float runMask = smoothstep( -0.25, 0.45, m3.w + m2.w * 0.5 );
     float rw = octW( 1.0 / 8.0, pix ) * uStyleA.z * smoothstep( 0.25, 0.6, slope ) * runMask;
     if ( rw > 0.0 ) {
-      vec3 Dq = D - up * dot( D, up ) * 0.78;
+      vec3 Dq = D - up * dot( D, up ) * 0.6;
       vec4 r1 = nA( Dq + 11.0, 1.0 / 8.0 );
       gRock += ( r1.xyz - up * dot( r1.xyz, up ) ) * 0.35 * rw;
       hRock += r1.w * 0.3 * rw;
@@ -465,13 +465,30 @@ const FRAG_SURFACE = /* glsl */`
   rockCol = mix( rockCol, uSand * ( 0.86 + 0.1 * meso ), ( 1.0 - smoothstep( 0.08, 0.34, slope ) ) * ( 0.7 + 0.2 * step( 0.99, uStyleA.w ) ) * uStyleA.w * ( 1.0 - crack * 0.6 ) );
   // dark streaks down the walls, pale dry crowns
   float streak = clamp( 0.5 - hRock * 0.9, 0.0, 1.0 ) * uStyleA.z * smoothstep( 0.3, 0.7, slope );
-  rockCol *= 1.0 - streak * ( 0.25 + 0.3 * uStyleA.z );
+  rockCol *= 1.0 - streak * ( 0.12 + 0.18 * uStyleA.z );
+  // bedding planes: thin dark recessed joints between beds + pale weathered lips on walls,
+  // broken by vertical joints (Worley) so they read as stacked limestone blocks, not paint
+  {
+    float bedW = uStyleA.y * wallK * octW( 0.25 / strataH, pix );
+    if ( bedW > 0.0 ) {
+      float seam = 1.0 - smoothstep( 0.0, 0.07, sFrac ) * smoothstep( 1.0, 0.93, sFrac );
+      float lip = smoothstep( 0.07, 0.16, sFrac ) * ( 1.0 - smoothstep( 0.16, 0.34, sFrac ) );
+      vec4 jc = nB( D - up * dot( D, up ) * 0.65 + 23.0, 1.0 / 24.0 ); // columns: elongated along up
+      float joint = ( 1.0 - smoothstep( 0.0, 0.05, jc.y ) ) * smoothstep( 0.4, 0.75, slope );
+      rockCol *= 1.0 - bedW * ( seam * 0.45 + joint * 0.35 );
+      rockCol *= 1.0 + bedW * lip * 0.12;
+      crack = max( crack, bedW * ( seam * 0.6 + joint * 0.5 ) );
+      rockCol *= 0.9 + 0.2 * hash11( sBand * 7.31 + floor( jc.z * 9.0 ) ) * bedW + 0.1 * ( 1.0 - bedW );
+    }
+  }
   // rain/biofilm streaks: long, dark-grey vertical stains hanging from ledges
   {
-    vec3 Dv = D - up * dot( D, up ) * 0.94;
+    vec3 Dv = D - up * dot( D, up ) * 0.8;
     float st2 = nA( Dv.yzx + 61.0, 1.0 / 24.0 ).w * 0.6 + nA( Dv + 5.0, 1.0 / 6.0 ).w * 0.4 * octW( 1.0 / 6.0, pix );
-    float stain = smoothstep( 0.05, 0.5, st2 ) * smoothstep( 0.35, 0.8, slope ) * ( 0.4 + 0.6 * moist ) * uStyleB.x;
-    rockCol = mix( rockCol, rockCol * vec3( 0.42, 0.43, 0.42 ), stain * 0.7 );
+    // stains hang from each bedding lip and fade down the bed (not wall-high smears)
+    float hang = mix( 1.0, 1.0 - smoothstep( 0.15, 0.95, 1.0 - sFrac ), uStyleA.y * 0.6 );
+    float stain = smoothstep( 0.1, 0.5, st2 ) * smoothstep( 0.35, 0.8, slope ) * ( 0.4 + 0.6 * moist ) * uStyleB.x * hang;
+    rockCol = mix( rockCol, rockCol * vec3( 0.5, 0.5, 0.48 ), stain * 0.5 );
   }
   // value structure: sunlit convex faces bright, recesses & cracks dark
   float convexity = clamp( ( 0.5 - cav ) * 3.0 + 0.5 + hRock * 0.35, 0.0, 1.0 );
@@ -496,7 +513,7 @@ const FRAG_SURFACE = /* glsl */`
     grassCol = mix( grassCol, uGround1 * 0.82, lushP * 0.5 );
     // per-cell hue / value jitter (±8%)
     float j1 = ( ps.z - 0.5 ) * pws, j2 = ( pc.w - 0.5 );
-    grassCol *= 1.0 + j1 * 0.18 + j2 * 0.12;
+    grassCol *= 1.0 + j1 * 0.14 + j2 * 0.07 * pw;
     grassCol = mix( grassCol, grassCol * vec3( 1.1, 1.0, 0.75 ), clamp( j1 + 0.5, 0.0, 1.0 ) * 0.25 * pws );
     bare = smoothstep( 0.86, 0.95, pc.z ) * smoothstep( 0.42, 0.18, pc.x ) * pw;
   }
@@ -512,17 +529,18 @@ const FRAG_SURFACE = /* glsl */`
   // cold steppe / tundra: olive-brown bands toward the poles and the heights
   grassCol = mix( grassCol, mix( uSoil, uGround3, 0.45 ) * ( 0.9 + 0.15 * macro ), smoothstep( 0.4, 0.22, temp + meso * 0.04 ) * 0.65 );
   grassCol *= 0.82 + 0.3 * ( hGrass * 0.5 + 0.5 );
-  // ---- landscape mosaic (100–500 m): woodland / meadow / scrub parcels ----
+  // ---- landscape mosaic (100 m – 5 km): woodland / meadow / scrub, smooth & drainage-led ----
+  // continuous fields only (no Worley cell IDs → no hard-edged camo parcels from the air):
+  // valleys & hollows (worker cavity) and moist ground run greener and darker (riparian
+  // woodland follows the drainage), convex crests and sun-baked slopes go dry and golden
   {
-    vec4 pm = nB( D.zxy + 71.0, 1.0 / 2400.0 );  // ~300 m cells
-    vec4 pm2 = nB( D + 19.0, 1.0 / 900.0 );      // ~110 m cells
-    float edgeM = smoothstep( 0.0, 0.18, pm.y );
-    float idm = fract( pm.z + pm2.z * 0.35 );
-    float wood = smoothstep( 0.6, 0.7, idm + moist * 0.25 - 0.1 ) * edgeM;
-    float scrub = smoothstep( 0.3, 0.2, idm - moist * 0.15 ) * edgeM;
-    float farM = 0.45 + 0.55 * smoothstep( 1.0, 12.0, pix );
-    grassCol = mix( grassCol, grassCol * vec3( 0.66, 0.76, 0.7 ), wood * farM * smoothstep( 0.25, 0.45, moist ) );
-    grassCol = mix( grassCol, mix( grassCol, uGround3, 0.5 ) * vec3( 1.08, 1.0, 0.82 ), scrub * farM * 0.7 );
+    float vg = m1.w * 0.55 + m2.w * 0.3 + m0.w * 0.3;               // 0.25–4 km smooth variation
+    float drain = smoothstep( 0.47, 0.62, cav ) - smoothstep( 0.46, 0.34, cav ) * 0.8;
+    float woodF = smoothstep( 0.05, 0.45, vg + ( moist - 0.5 ) * 0.9 + drain * 0.35 );
+    float scrubF = smoothstep( 0.1, 0.5, -vg - ( moist - 0.5 ) * 0.7 - drain * 0.3 );
+    float farM = 0.4 + 0.6 * smoothstep( 1.0, 12.0, pix );
+    grassCol = mix( grassCol, grassCol * vec3( 0.7, 0.8, 0.72 ), woodF * farM * smoothstep( 0.25, 0.45, moist ) * 0.8 );
+    grassCol = mix( grassCol, mix( grassCol, uGround3, 0.45 ) * vec3( 1.06, 1.0, 0.84 ), scrubF * farM * 0.55 );
   }
   // physically plausible floor: meadows are never darker than ~0.07 linear
   {
@@ -582,8 +600,9 @@ const FRAG_SURFACE = /* glsl */`
   sandCol = mix( sandCol, sandCol * vec3( 0.92, 0.84, 0.77 ), trough * 0.45 );
   sandCol *= 1.0 + 0.06 * meso;
   // lee (slip) faces: finer, darker avalanche sand; crests catch light
-  sandCol *= 1.0 - 0.09 * leeF;
-  sandCol *= 1.0 + 0.08 * smoothstep( 0.46, 0.38, cav ) * smoothstep( 0.01, 0.05, slope );
+  sandCol *= 1.0 - 0.17 * leeF;
+  // knife-edge brink: a soft bright line where the stoss slope turns over into the slip face
+  sandCol *= 1.0 + 0.12 * smoothstep( 0.46, 0.36, cav ) * smoothstep( 0.02, 0.08, slope ) * ( 1.0 - leeF );
   vec3 snowCol = uSnow * ( 0.94 + 0.06 * meso );
 
   // ---- composite with height-based blending ----
@@ -603,7 +622,8 @@ const FRAG_SURFACE = /* glsl */`
   rough = mix( rough, 0.8 + 0.12 * crack, wRock );
 
   // moss / lichen on rock: up-facing ledges in moist climates
-  float mossW = uStyleB.x * wRock * smoothstep( 0.35, 0.75, moist ) * smoothstep( 0.55, 0.9, dot( normalize( Ng - gN * 0.5 ), up ) + meso * 0.2 ) * ( 1.0 - snowW );
+  vec3 gT0 = gN - Ng * dot( gN, Ng );
+  float mossW = uStyleB.x * wRock * smoothstep( 0.35, 0.75, moist ) * smoothstep( 0.78, 0.86, dot( normalize( Ng - gT0 * 0.12 ), up ) + meso * 0.05 ) * ( 1.0 - snowW );
   albedo = mix( albedo, uMoss * ( 0.8 + 0.3 * hGrass ), mossW * 0.85 );
 
   // snow on top
@@ -616,7 +636,7 @@ const FRAG_SURFACE = /* glsl */`
   {
     float farR = smoothstep( 2.0, 25.0, pix );
     float rv = smoothstep( 0.4, 0.62, cav );
-    albedo *= mix( 1.0, mix( 1.12, 0.84, rv ), farR );
+    albedo *= mix( 1.0, mix( 1.12, 0.84, rv ), farR * ( 1.0 - 0.75 * wSand ) ); // dune troughs: no dark crease lines
     // exposed rock streaks on steep far slopes
     albedo = mix( albedo, rockCol * 0.9, farR * smoothstep( 0.22, 0.45, slope ) * smoothstep( -0.2, 0.3, meso ) * ( 1.0 - wSnow ) * ( 1.0 - wRock ) * 0.6 );
   }

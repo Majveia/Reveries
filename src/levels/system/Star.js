@@ -75,7 +75,7 @@ export class Star {
         // one octave of convection: domain-warped cells (never convex polygons), a bright upflow dome
         // with a dark rim, thin anti-aliased intergranular lanes and magnetic bright points
         float granule(vec3 p, float aa, float t){
-          vec3 w = p + 0.9 * vec3(snoise(p * 0.45 + t), snoise(p * 0.45 + 17.0 - t), snoise(p * 0.45 + 31.0));
+          vec3 w = p + 0.6 * vec3(snoise(p * 0.45 + t), snoise(p * 0.45 + 17.0 - t), snoise(p * 0.45 + 31.0));
           vec3 g = gcell(w + vec3(0.0, 0.0, t * 2.0));
           float edge = g.y - g.x;
           float lw = 0.05 + 0.07 * g.z;
@@ -104,7 +104,7 @@ export class Star {
           // distance, melting into a smooth mottle once even the base octave is sub-pixel
           vec3 wq = qs * uCell;
           float fsh = length(fwidth(wq));
-          float lk = clamp(log2(0.09 / max(fsh, 1e-5)), 0.0, 4.0);
+          float lk = clamp(log2(0.09 / max(fsh, 1e-5)), -1.0, 4.0);
           float k0 = floor(lk), kf = lk - k0;
           float s0 = exp2(k0);
           float tg = uTime * 0.015;
@@ -176,7 +176,7 @@ export class Star {
           // close-up: each pixel's brightness is a temperature (Stefan-Boltzmann, T ~ I^1/4) through a warm
           // white-light filter: white-gold granule domes, orange lanes, red-brown umbrae
           float Tl = uTeff * pow(max(I * 0.95, 0.02), 0.25) * mix(0.93, 1.0, smoothstep(0.0, 0.6, mu));
-          vec3 nearTone = blackbody(Tl) * vec3(1.0, 0.7, 0.34) * pow(max(I, 0.0), 2.6) * 0.95;
+          vec3 nearTone = blackbody(Tl) * vec3(1.0, 0.7, 0.34) * pow(max(I, 0.0), 2.6) * 0.62;
           vec3 c = mix(farTone, nearTone, uFilter) * limb * uI;
           gl_FragColor = vec4(c, 1.0);
         }`,

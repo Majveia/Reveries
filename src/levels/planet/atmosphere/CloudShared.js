@@ -217,20 +217,28 @@ float cloudDensityW(vec3 P, vec3 wx, float lod){
   if (c <= 0.0) return 0.0;
   if (lod < 0.5) {
     // erosion: wispy at the base, billowy (inverted Worley → round puffs) toward the tops
-    vec3 dn = cTex3D(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1, uCloud3DInfo.y).rgb;
+    // curl-like warp of the detail lookup from the shape Worley channels (free: already fetched):
+    // billows swirl and shear instead of sitting on a regular lattice
+    vec3 warp = (n.gba - 0.5) * mix(0.35, 0.12, h);
+    vec3 dn = cTex3D(tCloudDetail, P * uCloudDetailScale + uCloudWind * 3.1 + warp, uCloud3DInfo.y).rgb;
     // weighted toward the 100–250 m octaves: cauliflower billows, not a second shape scale
-    float df = dn.r * 0.4 + dn.g * 0.35 + dn.b * 0.25;
+    // the blended Worley fBm sits in a narrow band (~0.4–0.7): stretch it to full contrast,
+    // otherwise the erosion threshold barely moves and towers stay smooth plaster
+    float df = clamp(cRemap(dn.r * 0.4 + dn.g * 0.35 + dn.b * 0.25, 0.32, 0.78, 0.0, 1.0), 0.0, 1.0);
     float dm = mix(df, 1.0 - df, clamp(h * 4.0, 0.0, 1.0));
     // strong erosion: the coverage ramp is steep at the margins, so a weak threshold only
     // nibbles a thin rim; 0.8 lets the billows bite into the silhouette
     // Nubis dimensional profile: erode gently (wispy base 0.35 → billowy top 0.5) and mostly where
     // the base shape is thin, so cores stay solid bodies instead of rims / crescent strokes
-    float ek = mix(0.35, 0.5, h) * mix(1.0, 0.45, smoothstep(0.45, 0.85, c));
+    // (Nubis dimensional profile, stronger: billows bite into the silhouette everywhere, the
+    // dense cores keep only a mild protection so towers read as cauliflower, not plaster)
+    float ek = mix(0.5, 0.68, h) * mix(1.0, 0.72, smoothstep(0.5, 0.9, c));
     c = cRemap(c, dm * ek, 1.0, 0.0, 1.0);
   }
-  // crisp cauliflower edges: steepen the density ramp; denser, darker bases where it rains
+  // crisp edges, graded cores: a smooth saturating remap (no linear plateau) so the
+  // interior keeps density structure for the light march; darker bases where it rains
   c = max(c, 0.0);
-  return min(c * 1.7, 1.0 + c) * (1.0 + wx.b * 0.8);
+  return (1.0 - exp(-c * 3.4)) * 1.1 * (1.0 + wx.b * 0.8);
 }
 float cloudDensity(vec3 P, float lod){ return cloudDensityW(P, cloudWeather(P), lod); }
 // Projected layer (seen from orbit): the weather coverage eroded on the sphere
@@ -289,7 +297,7 @@ export class CloudResources {
     const q = this.engine.quality;
     this.shapeSize = this.engine.shotMode ? 96 : q.pick(64, 96, 128, 128);
     this.perlinOct = this.engine.shotMode ? 4 : q.pick(4, 5, 6, 6);
-    this.detailSize = 32;
+    this.detailSize = this.engine.shotMode ? 64 : q.pick(32, 32, 64, 64);
     this.weatherSize = this.engine.shotMode ? 384 : q.pick(192, 256, 384, 512);
     // software GL (SwiftShader / llvmpipe) → filter the noise volumes by hand
     let rname = '';

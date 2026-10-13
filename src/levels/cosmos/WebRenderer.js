@@ -13,19 +13,19 @@ vec3 webPalette(float h){
   // → warm white crossover → amber groups → white-gold cluster cores
   vec3 c0 = vec3(0.004, 0.002, 0.012);   // void
   vec3 c1 = vec3(0.030, 0.010, 0.120);   // faint sheet: deep indigo
-  vec3 c2 = vec3(0.150, 0.070, 0.620);   // violet-blue sheet / thin filament
-  vec3 c3 = vec3(0.100, 0.420, 1.000);   // cyan-blue filament
-  vec3 c4 = vec3(0.200, 0.780, 1.200);   // electric cyan filament spine
-  vec3 c45 = vec3(1.000, 0.900, 0.860);  // hot white crossover (where filaments feed a node)
+  vec3 c2 = vec3(0.200, 0.090, 0.640);   // violet-blue sheet / thin filament
+  vec3 c3 = vec3(0.180, 0.380, 0.850);   // cool blue filament
+  vec3 c4 = vec3(0.420, 0.700, 1.050);   // pale cyan filament spine (desaturated: reads luminous, not neon)
+  vec3 c45 = vec3(1.000, 0.940, 0.900);  // hot white crossover (where filaments feed a node)
   vec3 c5 = vec3(1.300, 0.640, 0.200);   // amber group
   vec3 c6 = vec3(1.600, 1.150, 0.560);   // white-gold cluster core
   h = clamp(h, 0.0, 1.2);
-  if (h < 0.20) return mix(c0, c1, h / 0.20);
-  if (h < 0.36) return mix(c1, c2, (h - 0.20) / 0.16);
-  if (h < 0.46) return mix(c2, c3, (h - 0.36) / 0.10);
-  if (h < 0.54) return mix(c3, c4, (h - 0.46) / 0.08);
-  if (h < 0.63) return mix(c4, c45, smoothstep(0.54, 0.63, h));
-  if (h < 0.76) return mix(c45, c5, smoothstep(0.63, 0.76, h));
+  if (h < 0.18) return mix(c0, c1, h / 0.18);
+  if (h < 0.38) return mix(c1, c2, (h - 0.18) / 0.20);   // a wide dim violet veil band
+  if (h < 0.48) return mix(c2, c3, (h - 0.38) / 0.10);
+  if (h < 0.56) return mix(c3, c4, (h - 0.48) / 0.08);
+  if (h < 0.65) return mix(c4, c45, smoothstep(0.56, 0.65, h));
+  if (h < 0.77) return mix(c45, c5, smoothstep(0.65, 0.77, h));
   return mix(c5, c6, clamp((h - 0.76) / 0.24, 0.0, 1.0));
 }
 // the young universe (z ≳ 3): dim crimson plasma → amber → first blue-white protogalaxies
@@ -102,7 +102,10 @@ void main(){
   } else if (sub > 0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vC = vec4(0.0); return; }
   vec3 ad = abs(d) / (0.5 * uL);
   float nrm = pow(pow(ad.x, uShape) + pow(ad.y, uShape) + pow(ad.z, uShape), 1.0 / uShape);
-  float fade = 1.0 - smoothstep(0.80, 0.99, nrm);
+  // seen from outside, the volume ends in a soft, irregular (low-order noise) edge — never a sphere
+  vec3 dn = d / max(length(d), 1e-3);
+  nrm *= 1.0 + 0.11 * (sin(dot(dn, vec3(3.1, 1.7, -2.3)) * 2.1 + 1.3) + 0.6 * sin(dot(dn, vec3(-1.9, 4.3, 2.7)) * 1.7 + 4.1));
+  float fade = 1.0 - smoothstep(0.58, 1.02, nrm);
   float hh = clamp((heat - 0.55) / 0.45, 0.0, 1.0);
   // virialised swarm: members of collapsed halos circulate on slow, coherent orbits
   float fid = float(vid);
@@ -130,9 +133,9 @@ void main(){
   float pxWorld = dist / uProj;
   float norm = 0.19 * max(px, 1.0) * max(px, 1.0);        // Gaussian kernel integral of the true footprint
   float near = smoothstep(uNear * 0.25, uNear, dist);
-  float val = fade * near * emis / (pxWorld * pxWorld * norm) / (uScale * uScale) * 1e-3; // ×1e-3 keeps half-float sums finite
+  float val = fade * near * emis / (pxWorld * pxWorld * norm) / (uScale * uScale) * 1e-4; // ×1e-4 keeps half-float sums finite (cluster cores must not saturate at 65504)
   val *= pow(min(1.0, uPxMax / px), uClampK);              // under-sampled near field thins to a dim haze
-  val = min(val, 30.0);
+  val = min(val, 3.0);
   // aerial perspective of the web: distant structure fades exponentially (and cools to violet in
   // the composite). Scalar channels only — colour is palette-mapped per PIXEL from the
   // accumulated mass-weighted heat, so neighbouring sprites never produce colour confetti.
@@ -179,7 +182,9 @@ void main(){
   d -= uL * floor(d / uL + 0.5);
   vec3 ad = abs(d) / (0.5 * uL);
   float nrm = pow(pow(ad.x, uShape) + pow(ad.y, uShape) + pow(ad.z, uShape), 1.0 / uShape);
-  float fade = 1.0 - smoothstep(0.78, 0.97, nrm);
+  vec3 dn = d / max(length(d), 1e-3);
+  nrm *= 1.0 + 0.11 * (sin(dot(dn, vec3(3.1, 1.7, -2.3)) * 2.1 + 1.3) + 0.6 * sin(dot(dn, vec3(-1.9, 4.3, 2.7)) * 1.7 + 4.1));
+  float fade = 1.0 - smoothstep(0.58, 1.0, nrm);
   float heat = s.w;
   float hh = clamp((heat - 0.55) / 0.45, 0.0, 1.0);
   float fid = float(t);
@@ -191,9 +196,9 @@ void main(){
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float thr = mix(0.34, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
+  float thr = mix(0.28, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
   // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
-  float lum = smoothstep(thr, thr + 0.32, heat) * (0.25 + 3.4 * u * u * u * u);
+  float lum = smoothstep(thr, thr + 0.32, heat) * (0.6 + 3.4 * u * u * u * u);
   if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 150.0 / sqrt(max(dist, 5.0));   // pin-sharp at every distance
@@ -220,59 +225,87 @@ void main(){
   float r2 = dot(p, p);
   float v = exp(-r2 * 6.0) + 0.3 * exp(-r2 * 1.6);
   if (vSpike > 0.0) {
-    vec2 a = abs(p);
-    float sp = exp(-a.y * 3.0) * exp(-a.x / vPx * 5.0) + exp(-a.x * 3.0) * exp(-a.y / vPx * 5.0);
-    float edge = 1.0 - smoothstep(0.6, 1.0, max(a.x, a.y) / vPx);
+    // JWST-style hexagonal PSF: six primary arms (three struts through the core) + two faint
+    // horizontal secondaries
+    float sp = 0.0;
+    for (int k = 0; k < 3; k++) {
+      float an = 1.5707963 + float(k) * 1.0471976;
+      vec2 e = vec2(cos(an), sin(an));
+      float al = abs(dot(p, e)), pe = abs(dot(p, vec2(-e.y, e.x)));
+      sp += exp(-pe * 3.2) * exp(-al / vPx * 4.5);
+    }
+    sp += 0.35 * exp(-abs(p.y) * 4.0) * exp(-abs(p.x) / vPx * 7.0);
+    float edge = 1.0 - smoothstep(0.6, 1.0, length(p) / vPx);
     v += 0.22 * sp * edge + 0.04 * exp(-r2 * 0.12);
   } else if (r2 > 1.0) discard;
   gl_FragColor = vec4(vCol * v, 1.0);
 }`;
 
+// Multi-scale density estimate: the accumulation buffer is pyramided into a half- and a quarter-
+// resolution copy with a separable Gaussian (no golden-angle spiral, no per-pixel switching).
+const DOWN_FRAG = /* glsl */ `
+uniform sampler2D tSrc; uniform vec2 uTexel; varying vec2 vUv;
+void main(){
+  // 4 bilinear taps = a 4×4 box of the finer level, then the blur below shapes it into a Gaussian
+  vec4 c = texture2D(tSrc, vUv + uTexel * vec2(-0.5, -0.5)) + texture2D(tSrc, vUv + uTexel * vec2(0.5, -0.5))
+         + texture2D(tSrc, vUv + uTexel * vec2(-0.5, 0.5)) + texture2D(tSrc, vUv + uTexel * vec2(0.5, 0.5));
+  gl_FragColor = c * 0.25;
+}`;
+const BLUR_FRAG = /* glsl */ `
+uniform sampler2D tSrc; uniform vec2 uDir; varying vec2 vUv;
+void main(){
+  // 9-tap Gaussian (σ≈2 texels) in 5 linear fetches
+  vec4 c = texture2D(tSrc, vUv) * 0.2270270;
+  c += (texture2D(tSrc, vUv + uDir * 1.3846154) + texture2D(tSrc, vUv - uDir * 1.3846154)) * 0.3162162;
+  c += (texture2D(tSrc, vUv + uDir * 3.2307692) + texture2D(tSrc, vUv - uDir * 3.2307692)) * 0.0702703;
+  gl_FragColor = c;
+}`;
+
 const COMPOSITE_FRAG = /* glsl */ `
-uniform sampler2D tInput; uniform sampler2D tAccum; uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
-uniform vec2 uTexel; uniform float uSmooth; uniform float uSharpA; uniform float uEarly; uniform float uWarm; uniform float uCap;
+uniform sampler2D tInput; uniform sampler2D tAccum; uniform sampler2D tHalf; uniform sampler2D tQuarter;
+uniform float uGain; uniform float uA0; uniform float uHi; uniform float uExposure; uniform float uToe; uniform float uFloor;
+uniform float uSmooth; uniform float uSharpA; uniform float uEarly; uniform float uWarm; uniform float uCap;
 varying vec2 vUv;
 ${PALETTE_GLSL}
+float ignC(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 void main(){
   vec3 base = texture2D(tInput, vUv).rgb;
-  vec4 acc = texture2D(tAccum, vUv);
-  // Adaptive screen-space kernel smoothing (SPH-style), driven by the local SAMPLE COUNT (not the
-  // density): wherever fewer than a few sprites overlap a pixel — sheets, filament skirts, and the
-  // sparse member swarms of collapsed halos alike — the tracers are integrated over a wider disc,
-  // so matter reads as a continuous luminous medium; well-sampled pixels keep the sharp kernel.
-  // the kernel widens up to 3x where the local sample count is low (gaps between sparse sprites)
-  float c0 = acc.b * 1000.0;
-  float rad = uSmooth * mix(3.5, 1.0, smoothstep(0.3, uSharpA, c0));
-  vec4 bl = acc * 0.16; float ws = 0.16;
-  for (int i = 0; i < 24; i++) {
-    float fi = float(i) + 0.5;
-    float r = sqrt(fi / 24.0) * rad;
-    float an = fi * 2.3999632;
-    float w = exp(-2.0 * fi / 24.0);
-    bl += texture2D(tAccum, vUv + vec2(cos(an), sin(an)) * r * uTexel) * w; ws += w;
-  }
-  bl /= ws;
-  float k = smoothstep(0.5, uSharpA, c0) * smoothstep(0.3, uSharpA, bl.b * 1000.0);
-  acc = mix(bl, acc, k);
-  float A = min(acc.a, 60000.0) * 1000.0;
-  float hm = acc.r / max(acc.a, 1e-12);                     // mass-weighted heat along the ray
-  float haze = clamp(acc.g / max(acc.a, 1e-12), 0.0, 1.0);  // fraction seen through the fog
+  vec4 f = texture2D(tAccum, vUv);
+  vec4 h = texture2D(tHalf, vUv);
+  vec4 q = texture2D(tQuarter, vUv);
+  // Adaptive (SPH-like) smoothing driven by the SMOOTHED local sample count: where only a few sprites
+  // overlap — sheets, filament skirts, the sparse swarms of collapsed halos — the tracers are
+  // integrated over the wide Gaussian; well-sampled pixels keep the sharp kernel. The weights come
+  // from blurred fields, so the transition is a gradient, never a dissolve/dither pattern.
+  float cq = q.b * 1000.0, ch = h.b * 1000.0;
+  float sA = uSharpA * uSmooth;
+  float kH = smoothstep(0.05 * sA, 0.35 * sA, cq);
+  float kF = smoothstep(0.4 * sA, 2.0 * sA, ch) * (1.0 - 0.75 * uEarly);   // the young web is smooth: no shot noise
+  vec4 acc = mix(q, mix(h, f, kF), kH);
+  // heat from the smoothed moments (numerator and denominator share the kernel)
+  float A = min(acc.a, 65000.0) * 10000.0;
+  float hm = acc.r / max(acc.a, 1e-12);
+  float haze = clamp(acc.g / max(acc.a, 1e-12), 0.0, 1.0);
   vec3 C = mix(webPalette(hm), earlyPalette(hm), uEarly);
   float lum = dot(C, vec3(0.2126, 0.7152, 0.0722));
-  C = mix(C, mix(vec3(0.16, 0.08, 0.70), vec3(0.45, 0.10, 0.06), uEarly) * (lum * 0.8 + 0.02), haze * 0.65);
+  // aerial perspective: distant structure cools toward a dim violet veil (not toward black)
+  C = mix(C, mix(vec3(0.20, 0.10, 0.62), vec3(0.45, 0.10, 0.06), uEarly) * (lum * 0.85 + 0.03), haze * 0.7);
   C = mix(C, vec3(1.25, 0.62, 0.28), uWarm);
   // log column-density response with a black floor (faint sheets fall to true black, OLED)
   float x = log(1.0 + pow(A / uA0, uToe));
   float xf = max(x - uFloor, 0.0);
-  float I = uGain * xf * xf / (xf + 0.6) + uHi * (1.0 - exp(-A / (uA0 * 60.0)));
+  // + an unbounded power-law term for collapsed cores: a cusp that keeps rising toward the centre
+  float I = uGain * xf * xf / (xf + 0.6) + uHi * (1.0 - exp(-A / (uA0 * 60.0))) + uHi * 3.0 * pow(max(A / (uA0 * 60.0) - 0.15, 0.0), 0.75);
   vec3 w = C * I * uExposure;
-  // highlight shoulder: the web itself never clips — it rolls off below display white with its
-  // hue intact (gold stays gold); only the brightest-cluster-galaxy cores exceed 1 and bloom
+  // HDR shoulder: below the knee the web is linear; above it luminance keeps growing logarithmically
+  // (no plateau) so cluster cores carry a cusp all the way up, cross display white and bloom —
+  // the global AgX tonemap does the final roll-off and turns them white-gold.
   float wl = dot(w, vec3(0.2126, 0.7152, 0.0722));
-  float knee = 0.6 * uCap;
-  // logarithmic shoulder: dense cores keep a visible gradient all the way up instead of a plateau
-  if (wl > knee) w *= min(uCap, knee + (uCap - knee) * log(1.0 + (wl - knee) / 0.3) / log(1.0 + 6.0 / 0.3)) / wl;
-  gl_FragColor = vec4(base + w, 1.0);
+  float knee = 0.55 * uCap;
+  if (wl > knee) { float e = wl - knee; w *= (knee + e / (1.0 + e / (4.0 * uCap))) / wl; }
+  // sub-LSB blue-noise dither kills banding in the long faint gradients
+  w += (ignC(gl_FragCoord.xy) - 0.5) * 0.0015 * min(1.0, wl * 40.0);
+  gl_FragColor = vec4(base + max(w, 0.0), 1.0);
 }`;
 
 export class WebRenderer {
@@ -328,17 +361,20 @@ export class WebRenderer {
     const self = this;
     this.compMat = new THREE.ShaderMaterial({
       vertexShader: FULLSCREEN_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tInput: { value: null }, tAccum: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uTexel: { value: new THREE.Vector2() }, uSmooth: { value: 3 }, uSharpA: { value: 4 }, uEarly: { value: 0 }, uWarm: { value: 0 }, uCap: { value: 0.9 } },
+      uniforms: { tInput: { value: null }, tAccum: { value: null }, tHalf: { value: null }, tQuarter: { value: null }, uGain: { value: 0.16 }, uA0: { value: 2 }, uHi: { value: 0.6 }, uExposure: { value: 1 }, uToe: { value: 1.4 }, uFloor: { value: 0 }, uSmooth: { value: 1 }, uSharpA: { value: 4 }, uEarly: { value: 0 }, uWarm: { value: 0 }, uCap: { value: 0.9 } },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
+    this.downMat = new THREE.ShaderMaterial({ vertexShader: FULLSCREEN_VERT, fragmentShader: DOWN_FRAG, uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false, blending: THREE.NoBlending });
+    this.blurMat = new THREE.ShaderMaterial({ vertexShader: FULLSCREEN_VERT, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false, blending: THREE.NoBlending });
     this.effect = {
       enabled: true,
       render(renderer, input, output, ctx) {
         const u = self.compMat.uniforms;
         u.tInput.value = input; u.tAccum.value = self.accRT?.texture || null;
         u.uGain.value = self.params.gain; u.uA0.value = self.params.a0; u.uHi.value = self.params.hi; u.uExposure.value = self.params.exposure; u.uToe.value = self.params.toe; u.uFloor.value = self.params.floor;
-        const pxK = (self.accRT?.height || 720) / 720;
-        u.uTexel.value.set(1 / (self.accRT?.width || 1), 1 / (self.accRT?.height || 1)); u.uSmooth.value = self.params.smooth * pxK; u.uSharpA.value = self.params.sharpA;
+        if (self.accRT) self._pyramid(ctx);
+        u.tHalf.value = self.halfRT?.texture || null; u.tQuarter.value = self.quarterRT?.texture || null;
+        u.uSmooth.value = self.params.smooth / 3.2; u.uSharpA.value = self.params.sharpA;
         u.uEarly.value = self.params.early; u.uWarm.value = self.params.warm; u.uCap.value = self.params.cap ?? 0.9;
         ctx.fullscreen(self.compMat, output);
       },
@@ -354,7 +390,29 @@ export class WebRenderer {
       type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
       depthBuffer: false, stencilBuffer: false, generateMipmaps: false,
     });
+    const opt = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false, generateMipmaps: false };
+    for (const k of ['halfRT', 'halfTmp', 'quarterRT', 'quarterTmp']) this[k]?.dispose();
+    const hw = Math.max(1, Math.ceil(w / 2)), hh = Math.max(1, Math.ceil(h / 2));
+    const qw = Math.max(1, Math.ceil(w / 4)), qh = Math.max(1, Math.ceil(h / 4));
+    this.halfRT = new THREE.WebGLRenderTarget(hw, hh, opt); this.halfTmp = new THREE.WebGLRenderTarget(hw, hh, opt);
+    this.quarterRT = new THREE.WebGLRenderTarget(qw, qh, opt); this.quarterTmp = new THREE.WebGLRenderTarget(qw, qh, opt);
     this._key = '';
+    this._pyrKey = null;
+  }
+
+  /** Half/quarter-resolution Gaussian pyramid of the accumulation buffer (6 small passes). */
+  _pyramid(ctx) {
+    if (this._pyrKey === this._key && this._key) return;     // cached accumulation: pyramid is valid
+    this._pyrKey = this._key;
+    const d = this.downMat.uniforms, b = this.blurMat.uniforms;
+    const level = (src, dst, tmp) => {
+      d.tSrc.value = src.texture; d.uTexel.value.set(1 / src.width, 1 / src.height);
+      ctx.fullscreen(this.downMat, dst);
+      b.tSrc.value = dst.texture; b.uDir.value.set(1 / dst.width, 0); ctx.fullscreen(this.blurMat, tmp);
+      b.tSrc.value = tmp.texture; b.uDir.value.set(0, 1 / dst.height); ctx.fullscreen(this.blurMat, dst);
+    };
+    level(this.accRT, this.halfRT, this.halfTmp);
+    level(this.halfRT, this.quarterRT, this.quarterTmp);
   }
 
   /**
@@ -392,6 +450,6 @@ export class WebRenderer {
   }
 
   dispose() {
-    this.points.geometry.dispose(); this.material.dispose(); this.galaxies.geometry.dispose(); this.galMaterial.dispose(); this.compMat.dispose(); this.accRT?.dispose();
+    this.points.geometry.dispose(); this.material.dispose(); this.galaxies.geometry.dispose(); this.galMaterial.dispose(); this.compMat.dispose(); this.downMat.dispose(); this.blurMat.dispose(); this.accRT?.dispose(); for (const k of ['halfRT', 'halfTmp', 'quarterRT', 'quarterTmp']) this[k]?.dispose();
   }
 }

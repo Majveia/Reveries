@@ -163,7 +163,7 @@ function terrace0(h, s, k) {
 // ---------------------------------------------------------------------------
 const CLIMATE = {
   // temp0: equatorial sea-level temperature (0 frozen … 1 scorching); moist0: base humidity
-  rolling: { temp0: 0.64, moist0: 0.62 },
+  rolling: { temp0: 0.72, moist0: 0.62 }, // temperate (Ghibli): green to the mid-latitudes
   dunes: { temp0: 0.86, moist0: 0.06 },
   karst: { temp0: 0.72, moist0: 0.74 },
   glacial: { temp0: 0.16, moist0: 0.5 },
@@ -279,7 +279,7 @@ export function createTerrain(p) {
    * (ux,uy,uz) = unit surface normal for tangent-plane projection of the
    * gradient; wl = first-octave wavelength (m). Returns ~[0, 1].
    */
-  function ridgedEroded(n, x, y, z, ux, uy, uz, oct, lac, gain, erosion, sharp, wl) {
+  function ridgedEroded(n, x, y, z, ux, uy, uz, oct, lac, gain, erosion, sharp, wl, massif = 0) {
     let s = 0, a = 0.5, w = 1, f = 1, gx = 0, gy = 0, gz = 0, norm = 0;
     // cumulative rotation C (row-major) for chain-rule gradients
     let c0 = 1, c1 = 0, c2 = 0, c3 = 0, c4 = 1, c5 = 0, c6 = 0, c7 = 0, c8 = 1;
@@ -293,7 +293,8 @@ export function createTerrain(p) {
       const kc = Math.max(0.0009 + Math.min(0.08, (14 / wl) * (14 / wl)) + 0.05 * (1 - (LS <= 0 ? 1 : smoothstep(5 * LS, 18 * LS, wl))), LS > 0 ? (2.8 * LS / wl) * (2.8 * LS / wl) : 0);
       const av = Math.sqrt(v * v + kc); // rounded crease (wider when under-sampled)
       let r = 1 - av; if (r < 0) r = 0;
-      const r2 = sharp > 1 ? Math.pow(r, sharp) : r * r;
+      // massif > 0: the first octave keeps a broad, concave-flanked base (ranges, not knife walls)
+      const r2 = Math.pow(r, (sharp > 1 ? sharp : 2) + (i === 0 ? massif : 0));
       // the erosion gradient flips sign across every crease; let it turn over a band of at
       // least ~0.12 wavelength (wider than the value's crease) — flipping inside the crisp
       // crease made 1/(1+e|g|²) spike into 60–150 m wide, 300–600 m tall needles, periodic
@@ -304,7 +305,10 @@ export function createTerrain(p) {
       const dn = dx * ux + dy * uy + dz * uz; dx -= dn * ux; dy -= dn * uy; dz -= dn * uz;
       gx += dx * b; gy += dy * b; gz += dz * b;
       const rr = r2 * w;
-      const val = rr / (1 + erosion * 2.2 * (gx * gx + gy * gy + gz * gz)); // ×2.2 keeps the height distribution of the sharper gradient
+      // ×2.2 keeps the height distribution of the sharper gradient. With massif > 0 the first
+      // octave is not damped by its own slope: dividing octave 0 by its own gradient pinched each
+      // range down to a 60–200 m wide knife wall along the crest (a comb of spires on horizons)
+      const val = (i === 0 && massif > 0) ? rr : rr / (1 + erosion * 2.2 * (gx * gx + gy * gy + gz * gz));
       s += a * (b * val + (1 - b) * 0.3 * w);
       norm += a;
       w = clamp01(rr * 1.7);
@@ -566,10 +570,10 @@ export function createTerrain(p) {
   // STYLES — each returns the land height and fills S.rock/S.sand/S.cliff/S.ice
   // =======================================================================
 
-  function mountains(x, y, z, X, Y, Z, lambda, oct, erosion, sharp) {
+  function mountains(x, y, z, X, Y, Z, lambda, oct, erosion, sharp, massif = 0) {
     // eroded ridged ranges; ~[0, 1]
     const fx = X / lambda + 31.7, fy = Y / lambda - 12.4, fz = Z / lambda + 7.1;
-    return ridgedEroded(nM, fx, fy, fz, x, y, z, oct, 2.03, 0.47, erosion, sharp, lambda);
+    return ridgedEroded(nM, fx, fy, fz, x, y, z, oct, 2.03, 0.47, erosion, sharp, lambda, massif);
   }
 
   function coastShape(e, h, cliffMask, cliffH) {
@@ -580,6 +584,9 @@ export function createTerrain(p) {
     return h + c;
   }
 
+  // mountain shaping (tuned with node probes: broad massifs, concave flanks, comparable p50/p95)
+  // (massif: octave 0 unpinched, r² base → ranges ~1–2 km wide instead of knife walls)
+  const MS = { rollA: 0.9, rollF: 0.04, rollP: 1.15, great: 0.01, mass: 0.01 };
   function styleRolling(x, y, z, X, Y, Z, e, h, land, mReg) {
     S.rock = 0; S.sand = 0; S.cliff = 0; S.ice = 0;
     if (land <= 0) {
@@ -611,12 +618,12 @@ export function createTerrain(p) {
     const mm = Math.max(smoothstep(0.36, 0.76, mReg + e * 0.35), tect * 0.85);
     let mnt = 0;
     if (mm > 0) {
-      const r = mountains(x, y, z, X, Y, Z, 8200, 8, 1.5, 2.0);
-      mnt = rel * 1.3 * mm * Math.pow(r, 1.3);
+      const r = mountains(x, y, z, X, Y, Z, 8200, 8, 1.5, 2.0, MS.mass);
+      mnt = rel * MS.rollA * mm * Math.pow(Math.max(0, r - MS.rollF) / (1 - MS.rollF), MS.rollP);
     }
     // great ranges: a second, broader massif layer along the arcs (layered depth)
     if (tect > 0.001) {
-      const r2 = ridgedEroded(nH, X / 21000 - 4.4, Y / 21000 + 9.1, Z / 21000 + 2.6, x, y, z, 8, 2.1, 0.46, 2.4, 1.6, 21000);
+      const r2 = ridgedEroded(nH, X / 21000 - 4.4, Y / 21000 + 9.1, Z / 21000 + 2.6, x, y, z, 8, 2.1, 0.46, 2.4, 1.6, 21000, MS.great);
       mnt += rel * 1.15 * tect * Math.pow(r2, 1.6);
     }
     // ---- tors / crags on crowns ----
@@ -650,7 +657,7 @@ export function createTerrain(p) {
     // mountain spine
     const mm = smoothstep(0.55, 0.85, mReg + e * 0.2);
     let mnt = 0;
-    if (mm > 0) mnt = rel * (plateau ? 0.7 : 1.05) * mm * Math.pow(mountains(x, y, z, X, Y, Z, 8600, 7, 1.4, 2.1), 1.4);
+    if (mm > 0) mnt = rel * (plateau ? 0.55 : 0.8) * mm * Math.pow(Math.max(0, mountains(x, y, z, X, Y, Z, 8600, 7, 1.4, 2.1, 0.01) - 0.04) / 0.96, 1.25);
     // gorges
     const g = Math.abs(fbmM(nS, X, Y, Z, 5200, 3, 2.0, 0.5, 9.1, 0, -3.3));
     const gorge = (1 - smoothstep(0.0, 0.035, g)) * rel * 0.18 * k;
@@ -707,7 +714,7 @@ export function createTerrain(p) {
     // amplitude modulation along the crest breaks them into barchanoid segments
     const wC = fbmM(nW, X, Y, Z, 560, 2, 2.0, 0.5, 2.9, -0.3, 1.7);
     const seg = smoothstep(-0.45, 0.35, fbmM(nH, X, Y, Z, 1100, 2, 2.0, 0.5, 7.1, -2.6, 3.9) + (ampN - 0.5) * 0.6);
-    const A1 = rel * 0.1 * (0.5 + 0.65 * ampN) * latFade * (0.35 + 0.65 * seg);
+    const A1 = rel * 0.125 * (0.5 + 0.65 * ampN) * latFade * (0.35 + 0.65 * seg);
     // slip face at ~32° (tan ≈ 0.62) → brink phase from the dune height
     const fc = 1 - clamp(A1 / 0.62 / duneLambda, 0.12, 0.42);
     const kc = 0.009 + clamp(LS / duneLambda * 3, 0, 0.3); // knife-edge brink up close
@@ -724,7 +731,7 @@ export function createTerrain(p) {
     // small transverse dunelets riding the stoss slopes (fade on slip faces)
     const ph3 = lon * dune3N / (2 * Math.PI) + wA * 3.1 + wB * 1.7 + fbmM(nD, X, Y, Z, 380, 2, 2.0, 0.5, 4.1, 0, 2.2) * 0.6;
     const p3 = duneProfile(ph3 - Math.floor(ph3), 0.7, 0.06 + clamp(LS / 95 * 3, 0, 0.6));
-    const A3 = 2.8 * latFade * bw(95) * (1 - slip1) * (0.4 + 0.6 * smoothstep(0.1, 0.6, p1));
+    const A3 = 3.8 * latFade * bw(95) * (1 - slip1) * (0.4 + 0.6 * smoothstep(0.1, 0.6, p1));
     const dunes = A1 * p1 + A2 * p2 * (0.4 + 0.6 * p1) * (1 - 0.7 * slip1) + A3 * (p3 - 0.5);
     const sandH = base + dunes + (1 - latFade) * fbmM(nH, X, Y, Z, 900, 3, 2.0, 0.5, 0, 0, 0) * 12;
     let out = sandH;
