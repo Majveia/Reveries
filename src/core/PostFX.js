@@ -215,20 +215,27 @@ ${DEPTH_GLSL}
 uniform sampler2D tDepth; uniform mat4 uProjInv; uniform vec2 uFullTexel; uniform float uReversed;
 uniform float uRadius, uProjScale, uMaxPx, uFrame, uFadeEnd;
 varying vec2 vUv;
-vec3 vpos(vec2 uv){ return viewPosFromDepth(uv, texture2D(tDepth, uv).r, uProjInv, uReversed); }
+// Reconstruct at full-res texel centres: the depth texture is sampled nearest, and this
+// pass runs at half res (vUv sits on full-res texel corners) with fractional tap offsets.
+// Unsnapped, a tap read depth from one pixel but projected it through a uv up to half a
+// texel away — on ground seen at grazing angles that is a large position error, which
+// showed up as false occlusion in periodic horizontal bands.
+vec2 snapUV(vec2 uv){ return (floor(uv / uFullTexel) + 0.5) * uFullTexel; }
+vec3 vpos(vec2 uv){ uv = snapUV(uv); return viewPosFromDepth(uv, texture2D(tDepth, uv).r, uProjInv, uReversed); }
 float fastAcos(float x){ float ax = abs(x); float r = (-0.156583 * ax + HALF_PI) * sqrt(max(1.0 - ax, 0.0)); return x >= 0.0 ? r : PI - r; }
 void main(){
-  float d = texture2D(tDepth, vUv).r;
+  vec2 uv0 = snapUV(vUv);
+  float d = texture2D(tDepth, uv0).r;
   if (isFarDepth(d, uReversed)) { gl_FragColor = vec4(1.0, 60000.0, 0.0, 1.0); return; }
-  vec3 P = viewPosFromDepth(vUv, d, uProjInv, uReversed);
+  vec3 P = viewPosFromDepth(uv0, d, uProjInv, uReversed);
   float vz = -P.z;
   float radiusPx = uRadius * uProjScale / vz;
   if (vz > uFadeEnd || radiusPx < 1.5) { gl_FragColor = vec4(1.0, min(vz, 60000.0), 0.0, 1.0); return; }
   radiusPx = min(radiusPx, uMaxPx);
   // Edge-aware normal from depth: pick the smaller-difference neighbour per axis.
   vec2 tx = uFullTexel;
-  vec3 Pr = vpos(vUv + vec2(tx.x, 0.0)), Pl = vpos(vUv - vec2(tx.x, 0.0));
-  vec3 Pt = vpos(vUv + vec2(0.0, tx.y)), Pb = vpos(vUv - vec2(0.0, tx.y));
+  vec3 Pr = vpos(uv0 + vec2(tx.x, 0.0)), Pl = vpos(uv0 - vec2(tx.x, 0.0));
+  vec3 Pt = vpos(uv0 + vec2(0.0, tx.y)), Pb = vpos(uv0 - vec2(0.0, tx.y));
   vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
   vec3 dy = abs(Pt.z - P.z) < abs(P.z - Pb.z) ? Pt - P : P - Pb;
   vec3 N = normalize(cross(dx, dy));
@@ -257,7 +264,7 @@ void main(){
       t = t * t;
       float sPx = max(t * radiusPx, float(j) + 1.0);
       vec2 off = omega * sPx * uFullTexel;
-      vec3 d0 = vpos(vUv + off) - P, d1 = vpos(vUv - off) - P;
+      vec3 d0 = vpos(uv0 + off) - P, d1 = vpos(uv0 - off) - P;
       float l0 = length(d0), l1 = length(d1);
       float sh0 = dot(d0, V) / max(l0, 1e-5), sh1 = dot(d1, V) / max(l1, 1e-5);
       float w0 = clamp(l0 * fMul + fAdd, 0.0, 1.0), w1 = clamp(l1 * fMul + fAdd, 0.0, 1.0);
