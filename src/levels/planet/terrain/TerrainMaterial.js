@@ -736,5 +736,31 @@ export function createTerrainMaterial(world, style) {
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.35 );');
   };
   material.customProgramCacheKey = () => 'reveries-terrain-v3';
-  return { material, uniforms };
+
+  // Shadow-map caster. Shadows render back faces (three's default for FrontSide), which
+  // on a heightfield are exactly the slopes facing away from the light — plus the chunk
+  // SKIRTS, whose outward walls hang below every chunk edge. Drawn into the shadow map,
+  // the skirts cast thin, perfectly straight dark lines along chunk seams onto downhill
+  // ground. Skirt vertices (index >= SKIRT0, set by Terrain) are discarded here. The
+  // caster also gets the same CDLOD geomorph as the visible surface, measured from the
+  // VIEW camera (uMorphCam, set by Terrain each frame): cameraPosition is the light here.
+  const depthUniforms = { uLodK: uniforms.uLodK, uFaceSize: uniforms.uFaceSize, uMorphCam: { value: new THREE.Vector3() } };
+  const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  depthMaterial.defines = { SKIRT0: 4225 };
+  depthMaterial.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, depthUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 aMorph;\nattribute vec4 aNrm;\nuniform float uLodK;\nuniform float uFaceSize;\nuniform vec3 uMorphCam;\nvarying float vSkirt;')
+      .replace('#include <begin_vertex>', `float tLevel = floor( aNrm.w * 127.0 + 0.5 );
+float tDist = length( ( modelMatrix[ 3 ].xyz - uMorphCam ) + position );
+float tParent = uLodK * uFaceSize * exp2( 1.0 - tLevel );
+float tMorph = tLevel > 0.5 ? smoothstep( 0.6, 0.92, tDist / tParent ) : 0.0;
+vec3 transformed = position + aMorph * tMorph;
+vSkirt = gl_VertexID >= SKIRT0 ? 1.0 : 0.0;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vSkirt;')
+      .replace('void main() {', 'void main() {\n\tif ( vSkirt > 0.001 ) discard;');
+  };
+  depthMaterial.customProgramCacheKey = () => 'reveries-terrain-depth-v2';
+  return { material, uniforms, depthMaterial, depthUniforms };
 }

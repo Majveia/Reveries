@@ -72,8 +72,10 @@ export default class Terrain {
     // conservative height range for nodes without data
     this.hMin = -this.relief * 1.2; this.hMax = this.relief * 1.6;
 
-    const { material, uniforms } = createTerrainMaterial(w, w.terrainParams.style);
+    const { material, uniforms, depthMaterial, depthUniforms } = createTerrainMaterial(w, w.terrainParams.style);
     this.material = material; this.uniforms = uniforms;
+    this.depthMaterial = depthMaterial; this.depthUniforms = depthUniforms;
+    depthMaterial.defines.SKIRT0 = (N + 1) * (N + 1); // first skirt vertex (see ChunkBuilder.buildIndex)
     uniforms.uFaceSize.value = this.faceSize;
     // wind for sand ripples
     uniforms.uWindDir.value.copy(w.wind);
@@ -248,6 +250,7 @@ export default class Terrain {
     g.boundingSphere = new THREE.Sphere();
     g.boundingBox = new THREE.Box3();
     m = new THREE.Mesh(g, this.material);
+    m.customDepthMaterial = this.depthMaterial; // morphed shadow caster (see TerrainMaterial)
     m.matrixAutoUpdate = false;
     m.receiveShadow = true;
     m.castShadow = false;
@@ -447,6 +450,7 @@ export default class Terrain {
   lateUpdate() {
     if (!this.ready) return;
     this._prepareView();
+    this.depthUniforms.uMorphCam.value.copy(this.camPos);
     // detail-space origin: camera snapped to 4096 m (all detail frequencies are k/4096 m⁻¹)
     const S = 4096;
     const o = this.detailOrigin.set(Math.round(this.camPos.x / S) * S, Math.round(this.camPos.y / S) * S, Math.round(this.camPos.z / S) * S);
@@ -564,6 +568,7 @@ export default class Terrain {
     for (const w of this.workers || []) w.terminate();
     for (const m of [...(this.meshes || []), ...(this.pool || [])]) m.geometry.dispose();
     this.material?.dispose();
+    this.depthMaterial?.dispose();
     this._sunRT?.dispose();
     this.group?.removeFromParent();
   }
