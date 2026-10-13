@@ -89,6 +89,14 @@ export default class Vehicles {
     hero.addTo(level.scene); this.list.push(hero);
     this.hero = hero;
     const spawnSpot = this._playerSpawnSpot();
+    // where a descent from orbit sets down: beside the player's arrival spot by the first
+    // settlement (clear of the bike, which waits on the other side)
+    {
+      const up = spawnSpot.position.clone().normalize();
+      const f = spawnSpot.facing.clone().addScaledVector(up, -spawnSpot.facing.dot(up)).normalize();
+      const right = new THREE.Vector3().crossVectors(f, up).normalize();
+      this.arrival = spawnSpot.position.clone().addScaledVector(right, -26).addScaledVector(f, 8).normalize();
+    }
     // bike right beside the player's spawn, angled toward the settlement
     const bike = new Bike(this, { seed: rng.int(1, 1e6), livery: 0 });
     bike.addTo(level.scene); this.list.push(bike);
@@ -320,12 +328,15 @@ export default class Vehicles {
       else if (v.landed) this._setPrompt(key, 'Exit ship');
       else if (v.autoland) this._setPrompt(null);
       else if (v.alt < 2500) this._setPrompt(key, 'Land');
-      else this._setPrompt(null);
+      else this._setPrompt(key, 'Descend to the surface');
       if (input.pressed('interact') && !v.landed) {
         input._pressed?.delete?.('interact'); // consumed: the player must not alight mid-air
         if (leave) { engine.audio.sfx?.('warp'); engine.up(); return; }
         v.autoland = true;
-        ui.hint?.('Landing assist engaged', 2500);
+        // from altitude, glide down to the arrival spot by the first settlement
+        const high = v.alt > 3000;
+        v.landTarget = high && this.arrival ? this.arrival.clone() : null;
+        ui.hint?.(high ? 'Descending to the surface · throttle or thrust takes back control' : 'Landing assist engaged', 3500);
       }
       if (!this.level.freeCam || this.level.freeCam._vehicles) this._shipCam(dt, v);
     } else {

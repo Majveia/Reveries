@@ -25,6 +25,7 @@ const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _m = new THREE.
 const _e = new THREE.Euler();
 const _g = {};
 const _n = new THREE.Vector3();
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(); // linear-step scratch (never alias _v3 = sUp)
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 
 export class Ship {
@@ -182,7 +183,9 @@ export class Ship {
       boost = input.down('sprint');
       const thrIn = clamp(input.move.y + (input.throttle || 0), -1, 1);
       this.thrSet = clamp(this.thrSet + thrIn * dt * 0.55, 0, 1);
-      if (thrIn || vert || boost || Math.abs(pitchIn) > 0.2) this.autoland = false;
+      // deliberate thrust cancels landing assist; steering (mouse / look pad) never does —
+      // the mouse is the stick, so a look-around used to switch the descent off at once
+      if (thrIn || vert || boost) { this.autoland = false; this.landTarget = null; }
     } else if (!this.autoland && !this.landed && this.rider == null && !this.sys.autopilot) {
       this.autoland = true;
     }
@@ -262,18 +265,37 @@ export class Ship {
     // VTOL / autoland descent
     if (this.autoland) {
       const h = Math.max(0, this.alt - this.model.gearHeight);
-      const vDown = clamp(h * 0.35, 2.5, 120);
+      // guided descent: from altitude the ship glides over its landing target (the arrival
+      // spot by the first settlement) while it drops, so a descent from orbit ends in town
+      const tgt = this.landTarget;
+      let d = 0;
+      if (tgt) {
+        const c = clamp(up.dot(tgt), -1, 1);
+        d = Math.acos(c) * R;
+        if (d > 25) {
+          const dirT = _t1.copy(tgt).addScaledVector(up, -c).normalize();
+          const vH = clamp(d * 0.4, 6, 2400);
+          const vt = _t2.copy(v).addScaledVector(up, -v.dot(up));
+          v.addScaledVector(dirT.multiplyScalar(vH).sub(vt), 1 - Math.exp(-1.5 * dt));
+        } else this.landTarget = null;
+      }
+      // fast from orbit (~2.6 km/s up high), easing to a soft VTOL touchdown
+      const cap = lerp(150, 2600, smooth(h, 1500, 12000));
+      let vDown = clamp(h * 0.35, 2.5, cap);
+      if (tgt && d > 25) vDown = Math.min(vDown, Math.max(0, h - d * 0.5) * 0.35 + 2.5); // stay above a 1:2 glide slope until over the target
       const vr = v.dot(up);
       v.addScaledVector(up, (-vDown - vr) * (1 - Math.exp(-2 * dt)));
-      const vt = _v3.copy(v).addScaledVector(up, -v.dot(up));
-      v.addScaledVector(vt, -(1 - Math.exp(-1.2 * dt)));
+      if (!this.landTarget) {
+        const vt = _t2.copy(v).addScaledVector(up, -v.dot(up));
+        v.addScaledVector(vt, -(1 - Math.exp(-1.2 * dt)));
+      }
     } else if (vert) {
       v.addScaledVector(sUp, vert * 26 * dt);
     }
     // aero: lift aligns velocity with the nose; quadratic drag
     if (air > 0) {
       const along = v.dot(fwd);
-      const lat = _v3.copy(v).addScaledVector(fwd, -along);
+      const lat = _t1.copy(v).addScaledVector(fwd, -along);
       if (!this.autoland && along > 0) {
         const k = 1 - Math.exp(-this.rho * 2.6 * smooth(along, 5, 60) * dt);
         v.addScaledVector(lat, -k);
@@ -302,7 +324,7 @@ export class Ship {
       const vr = v.dot(up2);
       const level = sUp.dot(up2);
       if (speed < 28 && level > 0.82 && this.gearT > 0.6) {
-        this.landed = true; this.autoland = false; v.set(0, 0, 0); this.thrSet = 0;
+        this.landed = true; this.autoland = false; this.landTarget = null; v.set(0, 0, 0); this.thrSet = 0;
         this.sys.engine.audio.sfx?.('land', { intensity: clamp(-vr / 10, 0, 1) });
         this.sys.shake(clamp(-vr / 12, 0.05, 0.5));
       } else {
