@@ -579,6 +579,11 @@ export default class Player {
     this.anim.update({ dt, speed: 0, state: 'ride', vy: 0, accel: { x: 0, z: 0 }, turnRate: 0, lookYaw: 0, lookPitch: 0 });
     this.ctl.up.copy(this.position).normalize();
     this.ctl.facing.set(0, 0, 1).applyQuaternion(this.group.quaternion);
+    // the controller does not step while seated, so its ground radius is stale (the last
+    // on-foot spot); the scarf's ground sphere must follow the vehicle, or a ride through
+    // lower ground projects the whole cloth up to the old height (a long red "pole")
+    const g = this.world.groundAt(this.position, this._seatG || (this._seatG = {}));
+    this.ctl.groundRadius = g.radius;
     this._stepScarf(dt);
   }
 
