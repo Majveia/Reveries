@@ -288,17 +288,23 @@ export function createTerrain(p) {
       if (b <= 0) { s += a * 0.3 * w; norm += a; a *= gain; continue; }
       const v = n.n3d(x, y, z);
       // crease radius: crisp km-scale crests, rounded fine octaves (no 1 m knife fins / comb spikes)
-      const kc = 0.0009 + Math.min(0.08, (14 / wl) * (14 / wl)) + 0.05 * (1 - (LS <= 0 ? 1 : smoothstep(5 * LS, 18 * LS, wl)));
+      // (and never narrower than ~2.8 vertex spacings on coarse meshes: a crisp crest running
+      // diagonally across the grid is otherwise sampled into a row of identical cones)
+      const kc = Math.max(0.0009 + Math.min(0.08, (14 / wl) * (14 / wl)) + 0.05 * (1 - (LS <= 0 ? 1 : smoothstep(5 * LS, 18 * LS, wl))), LS > 0 ? (2.8 * LS / wl) * (2.8 * LS / wl) : 0);
       const av = Math.sqrt(v * v + kc); // rounded crease (wider when under-sampled)
       let r = 1 - av; if (r < 0) r = 0;
       const r2 = sharp > 1 ? Math.pow(r, sharp) : r * r;
-      const sg = -(v / av) * a * f;
+      // the erosion gradient flips sign across every crease; let it turn over a band of at
+      // least ~0.12 wavelength (wider than the value's crease) — flipping inside the crisp
+      // crease made 1/(1+e|g|²) spike into 60–150 m wide, 300–600 m tall needles, periodic
+      // where finer creases cross a crest line: rows of identical spires on every horizon
+      const sg = -(v / Math.sqrt(v * v + Math.max(kc, 0.015))) * a * f;
       const d0 = DN[0] * sg, d1 = DN[1] * sg, d2 = DN[2] * sg;
       let dx = c0 * d0 + c3 * d1 + c6 * d2, dy = c1 * d0 + c4 * d1 + c7 * d2, dz = c2 * d0 + c5 * d1 + c8 * d2;
       const dn = dx * ux + dy * uy + dz * uz; dx -= dn * ux; dy -= dn * uy; dz -= dn * uz;
       gx += dx * b; gy += dy * b; gz += dz * b;
       const rr = r2 * w;
-      const val = rr / (1 + erosion * (gx * gx + gy * gy + gz * gz));
+      const val = rr / (1 + erosion * 2.2 * (gx * gx + gy * gy + gz * gz)); // ×2.2 keeps the height distribution of the sharper gradient
       s += a * (b * val + (1 - b) * 0.3 * w);
       norm += a;
       w = clamp01(rr * 1.7);

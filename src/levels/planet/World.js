@@ -290,6 +290,9 @@ export class World {
     const dir = new THREE.Vector3();
     for (let i = 0; i < 900; i++) {
       const [x, y, z] = rng.unitVector(); dir.set(x, y, z);
+      // tie-break drawn for EVERY candidate: if it depended on the height filters below,
+      // any terrain edit would shift the sequence and reshuffle every site on the planet
+      const jitter = rng.float();
       if (Math.abs(y) > 0.82) continue; // avoid poles
       const h = this.heightAt(dir);
       if (this.hasOcean && h < this.seaLevel + 8) continue;
@@ -312,7 +315,10 @@ export class World {
         ring = Math.max(ring, this.heightAt(p));
       }
       const prom = Math.min(ring - h, this.terrainParams.relief * 0.6);
-      const score = -flat * 1.0 + coast * 40 + prom * 0.035 - Math.max(0, h - (this.hasOcean ? this.seaLevel : 0) - this.terrainParams.relief * 0.5) * 0.05 + rng.float() * 8;
+      // climate: people settle where it is livable — no snowfields or frozen highlands
+      const cl = this.terrain.sample(dir.x, dir.y, dir.z);
+      const climate = -cl.snow * 80 - Math.max(0, 0.3 - cl.temp) * 150;
+      const score = -flat * 1.0 + coast * 40 + prom * 0.035 - Math.max(0, h - (this.hasOcean ? this.seaLevel : 0) - this.terrainParams.relief * 0.5) * 0.05 + climate + jitter * 8;
       cands.push({ dir: dir.clone(), h, flat, score });
     }
     cands.sort((a, b) => b.score - a.score);
