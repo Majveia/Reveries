@@ -240,7 +240,11 @@ export default class Vehicles {
     void v;
   }
 
-  shake(k) { this._shake = Math.max(this._shake, k); }
+  shake(k) {
+    this._shake = Math.max(this._shake, k);
+    // bumps, scrapes and touchdowns in the hands too (rate-limited in Input.rumble)
+    if (k > 0.12) this.engine.input?.rumble?.(Math.min(1, k * 0.9), 50 + k * 140);
+  }
 
   // =====================================================================================
   // Frame
@@ -341,6 +345,17 @@ export default class Vehicles {
     if (sun) L.vehRimCol.value.copy(sun.color).multiplyScalar(sI * 0.55); else L.vehRimCol.value.setScalar(sI * 0.55);
     // sky fill: cool in daylight, faint at night, a touch of warmth at dusk
     L.vehFill.value.setRGB(0.46 + 0.22 * (1 - day), 0.52, 0.6).multiplyScalar(0.022 + 0.065 * day).multiplyScalar(Math.max(sI, 1));
+    // space: thin Rayleigh-blue rim from the lit limb below (planet-facing edges of the hull)
+    const v = this.shotCam?.vehicle || this.level.player?.vehicle;
+    const sp = v && v.type === 'ship' ? v.space : 0;
+    if (L.vehLimbCol) {
+      if (sp > 0.02) {
+        const down = _v.copy(v.position).normalize();
+        const lit = clamp(0.35 + 0.8 * down.dot(w.sunDir), 0, 1);
+        L.vehLimbDir.value.copy(down).negate().applyQuaternion(q).normalize();
+        L.vehLimbCol.value.setRGB(0.25, 0.5, 1.0).multiplyScalar(sI * 0.5 * lit * sp);
+      } else L.vehLimbCol.value.setRGB(0, 0, 0);
+    }
   }
 
   _planetShine(v) {
@@ -655,7 +670,7 @@ export default class Vehicles {
         return tryS(1) <= tryS(-1) ? 1 : -1;
       })();
       // the boost FOV kick (+14 live) is half-applied: wide enough to feel fast, not fish-eyed
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.6) * side, sp.by ?? 1.7, -(sp.bz ?? 7.4)), target: new THREE.Vector3(-(sp.tx ?? 1.2) * side, sp.ty ?? 1.2, 25), fov: sp.fov ?? 54, minClear: 1.0, bankRoll: 0.22, streaks: sp.streaks ?? 0.22 };
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 2.0) * side, sp.by ?? 1.3, -(sp.bz ?? 6.2)), target: new THREE.Vector3(-(sp.tx ?? -0.6) * side, sp.ty ?? 0.6, 25), fov: sp.fov ?? 52, minClear: 0.8, bankRoll: 0.22, streaks: sp.streaks ?? 0.12 };
       bike._holdForShot = true;
       this.shotGlide = true;
       this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.6, motionBlurNear: 10.5 }, 0);
@@ -713,7 +728,7 @@ export default class Vehicles {
         // sunset: low sun 35-60° off the view axis (just off-frame) → hot specular rim on the hull,
         // glowing horizon behind; the hull keeps a lit side (not a pure silhouette)
         const th = Math.acos(clamp(view.dot(w.sunDir), -1, 1)) * 180 / Math.PI;
-        const sc = -Math.abs(th - (sp.sunAng ?? 48)) / 20 - Math.abs(h - 2.2) * 0.15 + R.range(0, 0.6);
+        const sc = -Math.abs(th - (sp.sunAng ?? 62)) / 20 - Math.abs(h - 2.2) * 0.15 + R.range(0, 0.6);
         if (sc > bs) { bs = sc; best = o; }
       }
       const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
@@ -723,6 +738,8 @@ export default class Vehicles {
       this.shotGlide = true;
       this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.55, motionBlurNear: Math.hypot(ox, oy, oz) + 9 }, 0);
       this._updateShotCam();
+      { const g = w.groundAt(ship.position, {}); let alive = 0; const A = this.spray.aMeta.array; for (let i = 0; i < this.spray.count; i++) if (this.time - A[i * 4] < A[i * 4 + 1]) alive++;
+        console.warn('[vehicles dbg] clear', (ship.position.length() - Math.max(g.radius, g.water ? g.waterRadius : -Infinity)).toFixed(1), 'water', g.water, 'speed', ship.speed?.toFixed?.(1), 'spray alive', alive, 'th', this.time.toFixed(2), 'eng', this.engine.time.toFixed(2)); }
       return true;
     }
     if (name === 'orbit') {

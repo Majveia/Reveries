@@ -50,6 +50,16 @@ const PAD_LABEL = {
   sprint: 'RT', map: 'view', escape: 'menu', photo: 'R3', move: 'LS', look: 'RS', orbit: 'RS', zoom: 'dpad',
   primary: 'A', travel: 'A', help: 'dup', light: 'ddown', timeFaster: 'dright', timeSlower: 'dleft', forward: 'LS', back: 'LS', left: 'LS', right: 'LS',
 };
+// PlayStation pads (DualSense, DualSense Edge, DualShock 4): symbol face buttons, L1/R1/L2/R2, Create/Options
+const PS_GLYPH = { A: 'cross', B: 'circle', X: 'square', Y: 'triangle', LB: 'L1', RB: 'R1', LT: 'L2', RT: 'R2', view: 'create', menu: 'options' };
+const PS_SVG = {
+  cross: '<svg viewBox="0 0 10 10"><path d="M2.4 2.4l5.2 5.2M7.6 2.4L2.4 7.6"/></svg>',
+  circle: '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="3"/></svg>',
+  square: '<svg viewBox="0 0 10 10"><rect x="2.4" y="2.4" width="5.2" height="5.2"/></svg>',
+  triangle: '<svg viewBox="0 0 10 10"><path d="M5 2L8.2 7.5H1.8z"/></svg>',
+  create: '<svg viewBox="0 0 10 10"><path d="M3.2 3v4M5 2v6M6.8 3v4"/></svg>',
+  options: '<svg viewBox="0 0 10 10"><path d="M2.2 3.2h5.6M2.2 5h5.6M2.2 6.8h5.6"/></svg>',
+};
 // a fused 8-tooth cog outline (reads as "settings" at 15 px, unlike radial strokes)
 function cogPath(n = 8, rO = 8.4, rI = 6.2) {
   const pts = [];
@@ -563,6 +573,11 @@ export class UI {
     return `<kbd${k.length > 2 ? ' class="is-wide"' : ''}>${esc(k)}</kbd>`;
   }
   _padGlyph(p) {
+    if (this.input.padFamily === 'playstation' && PS_GLYPH[p]) {
+      const g = PS_GLYPH[p];
+      if (PS_SVG[g]) return `<span class="rvu-pad is-ps is-${g}">${PS_SVG[g]}</span>`;
+      p = g; // L1 / R1 / L2 / R2: the shoulder pill below
+    }
     if (p === 'LS' || p === 'RS') return `<span class="rvu-pad is-stick"><i></i><em>${p[0]}</em></span>`;
     if (p === 'dpad' || p[0] === 'd' && p.length > 2) return `<span class="rvu-pad is-dpad${p !== 'dpad' ? ' is-' + p.slice(1) : ''}"><i></i></span>`;
     if (p === 'view') return '<span class="rvu-pad is-sys">⧉</span>';
@@ -582,7 +597,7 @@ export class UI {
     const touch = this.device === 'touch';
     const rows = list.map(([a, l]) => `<div class="rvu-help-row"><span class="rvu-help-g">${touch ? this._touchWord(a) : this.glyph(a)}</span><em>${esc(l)}</em></div>`).join('');
     const title = { map: 'Navigation', onfoot: 'On foot', bike: 'Hover bike', ship: 'Ship' }[this.mode] || 'Controls';
-    this.helpEl.innerHTML = `<div class="rvu-help-in"><div class="rvu-help-h"><b>${title}</b><span>${touch ? 'tap to close' : this.device === 'gamepad' ? 'controller' : 'keyboard · mouse'}</span></div><div class="rvu-help-grid">${rows}</div></div>`;
+    this.helpEl.innerHTML = `<div class="rvu-help-in"><div class="rvu-help-h"><b>${title}</b><span>${touch ? 'tap to close' : this.device === 'gamepad' ? esc(this.input.padName || 'controller') : 'keyboard · mouse'}</span></div><div class="rvu-help-grid">${rows}</div></div>`;
   }
   _touchWord(a) {
     return `<span class="rvu-tw">${{ move: 'left thumb', look: 'right thumb', orbit: 'drag', zoom: 'pinch', primary: 'tap', escape: 'crumbs', map: 'crumbs' }[a] || (KEY_LABEL[a] || a)}</span>`;
@@ -766,11 +781,15 @@ export class UI {
     const I = this.input;
     const game = this.mode === 'onfoot' || this.mode === 'bike' || this.mode === 'ship';
     // device switch → re-render glyphs
-    if (I.lastDevice !== this.device) {
+    if (I.lastDevice !== this.device || I.padModel !== this._padModel) {
+      // a newly used controller (e.g. a DualSense Edge) switches the glyph set and says hello once
+      const newPad = I.padModel && I.padModel !== this._padModel;
+      this._padModel = I.padModel;
       this.device = I.lastDevice;
       document.body.dataset.device = this.device;
       this._renderHint(); this._renderPrompt(); this._syncTouchAction(); this._syncReticle();
       if (this.helpEl.classList.contains('is-open')) this._renderHelp();
+      if (newPad && this.device === 'gamepad' && I.padModel !== 'generic' && !this.engine.shotMode) this.toast('Controller', `${I.padName} connected`, 3200);
     }
     // title: begin with gamepad / keyboard actions too
     if (this.titleEl && !this._titleGone && this._beginTitle && (I.pressed('jump') || I.pressed('interact') || I.pressed('travel') || I.pressed('escape'))) this._beginTitle();

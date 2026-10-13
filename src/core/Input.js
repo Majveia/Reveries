@@ -45,6 +45,58 @@ const PAD_BUTTONS = {
 };
 // D-pad up/down zoom in map levels; in game modes they are help / light.
 const PAD_DPAD_GAME = { 12: 'help', 13: 'light' };
+// Extra buttons on PlayStation pads in the standard mapping: 16 = PS (left to the OS),
+// 17 = touchpad click. DualSense Edge back paddles, when a browser exposes them as
+// buttons of their own (18 left, 19 right), double the thumb buttons on the right face.
+const PAD_PS_EXTRA = { 17: 'help' };
+const PAD_EDGE_PADDLES = { 18: 'crouch', 19: 'jump' };
+
+/** Controller family from Gamepad.id ('054c' = Sony, '045e' = Microsoft, '057e' = Nintendo). */
+function padInfo(id = '') {
+  const s = id.toLowerCase();
+  if (/054c|dualsense|dualshock|playstation/.test(s)) {
+    const model = /0df2|edge/.test(s) ? 'dualsense-edge' : /0ce6|dualsense/.test(s) ? 'dualsense' : /05c4|09cc|dualshock/.test(s) ? 'dualshock4' : 'playstation';
+    const name = { 'dualsense-edge': 'DualSense Edge', dualsense: 'DualSense', dualshock4: 'DualShock 4', playstation: 'PlayStation controller' }[model];
+    return { family: 'playstation', model, name };
+  }
+  if (/057e|nintendo|pro controller|joy-con/.test(s)) return { family: 'nintendo', model: 'nintendo', name: 'Nintendo controller' };
+  if (/045e|xbox|xinput/.test(s)) return { family: 'xbox', model: 'xbox', name: 'Xbox controller' };
+  return { family: 'generic', model: 'generic', name: 'Controller' };
+}
+
+// Sony pads in browsers that don't apply the standard mapping (e.g. Firefox): rebuild the
+// standard layout from the raw HID / evdev order so every action lands on the right button.
+const _rawB = Array.from({ length: 20 }, () => ({ pressed: false, value: 0 }));
+const _rawA = [0, 0, 0, 0];
+function sonyStandard(gp) {
+  const b = gp.buttons, a = gp.axes;
+  const btn = (i) => b[i] || { pressed: false, value: 0 };
+  const trig = (v) => Math.max(0, Math.min(1, (v + 1) / 2));
+  const set = (i, src, value) => { _rawB[i].pressed = !!(src?.pressed || value > 0.5); _rawB[i].value = value ?? (src?.value || 0); };
+  for (const o of _rawB) { o.pressed = false; o.value = 0; }
+  let hx = 0, hy = 0;
+  if (b.length < 14 && a.length >= 8) {
+    // Linux evdev order (13 buttons; the touchpad is a separate input device there): ✕ ○ △ □ L1 R1 L2 R2 Create Options PS L3 R3; axes LX LY L2 RX RY R2 hatX hatY
+    set(0, btn(0)); set(1, btn(1)); set(2, btn(3)); set(3, btn(2)); set(4, btn(4)); set(5, btn(5));
+    set(6, btn(6), Math.max(btn(6).value || 0, trig(a[2]))); set(7, btn(7), Math.max(btn(7).value || 0, trig(a[5])));
+    set(8, btn(8)); set(9, btn(9)); set(10, btn(11)); set(11, btn(12)); set(16, btn(10));
+    _rawA[0] = a[0]; _rawA[1] = a[1]; _rawA[2] = a[3]; _rawA[3] = a[4];
+    hx = a[6]; hy = a[7];
+  } else {
+    // DirectInput HID order (14-15 buttons): □ ✕ ○ △ L1 R1 L2 R2 Create Options L3 R3 PS Touchpad (Mute); axes LX LY RX L2 R2 RY (+ hat)
+    set(0, btn(1)); set(1, btn(2)); set(2, btn(0)); set(3, btn(3)); set(4, btn(4)); set(5, btn(5));
+    set(6, btn(6), Math.max(btn(6).value || 0, a.length > 3 ? trig(a[3]) : 0)); set(7, btn(7), Math.max(btn(7).value || 0, a.length > 4 ? trig(a[4]) : 0));
+    set(8, btn(8)); set(9, btn(9)); set(10, btn(10)); set(11, btn(11)); set(16, btn(12)); set(17, btn(13));
+    _rawA[0] = a[0] || 0; _rawA[1] = a[1] || 0; _rawA[2] = a[2] || 0; _rawA[3] = a.length > 5 ? a[5] : 0;
+    if (a.length > 9 && a[9] >= -1.05 && a[9] <= 1.05) {
+      // hat switch as one axis: -1 = up, then clockwise in steps of 2/7; out of range = centred
+      const k = Math.round((a[9] + 1) * 3.5) % 8, ang = (k * Math.PI) / 4;
+      hx = Math.round(Math.sin(ang)); hy = -Math.round(Math.cos(ang));
+    }
+  }
+  set(12, null, hy < -0.5 ? 1 : 0); set(13, null, hy > 0.5 ? 1 : 0); set(14, null, hx < -0.5 ? 1 : 0); set(15, null, hx > 0.5 ? 1 : 0);
+  return { buttons: _rawB, axes: _rawA };
+}
 
 // Radial dead zone with a smooth response curve (no axis snapping, no
 // "square gate" diagonals). Returns [x, y] in the unit disc.
@@ -57,7 +109,7 @@ function radial(x, y, expo) {
   const k = c / l;
   return [x * k, y * k];
 }
-export { BINDINGS, PAD_BUTTONS };
+export { BINDINGS, PAD_BUTTONS, padInfo, sonyStandard };
 
 export class Input {
   constructor(canvas) {
@@ -72,6 +124,8 @@ export class Input {
     this._padHold = 0; // seconds the look stick has been pinned (turn acceleration)
     this._lockReleasedAt = -1e9;
     this.gamepadId = '';
+    this.padFamily = 'xbox'; this.padModel = ''; this.padName = ''; // set from Gamepad.id when a pad is used
+    this._gp = null; this._rumbleUntil = 0; this._rumbleI = 0;
 
     this.move = { x: 0, y: 0 };
     this.look = { x: 0, y: 0 };
@@ -144,8 +198,13 @@ export class Input {
   rumble(intensity = 0.5, ms = 40) {
     if (this.hapticsOff) return;
     try {
+      // a weaker pulse never cuts short a stronger one still playing (no motor chatter)
+      const now = performance.now();
+      if (now < this._rumbleUntil && intensity <= this._rumbleI) return;
+      this._rumbleUntil = now + ms; this._rumbleI = intensity;
       if (this.lastDevice === 'gamepad') {
-        const gp = [...(navigator.getGamepads?.() || [])].find((p) => p && p.connected);
+        // the pad in use (DualSense / Edge and Xbox pads take 'dual-rumble' in Chromium browsers)
+        const gp = this._gp || [...(navigator.getGamepads?.() || [])].find((p) => p && p.connected);
         gp?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: intensity, weakMagnitude: Math.min(1, intensity * 1.4) })?.catch?.(() => {});
       } else if (this.lastDevice === 'touch' && navigator.vibrate) navigator.vibrate(Math.max(8, Math.round(ms * (0.4 + intensity * 0.6))));
     } catch { /* haptics are best effort */ }
@@ -388,11 +447,20 @@ export class Input {
   _pollGamepad(dt) {
     this._padMove = null; this._padLook = null; this._padZoom = 0; this.throttle = 0;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = [...pads].find((p) => p && p.connected);
+    // the pad touched last wins when several are connected
+    let gp = null;
+    for (const p of pads) if (p && p.connected && (!gp || p.timestamp > gp.timestamp)) gp = p;
+    this._gp = gp;
     const now = new Set();
     if (gp) {
-      const ax = gp.axes;
-      this.gamepadId = gp.id || '';
+      if (gp.id !== this.gamepadId) {
+        this.gamepadId = gp.id || '';
+        const info = padInfo(this.gamepadId);
+        this.padFamily = info.family; this.padModel = info.model; this.padName = info.name;
+      }
+      const sony = this.padFamily === 'playstation';
+      const std = gp.mapping === 'standard' || !sony ? gp : sonyStandard(gp);
+      const ax = std.axes;
       const [mx, my0] = radial(ax[0] || 0, ax[1] || 0, false);
       const [lx, ly0] = radial(ax[2] || 0, ax[3] || 0, true);
       const my = -my0, ly = -ly0;
@@ -403,23 +471,24 @@ export class Input {
       this._padHold = ll > 0.92 ? Math.min(0.6, this._padHold + dt) : Math.max(0, this._padHold - dt * 3);
       const boost = 1 + Math.max(0, this._padHold - 0.2) * 1.6;
       this._padLook = { x: lx * this.sensitivity.pad * boost * dt, y: ly * this.sensitivity.pad * 0.8 * dt };
-      gp.buttons.forEach((b, i) => {
-        const a = PAD_BUTTONS[i];
+      const B = std.buttons;
+      B.forEach((b, i) => {
+        const a = PAD_BUTTONS[i] || (sony && PAD_PS_EXTRA[i]) || (this.padModel === 'dualsense-edge' && PAD_EDGE_PADDLES[i]);
         if (a && (b.pressed || b.value > 0.5)) now.add(a);
         if (b.pressed) this.lastDevice = 'gamepad';
       });
-      this.throttle = (gp.buttons[7]?.value || 0) - (gp.buttons[6]?.value || 0);
+      this.throttle = (B[7]?.value || 0) - (B[6]?.value || 0);
       if (this.mode === 'orbit') {
-        if (gp.buttons[12]?.pressed) this._padZoom -= 4 * dt;
-        if (gp.buttons[13]?.pressed) this._padZoom += 4 * dt;
+        if (B[12]?.pressed) this._padZoom -= 4 * dt;
+        if (B[13]?.pressed) this._padZoom += 4 * dt;
       } else {
-        for (const i in PAD_DPAD_GAME) if (gp.buttons[i]?.pressed) now.add(PAD_DPAD_GAME[i]);
+        for (const i in PAD_DPAD_GAME) if (B[i]?.pressed) now.add(PAD_DPAD_GAME[i]);
       }
-      if (gp.buttons[0]?.pressed && !this._padPrev.has('__a')) {
-        // A also acts as "select" in map levels: click at screen center.
+      if (B[0]?.pressed && !this._padPrev.has('__a')) {
+        // A / ✕ also acts as "select" in map levels: click at screen center.
         if (this.mode === 'orbit') this._emitClick(window.innerWidth / 2, window.innerHeight / 2);
       }
-      if (gp.buttons[0]?.pressed) now.add('__a');
+      if (B[0]?.pressed) now.add('__a');
     }
     for (const a of now) if (!this._padPrev.has(a) && !a.startsWith('__')) this._actionDown(a);
     for (const a of this._padPrev) if (!now.has(a) && !a.startsWith('__')) this._actionUp(a);

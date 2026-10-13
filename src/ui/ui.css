@@ -41,6 +41,12 @@ body.rvu-loading .rvu-stack, body.rvu-loading .rvu-card { opacity: 0; }
 .rvu-pad.is-b { box-shadow: inset 0 0 0 1px rgba(255, 120, 110, .35); }
 .rvu-pad.is-x { box-shadow: inset 0 0 0 1px rgba(110, 170, 255, .4); }
 .rvu-pad.is-y { box-shadow: inset 0 0 0 1px rgba(255, 210, 100, .4); }
+.rvu-pad.is-ps svg { width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.rvu-pad.is-cross { box-shadow: inset 0 0 0 1px rgba(124, 178, 255, .42); }
+.rvu-pad.is-circle { box-shadow: inset 0 0 0 1px rgba(255, 112, 120, .4); }
+.rvu-pad.is-square { box-shadow: inset 0 0 0 1px rgba(232, 150, 216, .42); }
+.rvu-pad.is-triangle { box-shadow: inset 0 0 0 1px rgba(94, 224, 184, .42); }
+.rvu-pad.is-create svg, .rvu-pad.is-options svg { stroke-width: 1.1; }
 .rvu-pad.is-sh { width: auto; min-width: 21px; padding: 0 4px; border-radius: 5px 5px 4px 4px; font-size: 7.5px; letter-spacing: .05em; }
 .rvu-pad.is-sys { font-size: 9px; font-weight: 400; }
 .rvu-pad.is-stick i { position: absolute; inset: 3.5px; border-radius: 50%; border: 1px solid rgba(226, 232, 248, .3); }

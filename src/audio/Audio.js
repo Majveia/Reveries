@@ -168,9 +168,26 @@ export class AudioEngine {
   setEngine(kind, throttle = 0) { this._engKind = kind; this._engTh = throttle; this.motors?.set(kind, throttle); }
 
   sfx(name, opts = {}) {
+    this._haptic(name, opts);
     if (!this.ctx || this.ctx.state !== 'running') return;
     if ((name === 'step' || name === 'land') && !opts.surface) opts = { ...opts, surface: this._surface() };
     try { this.fx.play(name, opts); } catch (e) { if (!this._sfxErr) { this._sfxErr = true; console.warn('[audio] sfx', name, e); } }
+  }
+
+  /** Gameplay haptics ride on the same events as the sound (pad rumble, phone vibration); muting sound keeps them. */
+  _haptic(name, o) {
+    const I = this.engine?.input;
+    if (!I?.rumble) return;
+    const k = Math.max(0, Math.min(1, o.intensity ?? 0.5));
+    switch (name) {
+      case 'land': if (k > 0.08) I.rumble(0.2 + 0.65 * k, 60 + 160 * k); break; // footfall thud .. ship touchdown
+      case 'takeoff': I.rumble(0.45, 280); break;
+      case 'warp': I.rumble(0.7, 450); break;
+      case 'board': case 'alight': I.rumble(0.28, 70); break;
+      case 'jump': I.rumble(0.1, 24); break;
+      case 'discover': I.rumble(0.32, 160); break;
+      default: break;
+    }
   }
 
   setVolume(v) {

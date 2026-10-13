@@ -59,6 +59,16 @@ hop, `E` dismount, `V` camera.
 and descend, `Q` / `R` roll, `E` land or exit, `V` camera. Climb above the
 atmosphere to leave orbit.
 
+**Controllers**: Xbox pads and other standard gamepads work out of the box. On a
+PlayStation pad (DualSense, DualSense Edge, DualShock 4), the on-screen glyphs
+switch to ✕ ○ □ △, L1/R1, L2/R2 and Create/Options. The gamepad column above maps
+like this: A = ✕, B = ○, X = □, Y = △, LB/RB = L1/R1, LT/RT = L2/R2, View = Create,
+Menu = Options. Firefox and other browsers that report the pad's raw button order
+are remapped to that layout. A touchpad click opens the controls card. On a
+DualSense Edge, the back paddles act as ○ (crouch / descend) and ✕ (jump /
+ascend) when the browser reports them as buttons of their own. Landings,
+touchdowns, takeoffs, warps and bumps rumble the pad in Chromium browsers.
+
 **Touch**: a floating joystick appears under your left thumb. Drag the right
 side of the screen to look. Small context buttons for jump, sprint, interact
 and vehicle controls sit along the right edge and appear only when they apply.
