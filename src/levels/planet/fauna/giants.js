@@ -39,7 +39,7 @@ float wormR(float s, float a) {
   float lobes = pow(0.5 + 0.5 * cos(a * 3.0), 0.6);
   float back = 1.0 + 0.05 * max(0.0, sin(a)) * (hv - 0.3);
   // three thick petals flare wide open; deep notches between them
-  return uRad * prof * shingle * back * (1.0 + maw * (0.22 + 0.95 * lobes));
+  return uRad * prof * shingle * back * (1.0 + maw * (0.14 + 0.62 * lobes));
 }
 void rig(inout vec3 p, inout vec3 n) {
   float s = aRig.x;         // 0 tail .. 1 head
@@ -138,7 +138,7 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   if (glow > 1.5) {
     // ivory enamel, stained at the root, receding rows darken into the gullet
     float dRow = smoothstep(0.993, 0.958, s);
-    col = mix(vec3(0.16, 0.11, 0.07), vec3(0.62, 0.57, 0.47), smoothstep(0.0, 0.7, p.z)) * mix(1.0, 0.22, dRow) * (0.85 + 0.3 * faNoise(vec3(p.xy * 3.0, s * 900.0)));
+    col = mix(vec3(0.07, 0.045, 0.03), vec3(0.4, 0.36, 0.29), smoothstep(0.2, 0.9, p.z)) * mix(0.85, 0.1, dRow) * (0.85 + 0.3 * faNoise(vec3(p.xy * 3.0, s * 900.0)));
     glow = 0.0;
     return;
   }
@@ -152,6 +152,7 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
     col = mix(vec3(0.045, 0.014, 0.011) * (0.7 + 0.6 * wet), vec3(0.14, 0.1, 0.08), tooth * 0.5 * (1.0 - depth * 0.8)) * mix(1.0, 0.18, depth);
     // wet ribbed gullet: concentric folds catching a sheen
     col *= 0.75 + 0.5 * smoothstep(0.3, 0.9, sin(s * 620.0 * 1.4 + wet * 2.0) * 0.5 + 0.5);
+    col *= 0.6;
     glow = max(glow, pow(depth, 4.0) * 0.05 + 0.002);
     return;
   }
@@ -175,6 +176,9 @@ void faSurface(vec3 p, vec3 n, inout vec3 col, inout float glow) {
   float caked = 1.0 - smoothstep(0.0, uRad * (1.4 + 1.2 * streak), vWormY + (nz - 0.5) * uRad * 0.6);
   vec3 caked3 = vec3(0.5, 0.35, 0.21) * (0.8 + 0.35 * nz3) * (0.85 + 0.25 * nz2);
   c = mix(c, caked3, clamp(caked * 0.95, 0.0, 1.0));
+  // the lips: armour gives way to dark wet flesh toward the rim (an inner lip, not a lit cookie edge)
+  float lip = smoothstep(0.972, 0.998, s);
+  c = mix(c, vec3(0.05, 0.022, 0.016) * (0.8 + 0.4 * nz2), lip * 0.85);
   col = c; glow = 0.0;
 }
 `;

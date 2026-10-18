@@ -118,9 +118,9 @@ function buildBird(B) {
       let k = Math.max(t, tb);
       const base = [lerp(c.r, be.r, 0.15), lerp(c.g, be.g, 0.15), lerp(c.b, be.b, 0.15)];
       // finger struts / feather shafts: dark lines radiating from the wrist
-      if (memb && ax > 0.45) { const ang = Math.atan2(-(p.z - chord * 0.2), Math.abs(p.x) - el); const st = Math.abs(Math.sin(ang * nf * 1.3)); k = Math.max(k * 0.8, (1 - smooth(0.0, 0.1, st)) * 0.35); }
+      if (memb && ax > 0.45) { const ang = Math.atan2(-(p.z - chord * 0.2), Math.abs(p.x) - el); const st = Math.abs(Math.sin(ang * nf * 1.3)); k = Math.max(k * 0.8, (1 - smooth(0.0, 0.1, st)) * 0.2); }
       return [lerp(base[0], tip.r, k), lerp(base[1], tip.g, k), lerp(base[2], tip.b, k)];
-    }, (p) => [Math.abs(p.x) > sh ? 1 : 0, 0, 0, 0], glow ? (p) => { const x = Math.abs(p.x); return 0.9 * smooth(chord * 0.09, 0.0, pl(lead, x) - p.z) * smooth(S * 0.15, S * 0.35, x) + 0.5 * smooth(S * 0.9, S, x); } : null));
+    }, (p) => [Math.abs(p.x) > sh ? 1 : 0, 0, 0, 0], glow ? (p) => { const x = Math.abs(p.x); return 0.9 * smooth(chord * 0.09, 0.0, pl(lead, x) - p.z) * smooth(S * 0.15, S * 0.35, x) + 0.5 * smooth(S * 0.9, S, x) + 0.14 * (1 - smooth(S * 0.1, S, x) * 0.5); } : null));
   }
   // membrane fliers: a swept head crest (the ikran's banshee profile) so the hero reads as a creature, not a pill
   if (memb) {

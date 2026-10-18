@@ -22,16 +22,16 @@ import { TAU, clamp, smooth, lerp, rigMaterial, paint, mergeParts, blob, limb, l
 const SPECIES = {
   // pastoral antelope-deer: russet back, cream belly, little lyre horns
   antelope: { bodyLen: 0.78, bodyR: 0.42, bodyW: 0.34, legLen: 0.92, legR: 0.075, neckLen: 0.74, neckUp: 0.95, headLen: 0.36, headR: 0.12,
-    horns: 'lyre', tail: 0.22, ears: 0.13, back: '#7e4a2a', belly: '#efe0c4', pattern: 'flank', patternColor: '#3a2416', hoof: '#2a2420', size: [0.9, 1.2], count: [7, 14], rump: 1 },
+    horns: 'lyre', tail: 0.22, ears: 0.13, back: '#7e4a2a', belly: '#efe0c4', pattern: 'flank', patternColor: '#3a2416', hoof: '#2a2420', size: [0.9, 1.2], count: [7, 14], rump: 1, slender: 0.62 },
   // shaggy woolly grazer (ghibli's second species: big, soft, round)
   yak: { bodyLen: 1.0, bodyR: 0.66, bodyW: 0.55, legLen: 0.72, legR: 0.13, neckLen: 0.34, neckUp: 0.25, headLen: 0.36, headR: 0.2,
     horns: 'curved', tail: 0.4, ears: 0.12, back: '#7a5e44', belly: '#b09878', pattern: 'shag', patternColor: '#d8c8a8', hoof: '#1c1814', size: [1.0, 1.25], count: [4, 8], hump: 0.25 },
   // northern elk / caribou with antlers
   elk: { bodyLen: 0.95, bodyR: 0.5, bodyW: 0.42, legLen: 1.08, legR: 0.085, neckLen: 0.6, neckUp: 0.75, headLen: 0.42, headR: 0.15,
-    horns: 'antlers', tail: 0.12, ears: 0.15, back: '#5e4b3b', belly: '#c8b8a0', pattern: 'mane', patternColor: '#ddd2c0', hoof: '#201a16', size: [0.95, 1.2], count: [6, 12] },
+    horns: 'antlers', tail: 0.12, ears: 0.15, back: '#5e4b3b', belly: '#c8b8a0', pattern: 'mane', patternColor: '#ddd2c0', hoof: '#201a16', size: [0.95, 1.2], count: [6, 12], slender: 0.75 },
   // Pandora six-limbed-looking grazer: dark indigo hide with glowing cyan stripes and a head fan
   hexa: { bodyLen: 0.85, bodyR: 0.42, bodyW: 0.33, legLen: 1.0, legR: 0.07, neckLen: 0.72, neckUp: 0.85, headLen: 0.42, headR: 0.12,
-    horns: 'fan', tail: 0.5, ears: 0.0, back: '#2a1d5c', belly: '#4a3f7e', pattern: 'stripes', patternColor: '#3fd8ff', glow: 1, hoof: '#101420', size: [1.0, 1.3], count: [6, 12] },
+    horns: 'fan', tail: 0.5, ears: 0.0, back: '#2a1d5c', belly: '#4a3f7e', pattern: 'stripes', patternColor: '#3fd8ff', glow: 1, hoof: '#101420', size: [1.0, 1.3], count: [6, 12], slender: 0.7 },
   // Moebius / Rick / frontier stilt walker: tiny round body on very long legs, long neck
   stilt: { bodyLen: 0.55, bodyR: 0.45, bodyW: 0.4, legLen: 2.4, legR: 0.06, neckLen: 1.1, neckUp: 1.2, headLen: 0.42, headR: 0.12,
     horns: 'crest', tail: 0.5, ears: 0.0, back: '#e6d2b8', belly: '#fbf1e0', pattern: 'spots', patternColor: '#c45a50', hoof: '#3a2a2a', size: [1.0, 1.35], count: [4, 9] },
@@ -127,10 +127,11 @@ function buildSpecies(spec, Q = 2) {
     let t = smooth(0.25, 0.75, up);
     const yy = (p.y - hipY) / (S.bodyR * 1.6);
     t = clamp(t * 0.65 + clamp(yy, 0, 1) * 0.5, 0, 1);
+    if (S.pattern === 'flank' && p.y > L * 0.8) t = smooth(0.1, 0.2, yy + Math.sin(p.z * 3) * 0.04) * 0.85 + t * 0.15; // russet back meets a crisp cream belly
     let c = mixColor(belly, back, t);
     const nz = vnoise(p.x * 9, p.y * 9, p.z * 9);
     let pm = 0;
-    if (S.pattern === 'flank') pm = smooth(0.05, 0.0, Math.abs(yy - 0.18 + Math.sin(p.z * 3) * 0.04)) * (1 - Math.abs(n.y)) * 0.9;
+    if (S.pattern === 'flank') pm = smooth(0.075, 0.02, Math.abs(yy - 0.16 + Math.sin(p.z * 3) * 0.04)) * smooth(0.95, 0.5, Math.abs(n.y)) * smooth(S.bodyLen * 0.75, S.bodyLen * 0.45, Math.abs(p.z)) * (p.y > L * 0.8 ? 1 : 0);
     else if (S.pattern === 'mane') pm = smooth(0.6, 0.9, extra);
     else if (S.pattern === 'shag') pm = smooth(0.45, 0.8, nz) * 0.45;
     c = [lerp(c[0], pat.r, pm), lerp(c[1], pat.g, pm), lerp(c[2], pat.b, pm)];
@@ -193,7 +194,17 @@ function buildSpecies(spec, Q = 2) {
     const jaw = smooth(-0.1, -0.6, n.y) * smooth(0.25, 0.7, d) * 0.35;
     const ks = (1 - sock) * (1 - nos) * (1 - jaw) * (1 + brow);
     c[0] *= ks; c[1] *= ks; c[2] *= ks;
-    const w = S.pattern === 'flank' ? smooth(0.42, 0.3, d) * smooth(0.12, 0.2, d) * 0.6 : 0; // pale muzzle ring
+    let w = S.pattern === 'flank' ? smooth(0.42, 0.3, d) * smooth(0.12, 0.2, d) * 0.6 : 0; // pale muzzle ring
+    if (S.pattern === 'flank') {
+      // gazelle face: a dark tear stripe from the eye to the nostril under a pale brow blaze
+      const eye = p.x > 0 ? eyeL : eyeR, nos = p.x > 0 ? nosL : nosR;
+      const ab = nos.clone().sub(eye), tt = clamp(p.clone().sub(eye).dot(ab) / ab.lengthSq(), 0, 1);
+      const ld = p.distanceTo(eye.clone().addScaledVector(ab, tt)) / HR;
+      const side = smooth(0.25, 0.6, Math.abs(n.x));
+      const tear = smooth(0.2, 0.1, ld) * side * (1 - tt * 0.5), blaze = smooth(0.42, 0.24, ld) * smooth(0.0, 0.08, p.y - (eye.y + (nos.y - eye.y) * tt)) * side * (1 - tear);
+      c[0] = lerp(lerp(c[0], 0.82, blaze * 0.7), 0.05, tear * 0.85); c[1] = lerp(lerp(c[1], 0.76, blaze * 0.7), 0.035, tear * 0.85); c[2] = lerp(lerp(c[2], 0.66, blaze * 0.7), 0.025, tear * 0.85);
+      w = Math.max(w, smooth(-0.3, -0.75, n.y) * 0.75); // pale chin and throat
+    }
     return [lerp(lerp(c[0], 0.9, w), 0.04, m), lerp(lerp(c[1], 0.86, w), 0.035, m), lerp(lerp(c[2], 0.8, w), 0.03, m)];
   }));
   for (const s of [-1, 1]) {
@@ -279,7 +290,8 @@ function buildSpecies(spec, Q = 2) {
       [V(x, 0.008, F.z + 0.075 * L), 1.12, 1.25, 1.0, 2],
       [V(x, 0.0, F.z + 0.065 * L), 0.3, 0.3, 0.3, 2],
     ];
-    const leg = loft(LRg.map(([c, rx, yf, yb, seg]) => ({ c, rx: rx * r, yt: yf * r, yb: yb * r, sq: 0.1, rig: [i + 1, seg, 0, 0] })), LR);
+    const sl = S.slender ?? 1;
+    const leg = loft(LRg.map(([c, rx, yf, yb, seg], ri) => { const k = seg ? sl : ri === 3 || ri === 4 ? lerp(1, sl, 0.55) : 1; return { c, rx: rx * r * k, yt: yf * r * k, yb: yb * r * k, sq: seg ? 0.3 : 0.1, rig: [i + 1, seg, 0, 0] }; }), LR);
     parts.push(paint(leg, (p, n) => {
       if (p.y < 0.05) return [hoof.r, hoof.g, hoof.b];
       return coat(p, n, 0);
@@ -361,8 +373,8 @@ export class Herds {
       const sheen = new THREE.Color(spec.back).lerp(new THREE.Color(spec.belly), 0.5).multiplyScalar(0.9);
       // soft fur silhouette (fuzz brightens grazing angles); luminous species get a bioluminescent rim so the body reads at night
       const fuzz = `{ vec3 faVd = normalize(vViewPosition); float faR = pow(1.0 - abs(dot(normalize(vNormal), faVd)), 3.0);
-        diffuseColor.rgb *= 1.0 + 0.45 * faR;${spec.glow ? ' faGlow = max(faGlow, 0.1 * faR + 0.008);' : ''} }`;
-      const mats = rigMaterial({ roughness: 0.86 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35, sheen, surfaceMain: fuzz, hair: spec.glow ? 0.25 : 0.55, rim: spec.glow ? 0.25 : 0.7 });
+        diffuseColor.rgb *= 1.0 + 0.18 * faR;${spec.glow ? ' faGlow = max(faGlow, 0.1 * faR + 0.008);' : ''} }`;
+      const mats = rigMaterial({ roughness: 0.86 }, RIG_GLSL, uni, 'herd-' + id, { surface: surfaceGLSL(spec), bounce: 0.35, sheen, sheenK: 0.16, surfaceMain: fuzz, hair: spec.glow ? 0.25 : 0.6, rim: spec.glow ? 0.45 : 0.35 });
       const max = fauna.q.pick(24, 48, 80, 120);
       // no shadow-map casting (thin legs alias into dithered streaks at cascade
       // resolution): each animal gets an analytic soft contact shadow instead

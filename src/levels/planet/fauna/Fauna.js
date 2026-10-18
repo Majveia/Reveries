@@ -456,8 +456,18 @@ export default class Fauna {
     }
     // --- one leviathan among the clouds: far (aerial perspective sells the scale), big, and against open sky only
     if (this.floaters?.wMesh) {
-      const cands = hero ? [[1300, 0.3, 0.52], [1450, -0.32, 0.55], [1600, 0.05, 0.64], [1200, 0.45, 0.68], [1900, -0.1, 0.74]]
-        : [[2000, -0.3, 0.55], [2300, 0.35, 0.6], [1800, 0.0, 0.7], [2100, 0.55, 0.5], [2100, -0.55, 0.45], [1600, 0.2, 0.8], [2600, -0.15, 0.38]];
+      // under the cloud deck, close enough that the cloud veil and the haze do not dissolve it into a ghost
+      const cands = hero ? [[820, 0.3, 0.55], [900, -0.32, 0.58], [1000, 0.05, 0.66], [760, 0.45, 0.68], [1150, -0.1, 0.74]]
+        : [[1250, -0.3, 0.55], [1400, 0.35, 0.6], [1150, 0.0, 0.7], [1300, 0.55, 0.5], [1300, -0.55, 0.45], [1000, 0.2, 0.8], [1600, -0.15, 0.38], [1100, -0.1, 0.84], [1200, 0.4, 0.82]];
+      let fb = null, fbLeafy = 1e9;
+      const place = (p, nx) => {
+        const hd = right.clone().multiplyScalar(nx > 0 ? -1 : 1).addScaledVector(fwd, 0.25).normalize();
+        const L = hero ? 240 : 200;
+        this.floaters.spawnWhale(p, hd, L);
+        // a calf trailing the mother, deeper in the haze
+        this.floaters.spawnWhale(p.clone().addScaledVector(hd, -L * 1.1).addScaledVector(fwd, L * 0.9).addScaledVector(up, -L * 0.1), hd, L * 0.4);
+        this.showcase.whale = p;
+      };
       for (const [dist, nx, ny] of cands) {
         const p = eye.clone().addScaledVector(fwd, dist).addScaledVector(up, dist * 0.25);
         this._frameAt(p, eye, up, right, nx, ny);
@@ -466,7 +476,7 @@ export default class Fauna {
         if (w.raycast?.(eye, dir, len)) continue;
         if (w.raycast?.(eye, dir.clone().addScaledVector(up, 0.02).normalize(), len + 3000)) continue;
         const pd = p.clone().normalize();
-        if (p.length() - R - Math.max(w.heightAt(pd), w.hasOcean ? w.seaLevel : -1e9) < 250) continue;
+        if (p.length() - R - Math.max(w.heightAt(pd), w.hasOcean ? w.seaLevel : -1e9) < 150) continue;
         // foreground canopy: the sight line must clear the tree tops near the lens (sampled along the ray, both flanks)
         let leafy = 0;
         for (const side of [-0.08, 0, 0.08]) {
@@ -476,14 +486,15 @@ export default class Fauna {
             if (q.length() - R - w.heightAt(qd) < 32 && this.forestAt(qd) > 0.2) { leafy++; break; }
           }
         }
+        // remember the least-leafy open-sky slot (higher in the frame wins ties: canopies crowd the frame's lower sky)
+        const lk = leafy - ny * 0.5;
+        if (lk < fbLeafy) { fbLeafy = lk; fb = [p.clone(), nx]; }
         if (leafy > 1) continue;
-        const hd = right.clone().multiplyScalar(nx > 0 ? -1 : 1).addScaledVector(fwd, 0.25).normalize();
-        this.floaters.spawnWhale(p, hd, hero ? 380 : 320);
-        // a calf trailing the mother, deeper in the haze
-        this.floaters.spawnWhale(p.clone().addScaledVector(hd, -420).addScaledVector(fwd, 350).addScaledVector(up, -40), hd, 150);
-        this.showcase.whale = p;
+        place(p, nx);
         break;
       }
+      // forest vistas: the coarse forest density rejects every slot, yet the canopy has gaps; the highest open slot still shows the leviathan
+      if (!this.showcase.whale && fb && !hero) place(fb[0], fb[1]);
     }
     // --- sky jellies drifting over the meadow
     if (this.floaters?.jMesh) {

@@ -79,6 +79,7 @@ const DEFAULT_GRADE = {
   autoWhite: 0.75, // stretches so the brightest ~0.5% reach near display white
   autoContrast: 0.2, // midtone separation pivoted on the metered mid-tone (median unchanged); with autoExposure
   halation: 0.0, // warm film halation around highlights
+  shadowLift: 0.6, // local exposure: shaded planes darker than ~1 EV under the metered key open up (≤ +1 EV); with autoExposure only
   clarity: 0.0, // local contrast (log-luminance vs. 1/8–1/16-res surround); planets ~0.2
   glare: 0.08, // veiling glare of very bright sources (soft core + long tail); needs flare > 0
   glareThreshold: 2.5, // exposed luminance above which light glares
@@ -89,6 +90,7 @@ const DEFAULT_GRADE = {
   streakTint: [0.5, 0.68, 1.0],
   // ambient occlusion (world units; levels with walkable surfaces opt in)
   ao: 0.0, aoRadius: 1.6, aoPower: 1.4, aoDistance: 350,
+  aoFar: 1, // multi-scale far AO (radius grows with distance, range ×4 at high+); 0 = off
   // camera
   sharpen: 0.25,
   motionBlur: 0.0, // shutter fraction (0 off … 1 = 360° shutter)
@@ -231,7 +233,7 @@ const AO_FRAG = /* glsl */ `
 ${COMMON}
 ${DEPTH_GLSL}
 uniform sampler2D tDepth; uniform mat4 uProjInv; uniform vec2 uFullTexel; uniform float uReversed;
-uniform float uRadius, uProjScale, uMaxPx, uFrame, uFadeEnd;
+uniform float uRadius, uProjScale, uMaxPx, uFrame, uFadeEnd, uGrow;
 varying vec2 vUv;
 // Reconstruct at full-res texel centres: the depth texture is sampled nearest, and this
 // pass runs at half res (vUv sits on full-res texel corners) with fractional tap offsets.
@@ -247,7 +249,10 @@ void main(){
   if (isFarDepth(d, uReversed)) { gl_FragColor = vec4(1.0, 60000.0, 0.0, 1.0); return; }
   vec3 P = viewPosFromDepth(uv0, d, uProjInv, uReversed);
   float vz = -P.z;
-  float radiusPx = uRadius * uProjScale / vz;
+  // Multi-scale: the world radius grows with distance (constant ~screen footprint), so far
+  // massing — towns, forests, cliff bases — keeps contact shadow instead of fading to milk.
+  float R = max(uRadius, vz * uGrow);
+  float radiusPx = R * uProjScale / vz;
   if (vz > uFadeEnd || radiusPx < 1.5) { gl_FragColor = vec4(1.0, min(vz, 60000.0), 0.0, 1.0); return; }
   radiusPx = min(radiusPx, uMaxPx);
   // Edge-aware normal from depth: pick the smaller-difference neighbour per axis.
@@ -259,7 +264,7 @@ void main(){
   vec3 N = normalize(cross(dx, dy));
   vec3 V = normalize(-P);
   // Thickness-aware falloff (XeGTAO).
-  float fRange = 0.615 * uRadius, fFrom = uRadius * (1.0 - 0.615);
+  float fRange = 0.615 * R, fFrom = R * (1.0 - 0.615);
   float fMul = -1.0 / fRange, fAdd = fFrom / fRange + 1.0;
   vec2 fc = gl_FragCoord.xy + vec2(uFrame * 5.588238, uFrame * 3.71);
   float n1 = ignoise(fc), n2 = fract(n1 * 1.61803 + hash12(fc * 0.37));
@@ -790,7 +795,7 @@ uniform float uVignette, uVignetteSoft, uGrain, uGrainSize, uChroma, uBloomStren
 uniform float uStreak, uFlare; uniform vec3 uStreakTint; uniform float uUseLUT, uUseStreak, uUseFlare;
 uniform float uWarp, uFade; uniform vec3 uFadeColor;
 uniform float uDebug, uPurkinje, uBlackPoint, uBlackToe;
-uniform sampler2D tCore; uniform float uBloomCore, uHiStart, uBloomCap, uAutoBlack, uAutoWhite, uAutoContrast;
+uniform sampler2D tCore; uniform float uBloomCore, uHiStart, uBloomCap, uAutoBlack, uAutoWhite, uAutoContrast, uShadowLift;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){ vec3 x2 = x*x; vec3 x4 = x2*x2;
@@ -958,6 +963,17 @@ void main(){
     float y = lumOf(col);
     // shadow-protected: deep shade is not pushed around (no milky lifted shadows)
     if (y > 1e-7 && yl > 1e-7) col *= pow(clamp(y / yl, 0.5, 2.0), uClarity * smoothstep(0.01, 0.12, yl * uExposure * ae));
+  }
+  if (uShadowLift > 0.0 && gFar < 0.5) {
+    // Local exposure (cf. UE5 'shadow contrast'): a shaded plane — forest understory, the dark
+    // side of a trunk or an island — is metered against its own surround, not the sky, and opens
+    // by up to +1.3 EV. The pixel's own luminance is mixed in (no dark halos at sky edges) and the
+    // gain is multiplicative, so black stays black and local texture contrast is preserved.
+    float yl2 = 0.5 * (lumOf(texture2D(tLocalA, uv).rgb) + lumOf(texture2D(tLocalB, uv).rgb));
+    float yp = lumOf(col);
+    float lloc = exp2(mix(log2(max(yl2, 1e-8)), log2(max(yp, 1e-8)), 0.3));
+    float tgt = exp2(texture2D(tAE, vec2(0.5)).g) * 0.7;
+    col *= clamp(pow(tgt / max(lloc, 1e-8), uShadowLift), 1.0, 2.5);
   }
   col *= uExposure * ae;
   // Veiling glare (Spencer et al. 1995): very bright sources scatter into a soft luminous
@@ -1194,7 +1210,7 @@ export class PostFX {
     this.downMat = mat(DOWN_FRAG, { tInput: U(null), tAE: U(null), uTexel: U(new THREE.Vector2()), uFirst: U(0), uThreshold: U(0), uKnee: U(0.5), uHiBoost: U(0), uHiStart: U(2), uExposure: U(1) });
     this.upMat = mat(UP_FRAG, { tLow: U(null), tHigh: U(null), uTexel: U(new THREE.Vector2()), uWeight: U(1) });
     const aoDefs = { SLICES: this.settings.aoSlices, STEPS: this.settings.aoSteps };
-    this.aoMat = mat(AO_FRAG, { tDepth: U(null), uProjInv: U(new THREE.Matrix4()), uFullTexel: U(new THREE.Vector2()), uReversed: U(R), uRadius: U(1), uProjScale: U(1), uMaxPx: U(64), uFrame: U(0), uFadeEnd: U(300) }, aoDefs);
+    this.aoMat = mat(AO_FRAG, { tDepth: U(null), uProjInv: U(new THREE.Matrix4()), uFullTexel: U(new THREE.Vector2()), uReversed: U(R), uRadius: U(1), uProjScale: U(1), uMaxPx: U(64), uFrame: U(0), uFadeEnd: U(300), uGrow: U(0) }, aoDefs);
     this.aoBlurMat = mat(AO_BLUR_FRAG, { tAO: U(null), uDir: U(new THREE.Vector2()) });
     this.aoApplyMat = mat(AO_APPLY_FRAG, { tScene: U(null), tAO: U(null), tDepth: U(null), uAORes: U(new THREE.Vector2()), uReversed: U(R), uNear: U(0.1), uFar: U(1000), uIntensity: U(1), uPower: U(1.4), uFadeEnd: U(300), uDebug: U(0) });
     const reproU = () => ({ uProjInvU: U(new THREE.Matrix4()), uPrevProj: U(new THREE.Matrix4()), uRel: U(new THREE.Matrix4()), uReversed: U(R) });
@@ -1230,7 +1246,7 @@ export class PostFX {
       uVignette: U(0.3), uVignetteSoft: U(0.5), uGrain: U(0.03), uGrainSize: U(1.35), uChroma: U(0.002), uBloomStrength: U(0.06), uBloomNorm: U(1), uHalation: U(0),
       uStreak: U(0), uFlare: U(0), uStreakTint: U(new THREE.Vector3(0.5, 0.7, 1)), uUseLUT: U(1), uUseStreak: U(0), uUseFlare: U(0),
       uWarp: U(0), uFade: U(0), uFadeColor: U(new THREE.Color()), uDebug: U(0), uPurkinje: U(0), uBlackPoint: U(0.004), uBlackToe: U(0.02),
-      tCore: U(null), uBloomCore: U(0), uHiStart: U(1.2), uBloomCap: U(0), uAutoBlack: U(0), uAutoWhite: U(0), uAutoContrast: U(0),
+      tCore: U(null), uBloomCore: U(0), uHiStart: U(1.2), uBloomCap: U(0), uAutoBlack: U(0), uAutoWhite: U(0), uAutoContrast: U(0), uShadowLift: U(0),
     });
     this.fxaaMat = mat(FXAA_FRAG, { tInput: U(null), uTexel: U(new THREE.Vector2()) });
     this.casMat = mat(CAS_FRAG, { tInput: U(null), tDepth: U(null), uReversed: U(R), uTexel: U(new THREE.Vector2()), uSharp: U(0.35),
@@ -1301,7 +1317,7 @@ export class PostFX {
     if (this.settings.glare) {
       this.glareDown = []; this.glareUp = [];
       let gw = Math.max(1, W >> 2), gh = Math.max(1, H >> 2);
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) { // 7 mips: soft core + a long, wide veiling tail
         this.glareDown.push(new THREE.WebGLRenderTarget(gw, gh, hdr));
         this.glareUp.push(new THREE.WebGLRenderTarget(gw, gh, hdr));
         gw = Math.max(1, gw >> 1); gh = Math.max(1, gh >> 1);
@@ -1429,10 +1445,11 @@ export class PostFX {
     this._t('ao');
     // 2) ambient occlusion (before atmosphere so fog is never occluded)
     if (S.ao && this.aoRT && g.ao > 0.001 && camera.isPerspectiveCamera) {
+      const aoFar = g.aoFar > 0 ? 1 + 3 * Math.min(1, g.aoFar) * (this.quality.level >= 2 ? 1 : 0.5) : 1;
       const a = this.aoMat.uniforms;
       a.tDepth.value = depth; a.uProjInv.value.copy(this._projInv); a.uFullTexel.value.set(1 / W, 1 / H);
       a.uRadius.value = g.aoRadius; a.uProjScale.value = 0.5 * H * this._projU.elements[5];
-      a.uMaxPx.value = Math.min(H * 0.12, 96); a.uFrame.value = useTAA ? this.frame % 64 : 0; a.uFadeEnd.value = g.aoDistance;
+      a.uMaxPx.value = Math.min(H * 0.12, 96); a.uFrame.value = useTAA ? this.frame % 64 : 0; a.uFadeEnd.value = g.aoDistance * aoFar; a.uGrow.value = g.aoFar > 0 ? 0.012 : 0;
       this.fs.render(r, this.aoMat, this.aoRT[0]);
       const b = this.aoBlurMat.uniforms; const aw = this.aoRT[0].width, ah = this.aoRT[0].height;
       b.tAO.value = this.aoRT[0].texture; b.uDir.value.set(1 / aw, 0); this.fs.render(r, this.aoBlurMat, this.aoRT[1]);
@@ -1440,7 +1457,7 @@ export class PostFX {
       const p = this.aoApplyMat.uniforms;
       p.tScene.value = src; p.tAO.value = this.aoRT[0].texture; p.tDepth.value = depth; p.uAORes.value.set(aw, ah);
       p.uNear.value = camera.near; p.uFar.value = camera.far; p.uIntensity.value = Math.min(1.5, g.ao); p.uPower.value = g.aoPower;
-      p.uFadeEnd.value = g.aoDistance; p.uDebug.value = this.debug === 'ao' ? 1 : 0;
+      p.uFadeEnd.value = g.aoDistance * aoFar; p.uDebug.value = this.debug === 'ao' ? 1 : 0;
       const out = this._other(src); this.fs.render(r, this.aoApplyMat, out); src = out.texture;
     }
 
@@ -1567,7 +1584,7 @@ export class PostFX {
         dm.tInput.value = s0.texture; dm.uTexel.value.set(1 / s0.width, 1 / s0.height); dm.uFirst.value = 0; dm.uThreshold.value = 0; dm.uHiBoost.value = 0;
         this.fs.render(r, this.downMat, this.glareDown[i]);
       }
-      const GW = [1.0, 0.75, 0.6, 0.55, 0.5];
+      const GW = [1.0, 0.72, 0.58, 0.52, 0.48, 0.44, 0.4]; // ~r^-2 tail once the mip area is counted
       const gn = this.glareDown.length;
       let gl = this.glareDown[gn - 1].texture, gsum = GW[gn - 1];
       for (let i = gn - 2; i >= 0; i--) {
@@ -1625,7 +1642,7 @@ export class PostFX {
     u.uBloomStrength.value = g.bloomStrength; u.uHalation.value = g.halation; u.uBlackPoint.value = g.blackPoint; u.uBlackToe.value = g.blackToe; u.uPurkinje.value = g.autoExposure > 0.001 ? g.purkinje : 0;
     u.tCore.value = this.down[Math.min(1, this.down.length - 1)].texture; u.uBloomCore.value = g.bloomCore; u.uHiStart.value = g.bloomHighlightStart;
     u.uBloomCap.value = g.bloomThreshold > 0.001 ? 1 : 0;
-    const aeGate = Math.min(1, g.autoExposure / 0.5); u.uAutoBlack.value = g.autoBlack * aeGate; u.uAutoContrast.value = g.autoContrast * aeGate; u.uAutoWhite.value = this.transition.warp > 0.01 ? 0 : g.autoWhite;
+    const aeGate = Math.min(1, g.autoExposure / 0.5); u.uAutoBlack.value = g.autoBlack * aeGate; u.uShadowLift.value = g.bloomThreshold > 0.001 ? 0 : g.shadowLift * aeGate; u.uAutoContrast.value = g.autoContrast * aeGate; u.uAutoWhite.value = this.transition.warp > 0.01 ? 0 : g.autoWhite;
     u.uWarp.value = this.transition.warp; u.uFade.value = this.transition.fade; u.uFadeColor.value.copy(this.transition.color);
     u.uDebug.value = this.debug === 'exposure' ? 1 : this.debug === 'flare' ? 2 : 0;
     const finalPass = useTAA ? (S.sharpen && g.sharpen > 0.001 ? this.casMat : null) : this.fxaaMat;

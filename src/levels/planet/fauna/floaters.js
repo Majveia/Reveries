@@ -202,7 +202,8 @@ function buildWhale(style) {
     return Math.max(r, 0.03);
   }, 40, 22);
   const col = (p, n) => {
-    const t = smooth(-0.6, 0.5, n.y + 0.15 * (vnoise(p.x * 14, p.y * 14, p.z * 6) - 0.5));
+    // countershading like a humpback / orca: the dark back wraps the flanks down to a crisp wavy line; only the belly is pale
+    const t = smooth(-0.5, -0.12, n.y + 0.12 * Math.sin(p.z * 26 + p.x * 9) + 0.18 * (vnoise(p.x * 14, p.y * 14, p.z * 6) - 0.5));
     let c = [lerp(belly.r, back.r, t), lerp(belly.g, back.g, t), lerp(belly.b, back.b, t)];
     // throat pleats: broad soft grooves fading toward the flanks
     if (n.y < -0.25 && p.z > -0.02) { const pl = smooth(0.55, 1.0, Math.abs(Math.sin(p.x * 70))) * 0.22 * smooth(-0.25, -0.7, n.y); c = c.map((v) => v * (1 - pl)); }
@@ -264,11 +265,11 @@ function whaleSurface(style) {
 }
 
 const WHALE_STYLE = {
-  ghibli: { back: '#22324a', belly: '#b9b8b2', mark: '#e8e2d4' },
-  moebius: { back: '#d77a6a', belly: '#fde6d2', mark: '#3fb0a6' },
+  ghibli: { back: '#1b2536', belly: '#8c9098', mark: '#c8c2b4' },
+  moebius: { back: '#a8503e', belly: '#e0bca4', mark: '#2f9088' },
   pandora: { back: '#121a34', belly: '#3a4a66', mark: '#6a9ac8', glow: '#38f6ff' },
-  wukong: { back: '#3a3c3e', belly: '#cfcbc2', mark: '#e8e2d4' },
-  default: { back: '#3e4a5a', belly: '#b4b0a8', mark: '#e0dace' },
+  wukong: { back: '#2c2e30', belly: '#8e8b84', mark: '#c8c2b4' },
+  default: { back: '#2c3644', belly: '#8a8a86', mark: '#c0bab0' },
 };
 
 const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _u = new THREE.Vector3(), _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3();
@@ -323,7 +324,7 @@ export class Floaters {
       // living wet hide: a rough skin under a thin clear coat (no brushed-metal sheen)
       // matte leathery hide (no chrome clear coat) + aerial perspective: at 1.5–2 km the leviathan sinks into the sky haze
       this.wHaze = { value: new THREE.Color(0.5, 0.6, 0.75) };
-      const mats = rigMaterial({ roughness: 0.78 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.3, aoMin: 0.6, surface: whaleSurface(style), haze: { color: this.wHaze, dist: 2600, max: 0.34 }, rim: 0.55 });
+      const mats = rigMaterial({ roughness: 0.78 }, WHALE_RIG, uni, 'whale-' + A, { bounce: 0.3, aoMin: 0.6, surface: whaleSurface(style), haze: { color: this.wHaze, dist: 2600, max: 0.3 }, rim: 0.18 });
       mats.mat.side = THREE.DoubleSide;
       const { mesh, anim } = makeInstanced(geo, mats, 8, { shadow: true });
       mesh.receiveShadow = true;
@@ -452,7 +453,11 @@ export class Floaters {
         if (n >= 8) continue;
         if (wh.pos.distanceToSquared(cam) > 12000 * 12000) continue;
         _f.copy(wh.fwd).addScaledVector(_u, Math.sin(wh.phase * 0.25) * 0.04);
-        writeInstance(arr, n, wh.pos, anchor, _f, _u, wh.len);
+        // a slow banking roll toward the onlooker: the dark back and the lit flank turn into view (form, not a cut-out)
+        _t1.copy(wh.fwd).cross(_u); _t2.copy(cam).sub(wh.pos);
+        const side = _t2.dot(_t1) / (_t2.length() || 1);
+        _t2.copy(_u).addScaledVector(_t1, clamp(side * 1.6, -0.6, 0.6) + Math.sin(wh.phase * 0.18) * 0.06).normalize();
+        writeInstance(arr, n, wh.pos, anchor, _f, _t2, wh.len);
         an[n * 4] = wh.phase; an[n * 4 + 1] = 1; an[n * 4 + 2] = 0; an[n * 4 + 3] = 0;
         n++;
       }
