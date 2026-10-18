@@ -27,7 +27,7 @@ const mesh = (geo, mat, shadow = true) => {
 export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   const rng = new Random(seed);
   const L = [
-    { red: '#b0141c', dark: '#1d1f24', light: '#e2d9c6', trim: '#c9a35a' },
+    { red: '#c3161f', dark: '#1d1f24', light: '#e6cfbb', trim: '#c9a35a' }, // luminous Swordfish red; peach-cream (stays cream under ACES, never lime)
     { red: '#1d5d8f', dark: '#22252a', light: '#e2ddd0', trim: '#d08a3a' },
     { red: '#d9d4c8', dark: '#2b2d31', light: '#a3121a', trim: '#5b6066' },
   ][livery % 3];

@@ -261,8 +261,10 @@ export default class Vehicles {
       const k = L.keyColor, s = L.skyColor;
       this.ambientLight.setRGB(k.r * 0.22 + s.r * 0.9, k.g * 0.22 + s.g * 0.9, k.b * 0.22 + s.b * 0.9);
       for (const P of [this.dust, this.spray]) {
-        P.uniforms.uLight.value.setRGB(k.r * 0.3, k.g * 0.3, k.b * 0.3);
-        P.uniforms.uAmb.value.copy(s).multiplyScalar(0.9);
+        // white water scatters sun + sky far more than grit does: spray must read brighter than the sea under it
+        const kl = P === this.spray ? 0.85 : 0.3, ka = P === this.spray ? 1.5 : 0.9;
+        P.uniforms.uLight.value.setRGB(k.r * kl, k.g * kl, k.b * kl);
+        P.uniforms.uAmb.value.copy(s).multiplyScalar(ka);
         P.uniforms.uUp.value.copy(level.camera.position).normalize();
       }
     }
@@ -738,8 +740,6 @@ export default class Vehicles {
       this.shotGlide = true;
       this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.55, motionBlurNear: Math.hypot(ox, oy, oz) + 9 }, 0);
       this._updateShotCam();
-      { const g = w.groundAt(ship.position, {}); let alive = 0; const A = this.spray.aMeta.array; for (let i = 0; i < this.spray.count; i++) if (this.time - A[i * 4] < A[i * 4 + 1]) alive++;
-        console.warn('[vehicles dbg] clear', (ship.position.length() - Math.max(g.radius, g.water ? g.waterRadius : -Infinity)).toFixed(1), 'water', g.water, 'speed', ship.speed?.toFixed?.(1), 'spray alive', alive, 'th', this.time.toFixed(2), 'eng', this.engine.time.toFixed(2)); }
       return true;
     }
     if (name === 'orbit') {

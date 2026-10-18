@@ -43,7 +43,7 @@ export class VisorFX {
           // (biased up: the chin / cheek guards enter the lower corners more than the brow does,
           // the diegetic cue that you are inside a helmet — still never across the view)
           float rimD = length((p - vec2(0.0, 0.1)) * vec2(0.8, 1.0));
-          float shell = smoothstep(1.08, 1.36, rimD) * (0.6 + 0.4 * smoothstep(0.2, 1.0, abs(p.x)));
+          float shell = smoothstep(1.0, 1.3, rimD) * (0.6 + 0.4 * smoothstep(0.2, 1.0, abs(p.x)));
           col = mix(col, col * 0.12 + uSheen * 0.005, shell * 0.9 * uAmount);
           // glass smudges / micro-scratches only show where bright light crosses them
           vec2 sp = vUv * vec2(uAspect, 1.0) * 7.0;

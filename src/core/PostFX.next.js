@@ -62,6 +62,7 @@ const DEFAULT_GRADE = {
   aeMin: -2.5, aeMax: 1.5, // EV clamp of the automatic correction
   aeLow: 0.35, aeHigh: 0.88, // histogram percentile window that is metered (trimmed mean)
   purkinje: 0.6, // night vision: dim light shifts blue and desaturates (only with autoExposure > 0)
+  aeNightKey: 0.03, // metered luminance floor at night (0 = off); only with autoExposure
   aeDarkComp: 0.3, // fraction of the under-exposure beyond 1.5 EV that is compensated (night stays night)
   aeSpeedUp: 2.5, aeSpeedDown: 1.2, // adaptation rates (1/s) toward brighter / darker
   // bloom
@@ -580,7 +581,7 @@ void main(){
 // Moderate under-exposure (shade, overcast, dusk) is fully corrected; only the part
 // beyond ~1.5 EV (true night) is compensated partially — night stays night.
 const ADAPT_FRAG = /* glsl */ `
-uniform sampler2D tHist, tPrev; uniform float uKey, uAmount, uMin, uMax, uUp, uDown, uDt, uInstant, uDarkComp, uLoPct, uHiPct;
+uniform sampler2D tHist, tPrev; uniform float uKey, uAmount, uMin, uMax, uUp, uDown, uDt, uInstant, uDarkComp, uLoPct, uHiPct, uNightKey;
 varying vec2 vUv;
 const float BINW = ${((HIST_MAX - HIST_MIN) / 64).toFixed(5)};
 float binAt(int i){ return texture2D(tHist, vec2((float(i) + 0.5) / 64.0, 0.5)).r; }
@@ -613,6 +614,9 @@ void main(){
     float delta = log2(uKey) - avgLog;
     if (delta > 1.5) delta = 1.5 + (delta - 1.5) * uDarkComp; // eyes adapt to the dark only partially
     target = clamp(uAmount * delta, uMin, uMax);
+    // Night floor: the eye never lets the metered scene sink below a dim moonlit key, so night
+    // reads as night (Purkinje blue, low saturation) instead of crushing to a black frame.
+    if (uNightKey > 0.0 && uAmount > 0.0) target = max(target, min(log2(uNightKey) - avgLog, uMax + 2.0));
   } else if (uInstant > 0.5) target = 0.0;
   float rate = target > prev ? uUp : uDown;
   float ev = uInstant > 0.5 ? target : prev + (target - prev) * (1.0 - exp(-uDt * rate));
@@ -861,8 +865,9 @@ float gnoise(vec2 p){
 float ghostShape(vec2 p, float r){
   vec2 q = abs(p) / r;
   float hex = max(q.x * 0.866025 + q.y * 0.5, q.y);
-  float dd = mix(length(p) / r, hex, 0.55);
-  return smoothstep(1.0, 0.9, dd) * (0.55 + 0.45 * smoothstep(0.55, 0.98, dd));
+  // mostly round with a faint 6-blade hint; very soft rim (a real coated lens, not a stock hexagon)
+  float dd = mix(length(p) / r, hex, 0.2);
+  return smoothstep(1.0, 0.72, dd) * (0.45 + 0.55 * smoothstep(0.35, 0.95, dd));
 }
 vec3 lensGhosts(vec2 uv, vec4 F, float aspect){
   vec2 src = F.xy;
@@ -893,7 +898,7 @@ vec3 lensGhosts(vec2 uv, vec4 F, float aspect){
     g.r = ghostShape(p, r * 1.025);
     g.g = ghostShape(p, r);
     g.b = ghostShape(p, r * 0.975);
-    acc += g * tn[i] * it[i];
+    acc += g * tn[i] * it[i] * 0.4;
   }
   // halo ring around the frame centre, lit on the source side
   vec2 pc = (uv - 0.5) * a2;
@@ -1019,7 +1024,13 @@ void main(){
   // Fade (level transitions)
   col = mix(col, uFadeColor, uFade);
   // Dither to kill banding in gradients (never lifts black).
-  if (uGrainHere > 0.5) col += (hash12(gl_FragCoord.xy + fract(uFrameSeed * 0.31) * 97.0) - 0.5) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  // Interleaved-gradient (blue-ish) noise, triangular PDF, +-1 LSB, offset per frame by an R2 step:
+  // no visible pattern, no banding, never lifts black.
+  if (uGrainHere > 0.5) {
+    vec2 dpx = gl_FragCoord.xy + floor(vec2(fract(uFrameSeed * 0.7548777), fract(uFrameSeed * 0.5698403)) * 64.0);
+    float dn = ignoise(dpx) + ignoise(dpx + vec2(37.0, 17.0)) - 1.0;
+    col += dn / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  }
   if (uDebug > 0.5) {
     if (uDebug < 1.5) col = vec3(ae / 8.0, texture2D(tAE, vec2(0.5)).g * 0.05 + 0.5, 0.0); // exposure
     else col = texture2D(tStreak, uv).rgb + lensGhosts(uv, texture2D(tFlare, vec2(0.5)), aspect); // flare
@@ -1098,7 +1109,8 @@ void main(){
   float gn = filmGrain(gp, go);
   float lg = lumOf(col);
   col *= 1.0 + gn * uGrain * 2.6 * (1.0 - lg) * smoothstep(0.02, 0.25, lg) * (1.0 - 0.75 * gFar) * vec3(1.0, 0.92, 0.7);
-  col += (hash12(gl_FragCoord.xy + fract(uFrameSeed * 0.31) * 97.0) - 0.5) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  vec2 dpx = gl_FragCoord.xy + floor(vec2(fract(uFrameSeed * 0.7548777), fract(uFrameSeed * 0.5698403)) * 64.0);
+  col += (ignoise(dpx) + ignoise(dpx + vec2(37.0, 17.0)) - 1.0) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
@@ -1144,12 +1156,13 @@ export class PostFX {
     this.debug = dbg;
     // Feature tiers (low/medium keep the cheap passes only).
     this.settings = {
-      taa: q >= 2 && params.get('aa') !== 'fxaa' && dbg !== 'noaa' && dbg !== 'fxaa',
+      // TAA from medium up: one 14-tap pass + a history target is far cheaper than the shimmer it removes
+      taa: q >= 1 && params.get('aa') !== 'fxaa' && dbg !== 'noaa' && dbg !== 'fxaa',
       ao: q >= 2 && dbg !== 'noao', // GTAO: high/ultra only (phones run low/medium)
       aoSlices: quality.pick(1, 1, 2, 3), aoSteps: quality.pick(4, 4, 6, 8),
       flare: q >= 2, streak: q >= 2,
-      motionBlur: q >= 2, dof: q >= 1, dofHalf: true,
-      sharpen: q >= 2,
+      motionBlur: q >= 2, dof: q >= 2 || (q >= 1 && this.shotMode), dofHalf: true,
+      sharpen: q >= 1, // CAS restores the detail TAA softens (one 5-tap pass)
       glare: q >= 2,
       lut: dbg !== 'nolut',
     };
@@ -1195,7 +1208,7 @@ export class PostFX {
     this.lumMat = mat(LUM_FRAG, { tInput: U(null), tDepth: U(null), uReversed: U(R), uSky: U(0.5), uCell: U(new THREE.Vector2()) });
     this.reduceMat = mat(REDUCE_FRAG, { tInput: U(null), uSrcTexel: U(new THREE.Vector2()) });
     this.histMat = mat(HIST_FRAG, { tLum: U(null) });
-    this.adaptMat = mat(ADAPT_FRAG, { tHist: U(null), tPrev: U(null), uKey: U(0.18), uAmount: U(1), uMin: U(-2), uMax: U(2), uUp: U(2), uDown: U(1), uDt: U(0.016), uInstant: U(1), uDarkComp: U(0.4), uLoPct: U(0.4), uHiPct: U(0.9) });
+    this.adaptMat = mat(ADAPT_FRAG, { tHist: U(null), tPrev: U(null), uKey: U(0.18), uAmount: U(1), uMin: U(-2), uMax: U(2), uUp: U(2), uDown: U(1), uDt: U(0.016), uInstant: U(1), uDarkComp: U(0.4), uLoPct: U(0.4), uHiPct: U(0.9), uNightKey: U(0) });
     this.glarePreMat = mat(GLARE_PRE_FRAG, { tInput: U(null), tAE: U(null), uSrcTexel: U(new THREE.Vector2()), uExposure: U(1), uThreshold: U(3) });
     this.brightMat = mat(BRIGHT_FRAG, { tInput: U(null), tAE: U(null), uSrcTexel: U(new THREE.Vector2()), uExposure: U(1), uThreshold: U(5) });
     this.streakMat = mat(STREAK_FRAG, { tInput: U(null), tA: U(null), tB: U(null), uStep: U(new THREE.Vector2()), uFinal: U(0) });
@@ -1498,7 +1511,7 @@ export class PostFX {
       const prev = this.aeRT[this._aeIdx], next = this.aeRT[1 - this._aeIdx];
       a.tHist.value = this.histRT.texture; a.tPrev.value = prev.texture; a.uLoPct.value = g.aeLow; a.uHiPct.value = g.aeHigh;
       a.uKey.value = g.aeKey; a.uAmount.value = g.autoExposure; a.uMin.value = g.aeMin; a.uMax.value = g.aeMax;
-      a.uDarkComp.value = g.aeDarkComp; a.uUp.value = g.aeSpeedUp; a.uDown.value = g.aeSpeedDown; a.uDt.value = dt; a.uInstant.value = instant ? 1 : 0;
+      a.uDarkComp.value = g.aeDarkComp; a.uNightKey.value = g.aeNightKey; a.uUp.value = g.aeSpeedUp; a.uDown.value = g.aeSpeedDown; a.uDt.value = dt; a.uInstant.value = instant ? 1 : 0;
       this.fs.render(r, this.adaptMat, next); this._aeIdx = 1 - this._aeIdx; this._aeValid = true;
       if (this.debug === 'aelog' && this.frame % 4 === 0) {
         const px = new Float32Array(4); r.readRenderTargetPixels(next, 0, 0, 1, 1, px);
