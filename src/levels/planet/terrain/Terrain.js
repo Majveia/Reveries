@@ -66,7 +66,11 @@ export default class Terrain {
     // same tier values as play)
     this.pixelError = q.pick(56, 36, 20, 12); // low/medium: coarser mid/far terrain (frame budgets: 1.2M / 2.5M tris)
     this.refLines = 720;
-    this.errPx = 0; // allowed projected geometric error (px, 720-line reference); 0 = off
+    // allowed projected geometric error (px, 720-line reference). Triangles go where
+    // the surface bends: ridges, crests, cliffs refine further; flat plains/slopes
+    // stay coarser than the spacing rule (flatK) → about the same budget, crisper landforms
+    this.errPx = q.pick(5, 3.2, 1.6, 1.1);
+    this.flatK = q.pick(1.15, 1.25, 1.35, 1.35);
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
     this.relief = w.terrainParams.relief;
@@ -338,10 +342,11 @@ export default class Terrain {
     if (!_frustum.intersectsSphere(_sphere)) d = d * 12 + n.radius * 2; // off-screen: much coarser
     // projected vertex spacing in pixels
     const px = (n.spacing * this.pxPerRadLod) / Math.max(d, 1e-3);
-    // optional geometric-error refinement (node.err = geomorph delta): off by default —
-    // measured +17% tris / +44 calls on p1 vista for little visual gain (frame budgets)
-    const ex = this.errPx > 0 && n.err ? (n.err * this.pxPerRadLod) / Math.max(d, 1e-3) : 0;
-    if (px <= this.pixelError && !(ex > this.errPx && px > this.pixelError * 0.5)) return false;
+    // geometric error: n.err = deviation of n's samples from its parent's grid; n's own
+    // error vs its children is ~half of that on smooth ground (more on sharp features)
+    const ex = this.errPx > 0 && n.err !== undefined ? (n.err * 0.5 * this.pxPerRadLod) / Math.max(d, 1e-3) : -1;
+    if (ex < 0) { if (px <= this.pixelError) return false; } // not built yet: spacing rule
+    else if (px <= this.pixelError * this.flatK && !(ex > this.errPx && px > this.pixelError * 0.3)) return false;
     return this._splitBudget-- > 0;
   }
 

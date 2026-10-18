@@ -305,7 +305,9 @@ export function buildChunk(T, job) {
   }
 
   // ---- skirts ----
-  const skirt = Math.max(0.6, maxDelta * 1.6 + spacing * 0.6 + (maxH - minH) * 0.02);
+  // deep enough to hide T-junction gaps against a coarser neighbour even on sheer
+  // walls (karst towers, mesa risers): the gap there can approach the local relief
+  const skirt = Math.max(0.6, maxDelta * 2.2 + spacing * 0.8 + (maxH - minH) * 0.3);
   const base = V * V;
   for (let e = 0; e < 4; e++) for (let t = 0; t <= N; t++) {
     const i = e === 0 || e === 1 ? t : e === 2 ? 0 : N;

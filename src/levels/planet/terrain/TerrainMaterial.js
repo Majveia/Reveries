@@ -403,7 +403,7 @@ const FRAG_SURFACE = /* glsl */`
     float runMask = smoothstep( -0.25, 0.45, m3.w + m2.w * 0.5 );
     float rw = octW( 1.0 / 8.0, pix ) * uStyleA.z * smoothstep( 0.25, 0.6, slope ) * runMask;
     if ( rw > 0.0 ) {
-      vec3 Dq = D - up * dot( D, up ) * 0.6;
+      vec3 Dq = D - up * dot( D, up ) * 0.45;
       vec4 r1 = nA( Dq + 11.0, 1.0 / 8.0 );
       gRock += ( r1.xyz - up * dot( r1.xyz, up ) ) * 0.35 * rw;
       hRock += r1.w * 0.3 * rw;
@@ -411,7 +411,7 @@ const FRAG_SURFACE = /* glsl */`
     // large runnels / gullies visible from afar
     float rw2 = octW( 1.0 / 64.0, pix ) * uStyleA.z * smoothstep( 0.3, 0.7, slope ) * ( 0.4 + 0.6 * runMask );
     if ( rw2 > 0.0 ) {
-      vec3 Dq = D - up * dot( D, up ) * 0.75;
+      vec3 Dq = D - up * dot( D, up ) * 0.55;
       vec4 r2 = nA( Dq.zxy + 3.0, 1.0 / 64.0 );
       gRock += ( r2.xyz - up * dot( r2.xyz, up ) ) * 2.5 * rw2;
       hRock += r2.w * 0.4 * rw2;
@@ -480,13 +480,15 @@ const FRAG_SURFACE = /* glsl */`
     float d2 = f2 < 0.7 ? 1.0 / 0.7 : -1.0 / 0.3; d2 /= lam2 / 1.6;
     // ripples die on slip faces and on the knife-edge brink (cav < 0.5 → convex)
     float crestF = smoothstep( 0.47, 0.4, cav ) * smoothstep( 0.01, 0.05, slope );
-    float w1 = octW( 3.0, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) ) * bl1;
+    // gate by the ripple wavelength (fwidth band-limit bl1 does the anti-aliasing):
+    // the old octW(3) cut them off ~3 m from the camera → dune faces read as flat planes
+    float w1 = octW( 0.45, pix ) * uStyleA.w * ( 1.0 - 0.95 * leeF ) * ( 1.0 - 0.7 * crestF ) * ( 0.25 + 0.75 * smoothstep( -0.5, 0.4, wq.w + wf.w * 0.4 ) ) * bl1;
     // megaripples come in patches (coarse lag sand), never as wall-to-wall stripes
-    float w2 = octW( 0.5, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7 * bl2;
+    float w2 = octW( 0.1, pix ) * uStyleA.w * ( 1.0 - 0.8 * leeF ) * smoothstep( 0.5, 0.95, wq2.w + wq.w * 0.35 ) * 0.7 * bl2;
     // crisp wind ripples catching the light; megaripples are rare, gentle patches
-    gSand += wt * ( d1 / lam ) * 0.0095 * w1 + wt * ( d2 / 1.6 ) * 0.007 * w2;
+    gSand += wt * ( d1 / lam ) * 0.013 * w1 + wt * ( d2 / 1.6 ) * 0.009 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
-    rippleShade = ( p1 - 0.5 ) * w1;
+    rippleShade = ( p1 - 0.5 ) * w1 + ( p2 - 0.5 ) * w2 * 0.8;
     w = octW( 0.25, pix );
     if ( w > 0.0 ) { vec4 s1 = nA( D.yzx, 0.25 ); gSand += s1.xyz * 0.004 * w; } // faint: the old 0.015 read as orange-peel blotches
     // grain sparkle (1 cm-ish facets), very subtle
@@ -526,7 +528,7 @@ const FRAG_SURFACE = /* glsl */`
   }
   // rain/biofilm streaks: long, dark-grey vertical stains hanging from ledges
   {
-    vec3 Dv = D - up * dot( D, up ) * 0.8;
+    vec3 Dv = D - up * dot( D, up ) * 0.6;
     float st2 = nA( Dv.yzx + 61.0, 1.0 / 24.0 ).w * 0.6 + nA( Dv + 5.0, 1.0 / 6.0 ).w * 0.4 * octW( 1.0 / 6.0, pix );
     // stains hang from each bedding lip and fade down the bed (not wall-high smears)
     float hang = mix( 1.0, 1.0 - smoothstep( 0.15, 0.95, 1.0 - sFrac ), uStyleA.y * 0.6 );
@@ -655,7 +657,7 @@ const FRAG_SURFACE = /* glsl */`
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );
   soilCol = mix( soilCol, uRockA * 0.9, 0.25 + peb * 0.4 );
-  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.14 * rippleShade );
+  vec3 sandCol = uSand * ( 0.9 + 0.12 * macro + 0.22 * rippleShade );
   // troughs: darker, redder (iron-stained, coarse lag); crests paler & finer
   float trough = smoothstep( 0.52, 0.62, cav );
   sandCol = mix( sandCol, sandCol * vec3( 0.92, 0.84, 0.77 ), trough * 0.45 );

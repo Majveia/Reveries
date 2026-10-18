@@ -716,10 +716,11 @@ export function createTerrain(p) {
     const seg = smoothstep(-0.45, 0.35, fbmM(nH, X, Y, Z, 1100, 2, 2.0, 0.5, 7.1, -2.6, 3.9) + (ampN - 0.5) * 0.6);
     const A1 = rel * 0.125 * (0.5 + 0.65 * ampN) * latFade * (0.35 + 0.65 * seg);
     // slip face at ~32° (tan ≈ 0.62) → brink phase from the dune height
-    const fc = 1 - clamp(A1 / 0.62 / duneLambda, 0.12, 0.42);
+    // brink phase wanders along the crest (asymmetric, not a ruled prism)
+    const fc = 1 - clamp(A1 / 0.62 / duneLambda * (0.85 + 0.35 * (wB * 0.5 + 0.5)), 0.12, 0.42);
     const kc = 0.009 + clamp(LS / duneLambda * 3, 0, 0.3); // knife-edge brink up close
     // primary transverse/draa ridges
-    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.9 + wC * 0.38; // sinuous seif crests, not straight pyramids
+    const ph1 = lon * duneN / (2 * Math.PI) + wA * 2.2 + wB * 0.9 + wC * 0.85; // sinuous seif crests, not straight pyramids
     const p1 = duneProfile(ph1 - Math.floor(ph1), fc, kc);
     const slip1 = DP.slip;
     // secondary oblique dunes (crossing pattern → star-like junctions where mReg is high)
@@ -731,8 +732,11 @@ export function createTerrain(p) {
     // small transverse dunelets riding the stoss slopes (fade on slip faces)
     const ph3 = lon * dune3N / (2 * Math.PI) + wA * 3.1 + wB * 1.7 + fbmM(nD, X, Y, Z, 380, 2, 2.0, 0.5, 4.1, 0, 2.2) * 0.6;
     const p3 = duneProfile(ph3 - Math.floor(ph3), 0.7, 0.06 + clamp(LS / 95 * 3, 0, 0.6));
-    const A3 = 3.8 * latFade * bw(95) * (1 - slip1) * (0.4 + 0.6 * smoothstep(0.1, 0.6, p1));
-    const dunes = A1 * p1 + A2 * p2 * (0.4 + 0.6 * p1) * (1 - 0.7 * slip1) + A3 * (p3 - 0.5);
+    const A3 = 5.2 * latFade * bw(95) * (1 - slip1) * (0.4 + 0.6 * smoothstep(0.1, 0.6, p1));
+    // oblique trains ride the mid-stoss and die out before the brink: stacking them
+    // on the primary crest made straight-flanked pyramids where the trains crossed
+    const ride = 0.3 + 0.7 * smoothstep(0.05, 0.45, p1) * (1 - smoothstep(0.55, 0.92, p1));
+    const dunes = A1 * p1 + A2 * p2 * ride * (1 - 0.9 * slip1) + A3 * (p3 - 0.5);
     const sandH = base + dunes + (1 - latFade) * fbmM(nH, X, Y, Z, 900, 3, 2.0, 0.5, 0, 0, 0) * 12;
     let out = sandH;
     if (rockH > -1e8) {
@@ -789,7 +793,15 @@ export function createTerrain(p) {
         const ln = lx * x + ly * y + lz * z; lx -= ln * x; ly -= ln * y; lz -= ln * z;
         const ll = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1, lean = rad * 0.28 * (0.3 + 0.7 * ra2) / ll;
         lx *= lean; ly *= lean; lz *= lean;
-        const warp = (lobe * 0.5 * rad + wobM / cellSz) ; // cells (lobed, split outlines)
+        // solution flutes: cusped vertical ribs/grooves around the tower (azimuthal
+        // radius modulation in a local tangent frame), 7–15 per tower, own phase
+        let e1x = -z, e1z = x; const e1l = Math.sqrt(e1x * e1x + e1z * e1z) || 1; e1x /= e1l; e1z /= e1l; // n × ŷ
+        const e2x = y * e1z, e2y = z * e1x - x * e1z, e2z = -y * e1x; // n × e1
+        const fa = Math.atan2(CELL.dx * e2x + CELL.dy * e2y + CELL.dz * e2z, CELL.dx * e1x + CELL.dz * e1z);
+        const nF = 7 + Math.floor(sr * 9), fph = sk * 0.37 + ra2 * 6.28;
+        const fl = Math.abs(Math.sin(fa * nF * 0.5 + fph + lobe * 1.5)), fl2 = Math.abs(Math.sin(fa * (nF + 5) * 0.5 - fph * 1.7));
+        const flute = (0.55 - Math.min(fl, 0.9)) * 0.07 + (0.5 - fl2) * 0.025; // fraction of radius
+        const warp = (lobe * 0.5 * rad + wobM / cellSz) + flute * rad; // cells (lobed, fluted outlines)
         const ws0 = LS * 1.6 / (rad * cellSz);
         let v = -1e9, tBest = 1, tread = 0, t0 = 1;
         for (let i = 0; i < nT; i++) {
@@ -802,7 +814,10 @@ export function createTerrain(p) {
           if (i === 0) t0 = t;
           if (t >= 1) continue;
           const ws = Math.min(0.3, ws0 / rf);
-          const wl = 1 - smoothstep(0.78 - ws, 0.95, t);
+          let wl = 1 - smoothstep(0.78 - ws, 0.95, t);
+          // flared foot on the base tier: a concave buttress / talus skirt up to ~1/3 of
+          // the height, so towers taper from a broad root instead of standing like silos
+          if (i === 0) { const fo = 1 - smoothstep(0.5, 1.0, t); wl = Math.max(wl, (0.3 + 0.12 * sr) * fo * fo); }
           let top;
           if (i === nT - 1) {
             // crown: dome / sugarloaf (per-tower exponent), crumpled by noise
@@ -841,7 +856,10 @@ export function createTerrain(p) {
       towers = smax(big, small, 10);
       // weathered horizontal bedding on the walls (variable beds)
       const bed = 8 + 5 * (fbmM(nS, X, Y, Z, 900, 1, 2.0, 0.5, 2.0, 0, 0) * 0.5 + 0.5);
-      towers = lerp(towers, terrace(towers + crownN * 2.0, bed, 0.55), 0.38);
+      // bed thickness varies with height (monotonic warp) and bedding planes dip/undulate
+      // across the tower (lobe/wobble) → not evenly spaced concrete pour rings
+      const tq = towers + bed * 0.32 * Math.sin(towers / (bed * 1.9) + lobe * 2.0) + crownN * 3.0 + wobM * 0.6;
+      towers = lerp(towers, terrace(tq, bed, 0.55) - (tq - towers), 0.38);
       wall = smoothstep(0.55, 0.78, KT.t) * (1 - KT.tread * 0.8);
       towerRock = smoothstep(6, 30, towers);
     }
