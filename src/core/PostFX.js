@@ -57,10 +57,12 @@ const DEFAULT_GRADE = {
   chroma: 0.0012, // lateral chromatic aberration at the frame edges
   // auto exposure (eye adaptation)
   autoExposure: 0.0, // 0 = manual only (space levels, tuned by hand), 1 = fully metered; planets opt in
-  aeKey: 0.16, // target mid-grey of the metered (non-black) scene
+  aeKey: 0.18, // target mid-grey of the metered (non-black) scene
+  aeSky: 0.45, // metering weight of sky/space pixels (far depth) — the subject, not the sky, sets exposure
   aeMin: -2.5, aeMax: 1.5, // EV clamp of the automatic correction
-  aeLow: 0.4, aeHigh: 0.9, // histogram percentile window that is metered (trimmed mean)
+  aeLow: 0.35, aeHigh: 0.88, // histogram percentile window that is metered (trimmed mean)
   purkinje: 0.6, // night vision: dim light shifts blue and desaturates (only with autoExposure > 0)
+  aeNightKey: 0.03, // metered luminance floor at night (0 = off); only with autoExposure
   aeDarkComp: 0.3, // fraction of the under-exposure beyond 1.5 EV that is compensated (night stays night)
   aeSpeedUp: 2.5, aeSpeedDown: 1.2, // adaptation rates (1/s) toward brighter / darker
   // bloom
@@ -69,8 +71,15 @@ const DEFAULT_GRADE = {
   bloomThreshold: 0.0, // 0 = energy conserving full-scene bloom
   bloomKnee: 0.5,
   bloomHighlights: 2.5, // extra (non energy-conserving) glow for exposed highlights: lit windows, lanterns, lava
-  bloomHighlightStart: 2.0, // exposed luminance where highlight glow starts
+  bloomHighlightStart: 1.2, // exposed luminance where highlight glow starts
+  bloomCore: 0.14, // tight luminous core around exposed highlights (1/4-res PSF), on top of the wide veil
+  // adaptive levels (from the metering histogram, smoothed like the exposure): a photographer's
+  // black/white anchor so frames use the whole display range. autoBlack acts only with autoExposure.
+  autoBlack: 1.0, // pulls the darkest ~2% of the frame toward OLED black
+  autoWhite: 0.75, // stretches so the brightest ~0.5% reach near display white
+  autoContrast: 0.2, // midtone separation pivoted on the metered mid-tone (median unchanged); with autoExposure
   halation: 0.0, // warm film halation around highlights
+  shadowLift: 0.5, // local exposure: shaded planes darker than ~1 EV under the metered key open up (≤ +1.1 EV); with autoExposure only
   clarity: 0.0, // local contrast (log-luminance vs. 1/8–1/16-res surround); planets ~0.2
   glare: 0.08, // veiling glare of very bright sources (soft core + long tail); needs flare > 0
   glareThreshold: 2.5, // exposed luminance above which light glares
@@ -81,8 +90,9 @@ const DEFAULT_GRADE = {
   streakTint: [0.5, 0.68, 1.0],
   // ambient occlusion (world units; levels with walkable surfaces opt in)
   ao: 0.0, aoRadius: 1.6, aoPower: 1.4, aoDistance: 350,
+  aoFar: 1, // multi-scale far AO (radius grows with distance, range ×4 at high+); 0 = off
   // camera
-  sharpen: 0.35,
+  sharpen: 0.25,
   motionBlur: 0.0, // shutter fraction (0 off … 1 = 360° shutter)
   motionBlurNear: 0.0, // pixels nearer than this (world units) are not blurred (third-person subject)
   dof: 0.0, // 0 off … 1 on
@@ -223,7 +233,7 @@ const AO_FRAG = /* glsl */ `
 ${COMMON}
 ${DEPTH_GLSL}
 uniform sampler2D tDepth; uniform mat4 uProjInv; uniform vec2 uFullTexel; uniform float uReversed;
-uniform float uRadius, uProjScale, uMaxPx, uFrame, uFadeEnd;
+uniform float uRadius, uProjScale, uMaxPx, uFrame, uFadeEnd, uGrow;
 varying vec2 vUv;
 // Reconstruct at full-res texel centres: the depth texture is sampled nearest, and this
 // pass runs at half res (vUv sits on full-res texel corners) with fractional tap offsets.
@@ -239,7 +249,10 @@ void main(){
   if (isFarDepth(d, uReversed)) { gl_FragColor = vec4(1.0, 60000.0, 0.0, 1.0); return; }
   vec3 P = viewPosFromDepth(uv0, d, uProjInv, uReversed);
   float vz = -P.z;
-  float radiusPx = uRadius * uProjScale / vz;
+  // Multi-scale: the world radius grows with distance (constant ~screen footprint), so far
+  // massing — towns, forests, cliff bases — keeps contact shadow instead of fading to milk.
+  float R = max(uRadius, vz * uGrow);
+  float radiusPx = R * uProjScale / vz;
   if (vz > uFadeEnd || radiusPx < 1.5) { gl_FragColor = vec4(1.0, min(vz, 60000.0), 0.0, 1.0); return; }
   radiusPx = min(radiusPx, uMaxPx);
   // Edge-aware normal from depth: pick the smaller-difference neighbour per axis.
@@ -251,7 +264,7 @@ void main(){
   vec3 N = normalize(cross(dx, dy));
   vec3 V = normalize(-P);
   // Thickness-aware falloff (XeGTAO).
-  float fRange = 0.615 * uRadius, fFrom = uRadius * (1.0 - 0.615);
+  float fRange = 0.615 * R, fFrom = R * (1.0 - 0.615);
   float fMul = -1.0 / fRange, fAdd = fFrom / fRange + 1.0;
   vec2 fc = gl_FragCoord.xy + vec2(uFrame * 5.588238, uFrame * 3.71);
   float n1 = ignoise(fc), n2 = fract(n1 * 1.61803 + hash12(fc * 0.37));
@@ -524,7 +537,8 @@ void main(){
 // Auto exposure: black-excluding, centre-weighted log-luminance pyramid.
 const LUM_FRAG = /* glsl */ `
 ${COMMON}
-uniform sampler2D tInput; uniform vec2 uCell;
+${DEPTH_GLSL}
+uniform sampler2D tInput, tDepth; uniform vec2 uCell; uniform float uReversed, uSky;
 varying vec2 vUv;
 void main(){
   float sl = 0.0, sw = 0.0;
@@ -534,7 +548,8 @@ void main(){
     if (l > 2e-4) {
       l = max(l, 2e-3);
       vec2 dc = (uv - 0.5) * vec2(1.6, 1.0);
-      float w = 1.0 - 0.6 * smoothstep(0.1, 0.7, length(dc));
+      float w = 1.0 - 0.7 * smoothstep(0.08, 0.68, length(dc));
+      if (isFarDepth(texture2D(tDepth, uv).r, uReversed)) w *= uSky;
       sl += log2(min(l, 6e4)) * w; sw += w;
     }
   }
@@ -571,14 +586,17 @@ void main(){
 // Moderate under-exposure (shade, overcast, dusk) is fully corrected; only the part
 // beyond ~1.5 EV (true night) is compensated partially — night stays night.
 const ADAPT_FRAG = /* glsl */ `
-uniform sampler2D tHist, tPrev; uniform float uKey, uAmount, uMin, uMax, uUp, uDown, uDt, uInstant, uDarkComp, uLoPct, uHiPct;
+uniform sampler2D tHist, tPrev; uniform float uKey, uAmount, uMin, uMax, uUp, uDown, uDt, uInstant, uDarkComp, uLoPct, uHiPct, uNightKey;
 varying vec2 vUv;
+const float BINW = ${((HIST_MAX - HIST_MIN) / 64).toFixed(5)};
 float binAt(int i){ return texture2D(tHist, vec2((float(i) + 0.5) / 64.0, 0.5)).r; }
 void main(){
   float total = 0.0;
   for (int i = 0; i < 64; i++) total += binAt(i);
-  float prev = texture2D(tPrev, vec2(0.5)).r;
+  vec4 P = texture2D(tPrev, vec2(0.5));
+  float prev = P.r;
   float target = prev, avgLog = 0.0;
+  float pLo = -30.0, pHi = -30.0;
   if (total > 1e-5) {
     float lo = total * uLoPct, hi = total * uHiPct, run = 0.0, sl = 0.0, sw = 0.0;
     for (int i = 0; i < 64; i++) {
@@ -589,13 +607,29 @@ void main(){
       run += c;
     }
     avgLog = sw > 0.0 ? sl / sw : 0.0;
+    // percentiles (log2 luminance) for the adaptive black / white anchors
+    float tLo = total * 0.02, tHi = total * 0.995; run = 0.0;
+    for (int i = 0; i < 64; i++) {
+      float c = binAt(i);
+      float b0 = ${HIST_MIN.toFixed(1)} + float(i) * BINW;
+      if (pLo < -29.0 && run + c >= tLo) pLo = b0 + BINW * clamp((tLo - run) / max(c, 1e-6), 0.0, 1.0);
+      if (pHi < -29.0 && run + c >= tHi) pHi = b0 + BINW * clamp((tHi - run) / max(c, 1e-6), 0.0, 1.0);
+      run += c;
+    }
     float delta = log2(uKey) - avgLog;
     if (delta > 1.5) delta = 1.5 + (delta - 1.5) * uDarkComp; // eyes adapt to the dark only partially
     target = clamp(uAmount * delta, uMin, uMax);
+    // Night floor: the eye never lets the metered scene sink below a dim moonlit key, so night
+    // reads as night (Purkinje blue, low saturation) instead of crushing to a black frame.
+    if (uNightKey > 0.0 && uAmount > 0.0) target = max(target, min(log2(uNightKey) - avgLog, uMax + 2.0));
   } else if (uInstant > 0.5) target = 0.0;
   float rate = target > prev ? uUp : uDown;
   float ev = uInstant > 0.5 ? target : prev + (target - prev) * (1.0 - exp(-uDt * rate));
-  gl_FragColor = vec4(ev, avgLog, total, 1.0);
+  if (uInstant < 0.5 && P.b > -29.0 && pLo > -29.0) {
+    float k = 1.0 - exp(-uDt * 1.5);
+    pLo = P.b + (pLo - P.b) * k; pHi = P.a + (pHi - P.a) * k;
+  }
+  gl_FragColor = vec4(ev, avgLog, pLo, pHi);
 }`;
 
 // ---------------------------------------------------------------------------
@@ -761,6 +795,7 @@ uniform float uVignette, uVignetteSoft, uGrain, uGrainSize, uChroma, uBloomStren
 uniform float uStreak, uFlare; uniform vec3 uStreakTint; uniform float uUseLUT, uUseStreak, uUseFlare;
 uniform float uWarp, uFade; uniform vec3 uFadeColor;
 uniform float uDebug, uPurkinje, uBlackPoint, uBlackToe;
+uniform sampler2D tCore; uniform float uBloomCore, uHiStart, uBloomCap, uAutoBlack, uAutoWhite, uAutoContrast, uShadowLift;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){ vec3 x2 = x*x; vec3 x4 = x2*x2;
@@ -797,6 +832,7 @@ vec3 pbrNeutral(vec3 c){
     float g = 1.0 - 1.0 / (desat * (peak - np) + 1.0); c = mix(c, vec3(np), g); }
   return pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
 }
+vec3 tonemap(vec3 c){ return uToneMap < 0.5 ? agx(c) : (uToneMap < 1.5 ? acesFitted(c) : pbrNeutral(c)); }
 vec3 applyLUT(vec3 c){
   c = clamp(c, 0.0, 1.0) * 31.0;
   float bz = floor(c.b); float f = c.b - bz;
@@ -816,6 +852,15 @@ vec3 sampleScene(vec2 uv){
   c.b = texture2D(tScene, uv + off).b;
   return c;
 }
+float filmGrain(vec2 gp, vec2 go){
+  // Triangular-PDF grain per grain cell (two hashes), lightly mixed with the neighbouring
+  // cell so the clumps are organic, not square: reads as silver halide, not video noise.
+  vec2 c = floor(gp + go), f = fract(gp + go);
+  float a = hash12(c) + hash12(c + 71.3) - 1.0;
+  vec2 nb = c + (f.x > f.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+  float b = hash12(nb) + hash12(nb + 71.3) - 1.0;
+  return mix(a, b, 0.3) * 0.42;
+}
 float gnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float a = hash12(i), b = hash12(i + vec2(1, 0)), c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
@@ -825,8 +870,9 @@ float gnoise(vec2 p){
 float ghostShape(vec2 p, float r){
   vec2 q = abs(p) / r;
   float hex = max(q.x * 0.866025 + q.y * 0.5, q.y);
-  float dd = mix(length(p) / r, hex, 0.55);
-  return smoothstep(1.0, 0.9, dd) * (0.55 + 0.45 * smoothstep(0.55, 0.98, dd));
+  // mostly round with a faint 6-blade hint; very soft rim (a real coated lens, not a stock hexagon)
+  float dd = mix(length(p) / r, hex, 0.2);
+  return smoothstep(1.0, 0.72, dd) * (0.45 + 0.55 * smoothstep(0.35, 0.95, dd));
 }
 vec3 lensGhosts(vec2 uv, vec4 F, float aspect){
   vec2 src = F.xy;
@@ -857,7 +903,7 @@ vec3 lensGhosts(vec2 uv, vec4 F, float aspect){
     g.r = ghostShape(p, r * 1.025);
     g.g = ghostShape(p, r);
     g.b = ghostShape(p, r * 0.975);
-    acc += g * tn[i] * it[i];
+    acc += g * tn[i] * it[i] * 0.4;
   }
   // halo ring around the frame centre, lit on the source side
   vec2 pc = (uv - 0.5) * a2;
@@ -896,16 +942,41 @@ void main(){
     col = sampleScene(uv);
   }
   vec3 bloom = texture2D(tBloom, uv).rgb * uBloomNorm;
+  float ae = exp2(texture2D(tAE, vec2(0.5)).r);
+  if (uBloomCap > 0.5) {
+    // Thresholded (space) bloom: the wide tail may not exceed ~2x the tight (1/8-res) bloom,
+    // so glow hugs the bright cores and large voids keep their OLED black.
+    float wl = lumOf(bloom), nl = lumOf(texture2D(tLocalA, uv).rgb);
+    bloom *= min(1.0, 2.0 * nl / max(wl, 1e-7));
+  }
   col = mix(col, bloom, uBloomStrength);
+  if (uBloomCore > 0.0) {
+    // Luminous core: a tight PSF only around exposed highlights (sun discs, windows, lamps, lava).
+    vec3 core = texture2D(tCore, uv).rgb;
+    col += core * uBloomCore * smoothstep(uHiStart, uHiStart * 4.0, lumOf(core) * uExposure * ae);
+  }
   col += bloom * uHalation * vec3(1.0, 0.35, 0.12) * 0.25;
   if (uClarity > 0.0 && gFar < 0.5) {
     // Local contrast ("clarity"): luminance relative to its 1/8–1/16-res surround, in log
     // space. Separates planes and shapes form the way a graded AAA frame does; sky untouched.
     float yl = 0.5 * (lumOf(texture2D(tLocalA, uv).rgb) + lumOf(texture2D(tLocalB, uv).rgb));
     float y = lumOf(col);
-    if (y > 1e-7 && yl > 1e-7) col *= pow(clamp(y / yl, 0.5, 2.0), uClarity);
+    // shadow-protected: deep shade is not pushed around (no milky lifted shadows)
+    if (y > 1e-7 && yl > 1e-7) col *= pow(clamp(y / yl, 0.5, 2.0), uClarity * smoothstep(0.01, 0.12, yl * uExposure * ae));
   }
-  float ae = exp2(texture2D(tAE, vec2(0.5)).r);
+  if (uShadowLift > 0.0 && gFar < 0.5) {
+    // Local exposure (cf. UE5 'shadow contrast'): a shaded plane — forest understory, the dark
+    // side of a trunk or an island — is metered against its own surround, not the sky, and opens
+    // by up to +1.1 EV. The pixel's own luminance is mixed in (no dark halos at sky edges) and the
+    // gain is multiplicative, so black stays black and local texture contrast is preserved.
+    float yl2 = 0.5 * (lumOf(texture2D(tLocalA, uv).rgb) + lumOf(texture2D(tLocalB, uv).rgb));
+    float yp = lumOf(col);
+    float lloc = exp2(mix(log2(max(yl2, 1e-8)), log2(max(yp, 1e-8)), 0.3));
+    float tgt = exp2(texture2D(tAE, vec2(0.5)).g) * 0.7;
+    // deepest shade (> ~4 EV under the key: crevices, the underside of things) keeps its black anchor
+    float deep = smoothstep(tgt * 0.04, tgt * 0.2, lloc);
+    col *= clamp(pow(tgt / max(lloc, 1e-8), uShadowLift * deep), 1.0, 2.2);
+  }
   col *= uExposure * ae;
   // Veiling glare (Spencer et al. 1995): very bright sources scatter into a soft luminous
   // core and a long tail. Built from the exposed excess only, so ordinary scenes are untouched.
@@ -929,7 +1000,30 @@ void main(){
   float vig = smoothstep(0.85, 0.85 - uVignetteSoft, length(vd) * (1.0 + uVignette * 0.6));
   col *= mix(1.0 - uVignette, 1.0, vig);
 
-  col = uToneMap < 0.5 ? agx(col) : (uToneMap < 1.5 ? acesFitted(col) : pbrNeutral(col));
+  col = tonemap(col);
+  {
+    // Adaptive levels: the metered 2nd / 99.5th percentiles, tone-mapped, become the frame's
+    // black and white anchors (OLED black stays 0; nothing is clipped that was not near white).
+    vec4 A = texture2D(tAE, vec2(0.5));
+    if (A.b > -29.0 && (uAutoBlack > 0.0 || uAutoWhite > 0.0)) {
+      float E = uExposure * ae;
+      float dLo = lumOf(tonemap(vec3(exp2(A.b) * E)));
+      float dHi = lumOf(tonemap(vec3(exp2(A.a) * E)));
+      float bp = clamp(dLo * 0.6, 0.0, 0.05) * uAutoBlack;
+      float wp = mix(1.0, clamp(dHi / 0.96, 0.8, 1.0), uAutoWhite);
+      col = max(col - bp, 0.0) / max(wp - bp, 0.5);
+      if (uAutoContrast > 0.0) {
+        // Spread the midtones around the frame's own metered mid-grey (not a fixed pivot), so
+        // flat hazy frames separate their planes while exposure — the median — stays put.
+        float pv = clamp((lumOf(tonemap(vec3(exp2(A.g) * E))) - bp) / max(wp - bp, 0.5), 0.12, 0.7);
+        float k = 1.0 + uAutoContrast;
+        vec3 x = clamp(col, 0.0, 1.0);
+        vec3 lo = pv * pow(x / pv, vec3(k));
+        vec3 hi = 1.0 - (1.0 - pv) * pow(max(1.0 - x, 0.0) / (1.0 - pv), vec3(k));
+        col = mix(lo, hi, step(vec3(pv), x));
+      }
+    }
+  }
   if (uUseLUT > 0.5) col = applyLUT(col);
   // Black point after the LUT (a 32^3 LUT cannot resolve the first few code values):
   // the faint veil of bloom/scatter over space collapses to true OLED black.
@@ -942,13 +1036,19 @@ void main(){
   // multiplicative so OLED black stays exactly black.
   vec2 gp = gl_FragCoord.xy / (uGrainSize * max(uResolution.y / 1080.0, 0.5));
   vec2 go = vec2(fract(uFrameSeed * 0.6180339) * 431.0, fract(uFrameSeed * 0.7548776) * 377.0);
-  float gn = gnoise(gp + go) * 0.65 + gnoise(gp * 2.17 + go.yx) * 0.35 - 0.5;
+  float gn = filmGrain(gp, go);
   float lg = lumOf(col);
-  if (uGrainHere > 0.5) col *= 1.0 + gn * uGrain * 2.6 * (1.0 - lg) * smoothstep(0.02, 0.25, lg) * (1.0 - 0.75 * gFar);
+  if (uGrainHere > 0.5) col *= 1.0 + gn * uGrain * 2.6 * (1.0 - lg) * smoothstep(0.02, 0.25, lg) * (1.0 - 0.75 * gFar) * vec3(1.0, 0.92, 0.7);
   // Fade (level transitions)
   col = mix(col, uFadeColor, uFade);
   // Dither to kill banding in gradients (never lifts black).
-  if (uGrainHere > 0.5) col += (hash12(gl_FragCoord.xy + fract(uFrameSeed * 0.31) * 97.0) - 0.5) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  // Interleaved-gradient (blue-ish) noise, triangular PDF, +-1 LSB, offset per frame by an R2 step:
+  // no visible pattern, no banding, never lifts black.
+  if (uGrainHere > 0.5) {
+    vec2 dpx = gl_FragCoord.xy + floor(vec2(fract(uFrameSeed * 0.7548777), fract(uFrameSeed * 0.5698403)) * 64.0);
+    float dn = ignoise(dpx) + ignoise(dpx + vec2(37.0, 17.0)) - 1.0;
+    col += dn / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  }
   if (uDebug > 0.5) {
     if (uDebug < 1.5) col = vec3(ae / 8.0, texture2D(tAE, vec2(0.5)).g * 0.05 + 0.5, 0.0); // exposure
     else col = texture2D(tStreak, uv).rgb + lensGhosts(uv, texture2D(tFlare, vec2(0.5)), aspect); // flare
@@ -995,6 +1095,15 @@ ${DEPTH_GLSL}
 uniform sampler2D tInput, tDepth; uniform vec2 uTexel; uniform float uSharp, uReversed;
 uniform vec2 uResolution; uniform float uFrameSeed, uGrain, uGrainSize;
 varying vec2 vUv;
+float filmGrain(vec2 gp, vec2 go){
+  // Triangular-PDF grain per grain cell (two hashes), lightly mixed with the neighbouring
+  // cell so the clumps are organic, not square: reads as silver halide, not video noise.
+  vec2 c = floor(gp + go), f = fract(gp + go);
+  float a = hash12(c) + hash12(c + 71.3) - 1.0;
+  vec2 nb = c + (f.x > f.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+  float b = hash12(nb) + hash12(nb + 71.3) - 1.0;
+  return mix(a, b, 0.3) * 0.42;
+}
 float gnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float a = hash12(i), b = hash12(i + vec2(1, 0)), c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
@@ -1009,16 +1118,17 @@ void main(){
   vec3 mn = min(e, min(min(b, d), min(f, h)));
   vec3 mx = max(e, max(max(b, d), max(f, h)));
   vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-4), 0.0, 1.0));
-  float gate = smoothstep(0.03, 0.14, lumOf(e));
+  float gate = smoothstep(0.03, 0.14, lumOf(e)) * (1.0 - smoothstep(0.12, 0.4, lumOf(mx - mn)));
   vec3 w = -amp / mix(8.0, 5.0, uSharp) * gate;
   vec3 col = clamp((e + (b + d + f + h) * w) / (1.0 + 4.0 * w), 0.0, 1.0);
   float gFar = isFarDepth(texture2D(tDepth, vUv).r, uReversed) ? 1.0 : 0.0;
   vec2 gp = gl_FragCoord.xy / (uGrainSize * max(uResolution.y / 1080.0, 0.5));
   vec2 go = vec2(fract(uFrameSeed * 0.6180339) * 431.0, fract(uFrameSeed * 0.7548776) * 377.0);
-  float gn = gnoise(gp + go) * 0.65 + gnoise(gp * 2.17 + go.yx) * 0.35 - 0.5;
+  float gn = filmGrain(gp, go);
   float lg = lumOf(col);
-  col *= 1.0 + gn * uGrain * 2.6 * (1.0 - lg) * smoothstep(0.02, 0.25, lg) * (1.0 - 0.75 * gFar);
-  col += (hash12(gl_FragCoord.xy + fract(uFrameSeed * 0.31) * 97.0) - 0.5) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
+  col *= 1.0 + gn * uGrain * 2.6 * (1.0 - lg) * smoothstep(0.02, 0.25, lg) * (1.0 - 0.75 * gFar) * vec3(1.0, 0.92, 0.7);
+  vec2 dpx = gl_FragCoord.xy + floor(vec2(fract(uFrameSeed * 0.7548777), fract(uFrameSeed * 0.5698403)) * 64.0);
+  col += (ignoise(dpx) + ignoise(dpx + vec2(37.0, 17.0)) - 1.0) / 255.0 * smoothstep(0.0, 3.0 / 255.0, lg);
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
@@ -1064,13 +1174,14 @@ export class PostFX {
     this.debug = dbg;
     // Feature tiers (low/medium keep the cheap passes only).
     this.settings = {
-      taa: q >= 2 && params.get('aa') !== 'fxaa' && dbg !== 'noaa' && dbg !== 'fxaa',
+      // TAA from medium up: one 14-tap pass + a history target is far cheaper than the shimmer it removes
+      taa: q >= 1 && params.get('aa') !== 'fxaa' && dbg !== 'noaa' && dbg !== 'fxaa',
       ao: q >= 2 && dbg !== 'noao', // GTAO: high/ultra only (phones run low/medium)
       aoSlices: quality.pick(1, 1, 2, 3), aoSteps: quality.pick(4, 4, 6, 8),
-      flare: q >= 1, streak: q >= 1,
-      motionBlur: q >= 2, dof: q >= 1, dofHalf: true,
-      sharpen: q >= 2,
-      glare: q >= 1,
+      flare: q >= 2, streak: q >= 2,
+      motionBlur: q >= 2, dof: q >= 2 || (q >= 1 && this.shotMode), dofHalf: true,
+      sharpen: q >= 1, // CAS restores the detail TAA softens (one 5-tap pass)
+      glare: q >= 2,
       lut: dbg !== 'nolut',
     };
 
@@ -1101,7 +1212,7 @@ export class PostFX {
     this.downMat = mat(DOWN_FRAG, { tInput: U(null), tAE: U(null), uTexel: U(new THREE.Vector2()), uFirst: U(0), uThreshold: U(0), uKnee: U(0.5), uHiBoost: U(0), uHiStart: U(2), uExposure: U(1) });
     this.upMat = mat(UP_FRAG, { tLow: U(null), tHigh: U(null), uTexel: U(new THREE.Vector2()), uWeight: U(1) });
     const aoDefs = { SLICES: this.settings.aoSlices, STEPS: this.settings.aoSteps };
-    this.aoMat = mat(AO_FRAG, { tDepth: U(null), uProjInv: U(new THREE.Matrix4()), uFullTexel: U(new THREE.Vector2()), uReversed: U(R), uRadius: U(1), uProjScale: U(1), uMaxPx: U(64), uFrame: U(0), uFadeEnd: U(300) }, aoDefs);
+    this.aoMat = mat(AO_FRAG, { tDepth: U(null), uProjInv: U(new THREE.Matrix4()), uFullTexel: U(new THREE.Vector2()), uReversed: U(R), uRadius: U(1), uProjScale: U(1), uMaxPx: U(64), uFrame: U(0), uFadeEnd: U(300), uGrow: U(0) }, aoDefs);
     this.aoBlurMat = mat(AO_BLUR_FRAG, { tAO: U(null), uDir: U(new THREE.Vector2()) });
     this.aoApplyMat = mat(AO_APPLY_FRAG, { tScene: U(null), tAO: U(null), tDepth: U(null), uAORes: U(new THREE.Vector2()), uReversed: U(R), uNear: U(0.1), uFar: U(1000), uIntensity: U(1), uPower: U(1.4), uFadeEnd: U(300), uDebug: U(0) });
     const reproU = () => ({ uProjInvU: U(new THREE.Matrix4()), uPrevProj: U(new THREE.Matrix4()), uRel: U(new THREE.Matrix4()), uReversed: U(R) });
@@ -1112,10 +1223,10 @@ export class PostFX {
     this.cocMat = mat(DOF_COC_FRAG, { tInput: U(null), ...dofU() });
     this.gatherMat = mat(DOF_GATHER_FRAG, { tCoc: U(null), uTexel: U(new THREE.Vector2()), uMaxCoc: U(8) });
     this.mergeMat = mat(DOF_MERGE_FRAG, { tInput: U(null), tBlur: U(null), ...dofU() });
-    this.lumMat = mat(LUM_FRAG, { tInput: U(null), uCell: U(new THREE.Vector2()) });
+    this.lumMat = mat(LUM_FRAG, { tInput: U(null), tDepth: U(null), uReversed: U(R), uSky: U(0.5), uCell: U(new THREE.Vector2()) });
     this.reduceMat = mat(REDUCE_FRAG, { tInput: U(null), uSrcTexel: U(new THREE.Vector2()) });
     this.histMat = mat(HIST_FRAG, { tLum: U(null) });
-    this.adaptMat = mat(ADAPT_FRAG, { tHist: U(null), tPrev: U(null), uKey: U(0.18), uAmount: U(1), uMin: U(-2), uMax: U(2), uUp: U(2), uDown: U(1), uDt: U(0.016), uInstant: U(1), uDarkComp: U(0.4), uLoPct: U(0.4), uHiPct: U(0.9) });
+    this.adaptMat = mat(ADAPT_FRAG, { tHist: U(null), tPrev: U(null), uKey: U(0.18), uAmount: U(1), uMin: U(-2), uMax: U(2), uUp: U(2), uDown: U(1), uDt: U(0.016), uInstant: U(1), uDarkComp: U(0.4), uLoPct: U(0.4), uHiPct: U(0.9), uNightKey: U(0) });
     this.glarePreMat = mat(GLARE_PRE_FRAG, { tInput: U(null), tAE: U(null), uSrcTexel: U(new THREE.Vector2()), uExposure: U(1), uThreshold: U(3) });
     this.brightMat = mat(BRIGHT_FRAG, { tInput: U(null), tAE: U(null), uSrcTexel: U(new THREE.Vector2()), uExposure: U(1), uThreshold: U(5) });
     this.streakMat = mat(STREAK_FRAG, { tInput: U(null), tA: U(null), tB: U(null), uStep: U(new THREE.Vector2()), uFinal: U(0) });
@@ -1137,6 +1248,7 @@ export class PostFX {
       uVignette: U(0.3), uVignetteSoft: U(0.5), uGrain: U(0.03), uGrainSize: U(1.35), uChroma: U(0.002), uBloomStrength: U(0.06), uBloomNorm: U(1), uHalation: U(0),
       uStreak: U(0), uFlare: U(0), uStreakTint: U(new THREE.Vector3(0.5, 0.7, 1)), uUseLUT: U(1), uUseStreak: U(0), uUseFlare: U(0),
       uWarp: U(0), uFade: U(0), uFadeColor: U(new THREE.Color()), uDebug: U(0), uPurkinje: U(0), uBlackPoint: U(0.004), uBlackToe: U(0.02),
+      tCore: U(null), uBloomCore: U(0), uHiStart: U(1.2), uBloomCap: U(0), uAutoBlack: U(0), uAutoWhite: U(0), uAutoContrast: U(0), uShadowLift: U(0),
     });
     this.fxaaMat = mat(FXAA_FRAG, { tInput: U(null), uTexel: U(new THREE.Vector2()) });
     this.casMat = mat(CAS_FRAG, { tInput: U(null), tDepth: U(null), uReversed: U(R), uTexel: U(new THREE.Vector2()), uSharp: U(0.35),
@@ -1207,7 +1319,7 @@ export class PostFX {
     if (this.settings.glare) {
       this.glareDown = []; this.glareUp = [];
       let gw = Math.max(1, W >> 2), gh = Math.max(1, H >> 2);
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) { // 7 mips: soft core + a long, wide veiling tail
         this.glareDown.push(new THREE.WebGLRenderTarget(gw, gh, hdr));
         this.glareUp.push(new THREE.WebGLRenderTarget(gw, gh, hdr));
         gw = Math.max(1, gw >> 1); gh = Math.max(1, gh >> 1);
@@ -1335,10 +1447,11 @@ export class PostFX {
     this._t('ao');
     // 2) ambient occlusion (before atmosphere so fog is never occluded)
     if (S.ao && this.aoRT && g.ao > 0.001 && camera.isPerspectiveCamera) {
+      const aoFar = g.aoFar > 0 ? 1 + 3 * Math.min(1, g.aoFar) * (this.quality.level >= 2 ? 1 : 0.5) : 1;
       const a = this.aoMat.uniforms;
       a.tDepth.value = depth; a.uProjInv.value.copy(this._projInv); a.uFullTexel.value.set(1 / W, 1 / H);
       a.uRadius.value = g.aoRadius; a.uProjScale.value = 0.5 * H * this._projU.elements[5];
-      a.uMaxPx.value = Math.min(H * 0.12, 96); a.uFrame.value = useTAA ? this.frame % 64 : 0; a.uFadeEnd.value = g.aoDistance;
+      a.uMaxPx.value = Math.min(H * 0.12, 96); a.uFrame.value = useTAA ? this.frame % 64 : 0; a.uFadeEnd.value = g.aoDistance * aoFar; a.uGrow.value = g.aoFar > 0 ? 0.012 : 0;
       this.fs.render(r, this.aoMat, this.aoRT[0]);
       const b = this.aoBlurMat.uniforms; const aw = this.aoRT[0].width, ah = this.aoRT[0].height;
       b.tAO.value = this.aoRT[0].texture; b.uDir.value.set(1 / aw, 0); this.fs.render(r, this.aoBlurMat, this.aoRT[1]);
@@ -1346,7 +1459,7 @@ export class PostFX {
       const p = this.aoApplyMat.uniforms;
       p.tScene.value = src; p.tAO.value = this.aoRT[0].texture; p.tDepth.value = depth; p.uAORes.value.set(aw, ah);
       p.uNear.value = camera.near; p.uFar.value = camera.far; p.uIntensity.value = Math.min(1.5, g.ao); p.uPower.value = g.aoPower;
-      p.uFadeEnd.value = g.aoDistance; p.uDebug.value = this.debug === 'ao' ? 1 : 0;
+      p.uFadeEnd.value = g.aoDistance * aoFar; p.uDebug.value = this.debug === 'ao' ? 1 : 0;
       const out = this._other(src); this.fs.render(r, this.aoApplyMat, out); src = out.texture;
     }
 
@@ -1409,7 +1522,7 @@ export class PostFX {
     this._t('exposure');
     // 7) auto exposure
     {
-      const l = this.lumMat.uniforms; l.tInput.value = src; l.uCell.value.set(1 / 64, 1 / 64);
+      const l = this.lumMat.uniforms; l.tInput.value = src; l.uCell.value.set(1 / 64, 1 / 64); l.tDepth.value = depth; l.uSky.value = g.aeSky;
       this.fs.render(r, this.lumMat, this.lumRTs[0]);
       this.histMat.uniforms.tLum.value = this.lumRTs[0].texture;
       this.fs.render(r, this.histMat, this.histRT);
@@ -1417,11 +1530,11 @@ export class PostFX {
       const prev = this.aeRT[this._aeIdx], next = this.aeRT[1 - this._aeIdx];
       a.tHist.value = this.histRT.texture; a.tPrev.value = prev.texture; a.uLoPct.value = g.aeLow; a.uHiPct.value = g.aeHigh;
       a.uKey.value = g.aeKey; a.uAmount.value = g.autoExposure; a.uMin.value = g.aeMin; a.uMax.value = g.aeMax;
-      a.uDarkComp.value = g.aeDarkComp; a.uUp.value = g.aeSpeedUp; a.uDown.value = g.aeSpeedDown; a.uDt.value = dt; a.uInstant.value = instant ? 1 : 0;
+      a.uDarkComp.value = g.aeDarkComp; a.uNightKey.value = g.aeNightKey; a.uUp.value = g.aeSpeedUp; a.uDown.value = g.aeSpeedDown; a.uDt.value = dt; a.uInstant.value = instant ? 1 : 0;
       this.fs.render(r, this.adaptMat, next); this._aeIdx = 1 - this._aeIdx; this._aeValid = true;
       if (this.debug === 'aelog' && this.frame % 4 === 0) {
         const px = new Float32Array(4); r.readRenderTargetPixels(next, 0, 0, 1, 1, px);
-        console.warn(`[postfx] ae ev=${px[0].toFixed(2)} meteredLog2=${px[1].toFixed(2)} weight=${px[2].toFixed(0)} key=${g.aeKey}`);
+        console.warn(`[postfx] ae ev=${px[0].toFixed(2)} meteredLog2=${px[1].toFixed(2)} p2=${px[2].toFixed(2)} p99.5=${px[3].toFixed(2)} key=${g.aeKey}`);
       }
     }
     const aeTex = this.aeRT[this._aeIdx].texture;
@@ -1473,7 +1586,7 @@ export class PostFX {
         dm.tInput.value = s0.texture; dm.uTexel.value.set(1 / s0.width, 1 / s0.height); dm.uFirst.value = 0; dm.uThreshold.value = 0; dm.uHiBoost.value = 0;
         this.fs.render(r, this.downMat, this.glareDown[i]);
       }
-      const GW = [1.0, 0.75, 0.6, 0.55, 0.5];
+      const GW = [1.0, 0.72, 0.58, 0.52, 0.48, 0.44, 0.4]; // ~r^-2 tail once the mip area is counted
       const gn = this.glareDown.length;
       let gl = this.glareDown[gn - 1].texture, gsum = GW[gn - 1];
       for (let i = gn - 2; i >= 0; i--) {
@@ -1529,6 +1642,9 @@ export class PostFX {
     u.uExposure.value = g.exposure; u.uToneMap.value = g.toneMap === 'aces' ? 1 : g.toneMap === 'neutral' ? 2 : 0; u.uAgxPunch.value = g.agxPunch;
     u.uVignette.value = g.vignette; u.uVignetteSoft.value = g.vignetteSoftness; u.uGrain.value = g.grain; u.uGrainSize.value = g.grainSize; u.uChroma.value = g.chroma;
     u.uBloomStrength.value = g.bloomStrength; u.uHalation.value = g.halation; u.uBlackPoint.value = g.blackPoint; u.uBlackToe.value = g.blackToe; u.uPurkinje.value = g.autoExposure > 0.001 ? g.purkinje : 0;
+    u.tCore.value = this.down[Math.min(1, this.down.length - 1)].texture; u.uBloomCore.value = g.bloomCore; u.uHiStart.value = g.bloomHighlightStart;
+    u.uBloomCap.value = g.bloomThreshold > 0.001 ? 1 : 0;
+    const aeGate = Math.min(1, g.autoExposure / 0.5); u.uAutoBlack.value = g.autoBlack * aeGate; u.uShadowLift.value = g.bloomThreshold > 0.001 ? 0 : g.shadowLift * aeGate; u.uAutoContrast.value = g.autoContrast * aeGate; u.uAutoWhite.value = this.transition.warp > 0.01 ? 0 : g.autoWhite;
     u.uWarp.value = this.transition.warp; u.uFade.value = this.transition.fade; u.uFadeColor.value.copy(this.transition.color);
     u.uDebug.value = this.debug === 'exposure' ? 1 : this.debug === 'flare' ? 2 : 0;
     const finalPass = useTAA ? (S.sharpen && g.sharpen > 0.001 ? this.casMat : null) : this.fxaaMat;

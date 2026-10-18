@@ -74,6 +74,10 @@ index, planet index). URL: `?scene=planet&g=0&s=0&p=2`.
    (anamorphic); `ao`/`aoRadius`/`aoDistance` (GTAO, world units); `dof`,
    `dofFocus` (0 = autofocus), `dofAperture`; `motionBlur` (shutter 0–1),
    `motionBlurNear`; `sharpen`, `grain`, `chroma`, `halation`, `taa` (0 = FXAA).
+   Adaptive levels (with autoExposure): `autoBlack` / `autoWhite` / `autoContrast`
+   (histogram p2 / p99.5 become the black / white anchors), `shadowLift` (local exposure
+   of shaded planes), `aeSky` (sky metering weight), `aeNightKey` (night floor);
+   `bloomCore` (tight glow on exposed highlights), `aoFar` (multi-scale far GTAO).
    Animate with `engine.postfx.setGrade(partial, seconds)`; call
    `engine.postfx.resetHistory?.()` on hard camera cuts. Debug: `?pfx=ao|exposure|flare|nolut|noaa`.
 
