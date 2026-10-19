@@ -1,0 +1,850 @@
+// Vehicles subsystem — hover bikes and starships, from orbit to the ground.
+//
+// Contract (docs/ARCHITECTURE.md › Player ⇄ vehicles):
+//   level.vehicles = this; list; nearest(pos, maxDist)
+//   vehicle: { type, object3d, position, quaternion, velocity, seat, cameraProfile,
+//              canBoard(pos), enter(player), exit() → Vector3, update(dt, input|null) }
+// The player boards with player.board(vehicle) and calls exit() on interact.
+//
+// This module also owns:
+//   - placement: a hover bike beside the player's spawn, the ship on the first
+//     settlement's landing pad (or the flattest spot at its edge), bikes at towns;
+//     spawn 'orbit' puts the ship ~2.5 R from the planet centre, nose on the world;
+//   - the ship chase camera (bank-following, orientation-lagged, FOV kick) — it
+//     drives the camera through level.freeCam so the player's horizon-locked rig
+//     stands down while flying (the bike uses the player's rig via cameraProfile);
+//   - flight UX: telemetry, prompts (land / exit / leave orbit), interact while
+//     airborne = automatic landing, climbing above 3 R → engine.up();
+//   - shared VFX pools (dust, spray), boost speed streaks, audio engine layers;
+//   - screenshot presets: bike, ship, orbit.
+
+import * as THREE from 'three';
+import { vehicleMaterials } from './Materials.js';
+import { Bike } from './Bike.js';
+import { Ship } from './Ship.js';
+import { Particles, Streaks } from './VFX.js';
+import { Random, seedFrom } from '../core/Random.js';
+import { valueFbm3, valueNoise3 } from '../levels/planet/flora/scatter.js';
+
+const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep;
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3(), _q2v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
+
+/** Minimal input stand-in for scripted driving (screenshots). */
+class ScriptInput {
+  constructor() { this.move = { x: 0, y: 0 }; this.look = { x: 0, y: 0 }; this.throttle = 0; this.zoom = 0; this.held = new Set(); }
+  down(a) { return this.held.has(a); }
+  pressed() { return false; }
+  released() { return false; }
+}
+
+export default class Vehicles {
+  static order = 10;
+
+  constructor(level) {
+    this.level = level;
+    this.engine = level.engine;
+    this.world = level.world;
+    this.list = [];
+    this.time = 0;
+    this.autopilot = null; this.apParams = null;
+    this.shotDrive = null; this.shotCam = null;
+    this.forceVortex = 0; this.forceContrail = 0;
+    this.ambientLight = new THREE.Color(1, 1, 1);
+    this.dustColor = new THREE.Color(0.6, 0.52, 0.42);
+    this.fxScale = this.engine.quality.pick(0.4, 0.7, 1, 1.3);
+    this._shake = 0;
+    this._prompt = null;
+    this._telT = 0;
+    // shot tuning from the URL (?vp=head:1.9;tod:0.74) — harness only
+    this.shotParams = {};
+    for (const kv of (this.engine.params.get('vp') || '').split(';')) { const [k, v] = kv.split(':'); if (k && v != null && !isNaN(+v)) this.shotParams[k] = +v; }
+    level.vehicles = this;
+  }
+
+  async init(progress) {
+    const level = this.level, w = this.world, engine = this.engine;
+    this.mats = vehicleMaterials(engine);
+    this.dust = new Particles(engine.quality.pick(500, 1000, 2200, 3000));
+    this.spray = new Particles(engine.quality.pick(300, 600, 1000, 1400));
+    level.scene.add(this.dust.points, this.spray.points);
+    // planet-shine: light bounced off the lit planet below, on vehicles in space (always present → no program churn)
+    this.planetShine = new THREE.DirectionalLight(0xffffff, 0);
+    level.scene.add(this.planetShine, this.planetShine.target);
+    this.streaks = new Streaks(engine.quality.pick(40, 60, 90, 120));
+    level.camera.add(this.streaks.mesh);
+    const P = level.planet;
+    const rng = new Random(seedFrom(P.seed ?? 1, 'vehicles'));
+    this.rng = rng;
+    const g = level.lighting?.groundAlbedo;
+    if (g) this.dustColor.copy(g).multiplyScalar(1.25).lerp(new THREE.Color(0.8, 0.73, 0.62), 0.6); // pale, sunlit grit: reads over its own ground
+
+    // ---- the hero ship + its spawn
+    const spawn = level.opts?.spawn || engine.params.get('spawn') || 'orbit';
+    this.spawnKind = spawn;
+    const site0 = w.sites[0];
+    const siteDir = site0 ? site0.dir.clone() : w.focus.clone().normalize();
+    const hero = new Ship(this, { seed: rng.int(1, 1e6), livery: 0 });
+    hero.addTo(level.scene); this.list.push(hero);
+    this.hero = hero;
+    const spawnSpot = this._playerSpawnSpot();
+    // where a descent from orbit sets down: beside the player's arrival spot by the first
+    // settlement (clear of the bike, which waits on the other side)
+    {
+      const up = spawnSpot.position.clone().normalize();
+      const f = spawnSpot.facing.clone().addScaledVector(up, -spawnSpot.facing.dot(up)).normalize();
+      const right = new THREE.Vector3().crossVectors(f, up).normalize();
+      this.arrival = spawnSpot.position.clone().addScaledVector(right, -26).addScaledVector(f, 8).normalize();
+    }
+    // bike right beside the player's spawn, angled toward the settlement
+    const bike = new Bike(this, { seed: rng.int(1, 1e6), livery: 0 });
+    bike.addTo(level.scene); this.list.push(bike);
+    {
+      const up = spawnSpot.position.clone().normalize();
+      const f = spawnSpot.facing.clone().addScaledVector(up, -spawnSpot.facing.dot(up)).normalize();
+      const right = _v.crossVectors(f, up).normalize();
+      const d = spawnSpot.position.clone().addScaledVector(right, 4.5).addScaledVector(f, 2.5).normalize();
+      bike.place(d, f.clone().applyAxisAngle(up, -0.5));
+    }
+    if (spawn === 'orbit') {
+      this._orbitPose(hero, siteDir);
+      // a second ship waits on the pad
+      const parked = new Ship(this, { seed: rng.int(1, 1e6), livery: 2 });
+      parked.addTo(level.scene); this.list.push(parked);
+      this.parkedShip = parked;
+    } else this.parkedShip = hero;
+    this._parkAtSettlement(this.parkedShip, site0, spawnSpot);
+    // bikes at other towns
+    const extra = engine.quality.pick(1, 2, 3, 4);
+    for (const s of w.sites.slice(1)) {
+      if (this.list.filter((v) => v.type === 'bike').length > extra) break;
+      if (!['town', 'city', 'village', 'megacity', 'spaceport', 'outpost'].includes(s.kind)) continue;
+      const b = new Bike(this, { seed: rng.int(1, 1e6), livery: rng.int(0, 3) });
+      b.addTo(level.scene); this.list.push(b);
+      const spot = this._edgeSpot(s.dir, clamp(s.radius * 0.5, 80, 500), rng);
+      b.place(spot.dir, _v.copy(s.dir).sub(spot.dir));
+    }
+    progress?.(1);
+  }
+
+  // =====================================================================================
+  // Placement helpers
+  // =====================================================================================
+  /** Mirrors the player's _surfaceSpot so the bike waits right next to the player. */
+  _playerSpawnSpot() {
+    const w = this.world;
+    const site = w.sites[0];
+    const base = site ? site.dir.clone() : w.focus.clone().normalize();
+    const t1 = new THREE.Vector3(0, 1, 0).cross(base); if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0); t1.normalize();
+    const t2 = base.clone().cross(t1).normalize();
+    const dist = site ? clamp(site.radius * 0.55, 90, 420) : 0;
+    let best = null;
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      const dir = base.clone().addScaledVector(t1, Math.cos(a) * dist / w.radius).addScaledVector(t2, Math.sin(a) * dist / w.radius).normalize();
+      const h = w.heightAt(dir);
+      if (w.hasOcean && h < w.seaLevel + 1) continue;
+      const n = w.normalAt(dir);
+      const score = n.dot(dir) * 10 - Math.abs(h - (site?.height ?? h)) * 0.02;
+      if (!best || score > best.score) best = { dir, h, score };
+    }
+    if (!best) best = { dir: base, h: w.heightAt(base) };
+    const position = best.dir.clone().multiplyScalar(w.radius + best.h);
+    const target = site ? site.position : position.clone().add(t1);
+    return { position, facing: target.clone().sub(position), dir: best.dir };
+  }
+
+  /** Flattest dry spot on a ring around `center`. */
+  _edgeSpot(center, dist, rng, avoid = null) {
+    const w = this.world;
+    const t1 = new THREE.Vector3(0, 1, 0).cross(center); if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0); t1.normalize();
+    const t2 = center.clone().cross(t1).normalize();
+    let best = null;
+    const a0 = rng ? rng.float() * 6.28 : 0;
+    for (let k = 0; k < 20; k++) {
+      const a = a0 + (k / 20) * Math.PI * 2;
+      const dir = center.clone().addScaledVector(t1, Math.cos(a) * dist / w.radius).addScaledVector(t2, Math.sin(a) * dist / w.radius).normalize();
+      const h = w.heightAt(dir);
+      if (w.hasOcean && h < w.seaLevel + 1.5) continue;
+      const n = w.normalAt(dir, _v, 3);
+      let score = n.dot(dir) * 20;
+      if (avoid && dir.angleTo(avoid) * w.radius < 40) score -= 30;
+      // free of colliders
+      _p.copy(dir).multiplyScalar(w.radius + h + 1);
+      _v3.copy(_p);
+      if (w.collide(_v3, 8, 4)) score -= 15;
+      if (!best || score > best.score) best = { dir, score };
+    }
+    return best || { dir: center.clone(), score: 0 };
+  }
+
+  _parkAtSettlement(ship, site, spawnSpot) {
+    const dir = site ? site.dir : spawnSpot.dir;
+    const spot = this._edgeSpot(dir, site ? clamp(site.radius * 0.42, 70, 360) : 30, this.rng, spawnSpot.dir);
+    ship.park(spot.dir, _v.copy(dir).sub(spot.dir).normalize());
+    this._padPending = !!site; // re-seat on a civ landing pad once the settlement exists
+  }
+
+  /** Try to move the parked ship onto a landing pad built by the civ subsystem. */
+  _seatOnPad() {
+    const civ = this.level.sys?.civ || this.level.civilization;
+    const main = civ?.settlements?.[0];
+    const pads = main?.ctx?.pads;
+    if (!main || !main.built) return main ? false : true;
+    this._padPending = false;
+    if (!pads?.length) return true;
+    const ship = this.parkedShip;
+    if (!ship || ship.rider || !ship.landed) return true;
+    const pad = pads.reduce((a, b) => (b.R > a.R ? b : a));
+    const dir = main.frame.dirAt(pad.x, pad.z, new THREE.Vector3());
+    ship.park(dir, _v.copy(main.frame.origin).normalize().sub(dir));
+    return true;
+  }
+
+  _orbitPose(ship, siteDir) {
+    const w = this.world;
+    // above the morning side, a little off the settlement, nose on the world
+    const side = new THREE.Vector3(0, 1, 0).cross(siteDir).normalize();
+    const pos = siteDir.clone().addScaledVector(side, -0.55).addScaledVector(Y, 0.2).normalize().multiplyScalar(w.radius * 2.5);
+    const target = siteDir.clone().multiplyScalar(w.radius);
+    ship.fly(pos, target, 0, siteDir.clone().addScaledVector(side, 0.5));
+    ship.thrSet = 0.25;
+  }
+
+  // =====================================================================================
+  // Contract
+  // =====================================================================================
+  nearest(pos, maxDist = 6) {
+    let best = null, bd = Infinity;
+    for (const v of this.list) {
+      const reach = v.type === 'ship' ? maxDist + 5 : maxDist;
+      const d = v.position.distanceTo(pos);
+      if (d < reach && d < bd) { bd = d; best = v; }
+    }
+    return best;
+  }
+
+  onBoard(v) {
+    this._shipCamInit = false;
+    if (!this.engine.shotMode) this.engine.postfx?.setGrade?.({ motionBlur: v.type === 'ship' ? 0.4 : 0.32, motionBlurNear: v.type === 'ship' ? 28 : 6 }, 0.5);
+    if (v.type === 'ship') v.thrSet = v.landed ? 0 : Math.max(v.thrSet, 0.3);
+  }
+  onAlight(v) {
+    if (this.level.freeCam && this.level.freeCam._vehicles) this.level.freeCam = null;
+    this.engine.audio.setEngine?.(null, 0);
+    this.engine.ui.telemetry?.(null);
+    this._setPrompt(null);
+    this.streaks.mesh.visible = false;
+    if (!this.engine.shotMode) this.engine.postfx?.setGrade?.({ motionBlur: 0, motionBlurNear: 0 }, 0.5);
+    void v;
+  }
+
+  shake(k) {
+    this._shake = Math.max(this._shake, k);
+    // bumps, scrapes and touchdowns in the hands too (rate-limited in Input.rumble)
+    if (k > 0.12) this.engine.input?.rumble?.(Math.min(1, k * 0.9), 50 + k * 140);
+  }
+
+  // =====================================================================================
+  // Frame
+  // =====================================================================================
+  update(dt, t) {
+    // shot sims run ahead of the engine clock: keep that lead so the particles they emitted stay alive
+    t += this._tOff || 0;
+    this.time = t;
+    const level = this.level, engine = this.engine;
+    if (this._padPending && (this._padTry = (this._padTry || 0) + 1) % 30 === 1) { try { this._seatOnPad(); } catch (e) { this._padPending = false; console.warn('[vehicles] pad', e); } }
+    // light for particles / trails from the planet's lighting model
+    const L = level.lighting;
+    if (L) {
+      const k = L.keyColor, s = L.skyColor;
+      this.ambientLight.setRGB(k.r * 0.22 + s.r * 0.9, k.g * 0.22 + s.g * 0.9, k.b * 0.22 + s.b * 0.9);
+      for (const P of [this.dust, this.spray]) {
+        // white water scatters sun + sky far more than grit does: spray must read brighter than the sea under it
+        const kl = P === this.spray ? 0.85 : 0.3, ka = P === this.spray ? 1.5 : 0.9;
+        P.uniforms.uLight.value.setRGB(k.r * kl, k.g * kl, k.b * kl);
+        P.uniforms.uAmb.value.copy(s).multiplyScalar(ka);
+        P.uniforms.uUp.value.copy(level.camera.position).normalize();
+      }
+    }
+    const player = level.player;
+    const driving = player?.vehicle || null;
+    { const gv = this.shotCam?.vehicle; if (this.shotGlide && gv && gv._holdForShot) this._glide(dt, gv); }
+    for (const v of this.list) {
+      let input = null;
+      if (this.shotDrive === v) input = this.shotInput;
+      else if (driving === v) input = engine.input;
+      try { v.update(dt, input, t); } catch (e) { if (!v._err) { v._err = true; console.error('[vehicles]', e); } }
+    }
+    // parked vehicles far from the camera are a few pixels tall: skip their ~20 draw calls
+    const cpos = level.camera.position, hideD = engine.quality.pick(250, 400, 600, 1200);
+    for (const v of this.list) {
+      if (!v.object3d || !v.position) continue;
+      const near = v === driving || this.shotDrive === v || v.position.distanceToSquared(cpos) < hideD * hideD;
+      if (!near) v.object3d.visible = false; // Bike/Ship.update set it back each frame
+    }
+    const h = engine.renderer.domElement.height || innerHeight;
+    this.dust.update(t, level.camera, h);
+    this.spray.update(t, level.camera, h);
+
+    const camVeh = this.shotCam?.vehicle || driving;
+    this._planetShine(camVeh);
+    this._heroLight();
+    level.maxNear = camVeh && camVeh.type === 'ship' ? 0.5 : 0;
+    if (driving && this.list.includes(driving) && !this.shotCam) this._drive(dt, driving);
+    else if (this.shotCam && this.shotCam.vehicle) this._present(this.shotCam.vehicle, this.shotCam.streaks ?? 0);
+    else if (!driving) { this.streaks.mesh.visible = false; }
+    if (this.shotCam) this._updateShotCam();
+  }
+
+  /**
+   * Screenshot glide: the posed vehicle keeps moving along its velocity at a constant
+   * clearance (no physics), so the chase camera travels with it — the camera motion blur
+   * smears the ground/sea while the subject stays sharp, and spray/dust/trails are laid
+   * down along a real path instead of piling up on one spot.
+   */
+  _glide(dt, v) {
+    if (v.velocity.lengthSq() < 1) return;
+    const w = this.world, g0 = w.groundAt(v.position, this._gg || (this._gg = {}));
+    const top0 = Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity);
+    if (this._glideClear == null) this._glideClear = v.position.length() - top0;
+    const up0 = _v.copy(v.position).normalize();
+    v.position.addScaledVector(v.velocity, dt);
+    const up1 = _v2.copy(v.position).normalize();
+    // keep the vehicle's attitude relative to the local horizon (rotate with the curvature)
+    _q.setFromUnitVectors(up0, up1);
+    v.quaternion.premultiply(_q);
+    v.velocity.applyQuaternion(_q);
+    const g1 = w.groundAt(v.position, this._gg);
+    const top1 = Math.max(g1.radius, g1.water ? g1.waterRadius : -Infinity);
+    // ease toward the terrain (a hover vehicle follows it; a ship holds its line more stiffly)
+    let top = top1;
+    if (v.type === 'ship') {
+      // a ship holds its line over the highest ground just ahead (never sinks into a trough behind a crest)
+      const fwd = _p.copy(v.velocity).addScaledVector(up1, -v.velocity.dot(up1));
+      if (fwd.lengthSq() > 1e-6) {
+        fwd.normalize();
+        const R = v.position.length();
+        for (const m of [15, 30, 45, 60]) {
+          const gq = w.groundAt(_q2v.copy(v.position).addScaledVector(fwd, m).setLength(R), this._gg2 || (this._gg2 = {}));
+          top = Math.max(top, gq.radius, gq.water ? gq.waterRadius : -Infinity);
+        }
+      }
+    }
+    const want = top + this._glideClear, k = v.type === 'bike' ? 0.6 : 0.2;
+    v.position.setLength(v.position.length() + (want - v.position.length()) * k);
+    if (v.speed !== undefined) v.speed = v.velocity.length();
+    // the rider's cloth can't integrate a 1 m/frame scripted glide (it stretches into a long
+    // ribbon): let it re-settle at the seat every frame instead
+    const S = v.type === 'bike' ? this.level.player?.scarf : null;
+    if (S) { S._prevA = null; S.ready = false; }
+  }
+
+  /** Speed presentation for a posed (shot) vehicle: streaks + the bike's boost FOV kick. */
+  _present(v, si) {
+    this.streaks.mesh.visible = si > 0.02;
+    this.streaks.uniforms.uI.value = si;
+    this.streaks.uniforms.uTime.value = this.time;
+    this.streaks.uniforms.uSpeed.value = 1 + (v.boost || 0) * 1.5;
+  }
+
+  /** Vehicle hero lighting (Materials.js onBeforeCompile): sun rim on silhouettes + sky fill. */
+  _heroLight() {
+    const L = this.mats.light, w = this.world, cam = this.level.camera, sun = this.level.sun;
+    if (!L || !cam) return;
+    const q = (this._hq || (this._hq = new THREE.Quaternion())).copy(cam.quaternion).invert();
+    L.vehRimDir.value.copy(w.sunDir).applyQuaternion(q).normalize();
+    const sI = sun ? sun.intensity : 3;
+    const day = clamp(w.daylight ?? 1, 0, 1);
+    if (sun) L.vehRimCol.value.copy(sun.color).multiplyScalar(sI * 0.55); else L.vehRimCol.value.setScalar(sI * 0.55);
+    // sky fill: cool in daylight, faint at night, a touch of warmth at dusk
+    L.vehFill.value.setRGB(0.46 + 0.22 * (1 - day), 0.52, 0.6).multiplyScalar(0.022 + 0.065 * day).multiplyScalar(Math.max(sI, 1));
+    // space: thin Rayleigh-blue rim from the lit limb below (planet-facing edges of the hull)
+    const v = this.shotCam?.vehicle || this.level.player?.vehicle;
+    const sp = v && v.type === 'ship' ? v.space : 0;
+    if (L.vehLimbCol) {
+      if (sp > 0.02) {
+        const down = _v.copy(v.position).normalize();
+        const lit = clamp(0.35 + 0.8 * down.dot(w.sunDir), 0, 1);
+        L.vehLimbDir.value.copy(down).negate().applyQuaternion(q).normalize();
+        L.vehLimbCol.value.setRGB(0.25, 0.5, 1.0).multiplyScalar(sI * 0.5 * lit * sp);
+      } else L.vehLimbCol.value.setRGB(0, 0, 0);
+    }
+  }
+
+  _planetShine(v) {
+    const ps = this.planetShine, w = this.world;
+    const sp = v && v.type === 'ship' ? v.space : 0;
+    if (sp < 0.05) { ps.intensity = 0; return; }
+    const up = _v.copy(v.position).normalize();
+    const lit = clamp(0.5 + 0.6 * up.dot(w.sunDir), 0, 1);
+    const g = this.level.lighting?.groundAlbedo;
+    ps.color.setRGB(0.32, 0.45, 0.62);
+    if (g) ps.color.lerp(g, 0.4);
+    const sun = this.level.sun;
+    ps.intensity = (sun?.intensity ?? 3) * 0.32 * lit * sp;
+    ps.position.copy(v.position).addScaledVector(up, -200);
+    ps.target.position.copy(v.position);
+    ps.target.updateMatrixWorld();
+  }
+
+  _drive(dt, v) {
+    const engine = this.engine, ui = engine.ui, input = engine.input, w = this.world;
+    const key = input.lastDevice === 'gamepad' ? 'X' : 'E';
+    const r = v.position.length();
+    // ---- prompts & interact routing
+    if (v.type === 'ship') {
+      const leave = r > w.radius * 3;
+      if (leave) this._setPrompt(key, 'Leave orbit');
+      else if (v.landed) this._setPrompt(key, 'Exit ship');
+      else if (v.autoland) this._setPrompt(null);
+      else if (v.alt < 2500) this._setPrompt(key, 'Land');
+      else this._setPrompt(key, 'Descend to the surface');
+      if (input.pressed('interact') && !v.landed) {
+        input._pressed?.delete?.('interact'); // consumed: the player must not alight mid-air
+        if (leave) { engine.audio.sfx?.('warp'); engine.up(); return; }
+        v.autoland = true;
+        // from altitude, glide down to the arrival spot by the first settlement
+        const high = v.alt > 3000;
+        v.landTarget = high && this.arrival ? this.arrival.clone() : null;
+        ui.hint?.(high ? 'Descending to the surface · throttle or thrust takes back control' : 'Landing assist engaged', 3500);
+      }
+      if (!this.level.freeCam || this.level.freeCam._vehicles) this._shipCam(dt, v);
+    } else {
+      this._setPrompt(key, 'Dismount');
+      // FOV kick on boost (the player's rig reads cameraProfile.fov)
+      v.cameraProfile.fov = v.baseFov + v.boost * 14;
+    }
+    // ---- speed streaks
+    const sp = v.velocity.length();
+    const si = v.type === 'bike' ? v.boost * smooth(sp, 30, 90) : smooth(sp, 150, 600) * (1 - v.space * 0.7) * (0.4 + v.boost);
+    this.streaks.mesh.visible = si > 0.02;
+    this.streaks.uniforms.uI.value = si;
+    this.streaks.uniforms.uTime.value = this.time;
+    this.streaks.uniforms.uSpeed.value = 1 + v.boost * 1.5;
+    // ---- audio & telemetry
+    engine.audio.setEngine?.(v.type, clamp(v.throttle + v.boost * 0.5, 0, 1));
+    if (v.type === 'ship') engine.audio.setFlight?.(clamp(sp / 600, 0, 1), clamp(v.alt / (v.atmosphereHeight * 2), 0, 1));
+    if ((this._telT -= dt) <= 0) {
+      this._telT = 0.12;
+      const kmh = Math.round(sp * 3.6);
+      if (v.type === 'ship') {
+        const alt = v.alt;
+        ui.telemetry?.({ SPD: sp > 2000 ? `${(sp / 1000).toFixed(1)} km/s` : `${kmh} km/h`, ALT: alt > 9999 ? `${(alt / 1000).toFixed(1)} km` : `${Math.round(alt)} m`, THR: `${Math.round(v.thrSet * 100)}%` });
+      } else ui.telemetry?.({ SPD: `${kmh} km/h` });
+    }
+  }
+
+  _setPrompt(key, text) {
+    const id = key ? key + text : null;
+    if (id === this._prompt) return;
+    this._prompt = id;
+    this.engine.ui.prompt(key || null, text);
+  }
+
+  // ---- ship chase camera: orientation-lagged, follows the bank, FOV kick
+  _shipCam(dt, v) {
+    const level = this.level, cam = level.camera, input = this.engine.input;
+    const st = this._sc || (this._sc = { q: new THREE.Quaternion(), lagV: new THREE.Vector3(), pos: new THREE.Vector3(), tgt: new THREE.Vector3(), up: new THREE.Vector3(), zoom: 1, fov: 62 });
+    if (!this._shipCamInit) { st.q.copy(v.quaternion); st.lagV.copy(v.velocity); this._shipCamInit = true; }
+    st.q.slerp(v.quaternion, 1 - Math.exp(-(v.landed ? 2 : 4.5) * dt));
+    if (input.zoom) st.zoom = clamp(st.zoom * Math.exp(input.zoom * 0.14), 0.45, 4);
+    st.lagV.lerp(v.velocity, 1 - Math.exp(-3 * dt));
+    const fwd = _v.copy(Z).applyQuaternion(st.q);
+    const sUp = _v2.copy(Y).applyQuaternion(st.q);
+    const pUp = _v3.copy(v.position).normalize();
+    const air = 1 - v.space;
+    // camera roll: follows ~half the bank in air, fully in space
+    st.up.copy(sUp).lerp(pUp, air * 0.5).normalize();
+    const P = v.cameraProfile;
+    const dist = P.distance * st.zoom * (1 + v.boost * 0.18);
+    st.pos.copy(v.position).addScaledVector(fwd, -dist).addScaledVector(st.up, P.height * st.zoom);
+    // acceleration lag (the camera falls back when boosting, swings in turns)
+    _p.copy(v.velocity).sub(st.lagV).multiplyScalar(0.06);
+    if (_p.length() > dist * 0.5) _p.setLength(dist * 0.5);
+    st.pos.sub(_p);
+    // shake
+    if (this._shake > 0.001) {
+      const s = this._shake * 0.35;
+      st.pos.x += (Math.random() - 0.5) * s; st.pos.y += (Math.random() - 0.5) * s; st.pos.z += (Math.random() - 0.5) * s;
+      this._shake *= Math.exp(-5 * dt);
+    }
+    // re-entry buffeting
+    if (v.reentry > 0.05) { const s = v.reentry * 0.25; st.pos.x += (Math.random() - 0.5) * s; st.pos.y += (Math.random() - 0.5) * s; }
+    // stay above the ground
+    const g = this.world.groundAt(st.pos, this._cg || (this._cg = {}));
+    const minR = Math.max(g.radius, g.water ? g.waterRadius : -Infinity) + 1.5;
+    if (st.pos.length() < minR) st.pos.setLength(minR);
+    st.tgt.copy(v.position).addScaledVector(fwd, 30).addScaledVector(st.up, 1.2);
+    const fc = level.freeCam && level.freeCam._vehicles ? level.freeCam : (level.freeCam = { position: new THREE.Vector3(), target: new THREE.Vector3(), up: new THREE.Vector3(), _vehicles: true });
+    fc.position.copy(st.pos); fc.target.copy(st.tgt); fc.up.copy(st.up);
+    const fovT = P.fov + Math.min(16, v.speed * 0.02) + v.boost * 10;
+    st.fov += (fovT - st.fov) * (1 - Math.exp(-3 * dt));
+    if (Math.abs(cam.fov - st.fov) > 0.01) { cam.fov = st.fov; cam.updateProjectionMatrix(); }
+  }
+
+  // =====================================================================================
+  // Screenshots
+  // =====================================================================================
+  _updateShotCam() {
+    const sc = this.shotCam, v = sc.vehicle, level = this.level;
+    let up, f, left;
+    if (sc.frame === 'ship') {
+      // rigid in the vehicle frame (space shots: no meaningful local horizon)
+      up = _v.copy(Y).applyQuaternion(v.quaternion);
+      f = _v2.copy(Z).applyQuaternion(v.quaternion);
+      left = _v3.copy(X).applyQuaternion(v.quaternion);
+    } else {
+      up = _v.copy(v.position).normalize();
+      f = _v2.copy(Z).applyQuaternion(v.quaternion);
+      f.addScaledVector(up, -f.dot(up)).normalize();
+      left = _v3.crossVectors(up, f).normalize();
+    }
+    const fc = level.freeCam && level.freeCam._shot ? level.freeCam : (level.freeCam = { position: new THREE.Vector3(), target: new THREE.Vector3(), up: new THREE.Vector3(), _shot: true });
+    const o = sc.offset, tg = sc.target;
+    fc.position.copy(v.position).addScaledVector(left, o.x).addScaledVector(up, o.y).addScaledVector(f, o.z);
+    fc.target.copy(v.position).addScaledVector(left, tg.x).addScaledVector(up, tg.y).addScaledVector(f, tg.z);
+    fc.up.copy(up);
+    const roll = (sc.roll || 0) + (sc.bankRoll ? (v.bank || 0) * sc.bankRoll : 0);
+    if (roll) fc.up.applyAxisAngle(_p.copy(fc.target).sub(fc.position).normalize(), roll);
+    if (sc.minClear) {
+      const g = this.world.groundAt(fc.position, this._cg || (this._cg = {}));
+      const minR = Math.max(g.radius, g.water ? g.waterRadius : -Infinity) + sc.minClear;
+      if (fc.position.length() < minR) fc.position.setLength(minR);
+    }
+    if (sc.fov && level.camera.fov !== sc.fov) { level.camera.fov = sc.fov; level.camera.updateProjectionMatrix(); }
+  }
+
+  _boardForShot(v) {
+    const pl = this.level.player;
+    if (!pl) { this.level.setMode(v.type); return; }
+    if (pl.vehicle && pl.vehicle !== v) { pl.vehicle.rider = null; pl.vehicle = null; }
+    if (pl.vehicle !== v) pl.board(v);
+  }
+
+  _simulate(steps, dt = 1 / 60) {
+    for (let i = 0; i < steps; i++) {
+      this.time += dt;
+      for (const v of this.list) v.update(dt, this.shotDrive === v ? this.shotInput : null, this.time);
+    }
+    this._tOff = this.time - this.engine.time;
+  }
+
+  /** Number of collider samples along segment a→b that fall inside a collider grown by `pad` (m). */
+  /** Terrain occlusion along a segment: number of samples (of 14) that sit under the ground. */
+  _terrBlocked(a, b, pad = 1) {
+    const w = this.world, q = new THREE.Vector3(), g = this._gt || (this._gt = {});
+    let hits = 0;
+    for (let i = 1; i < 14; i++) {
+      q.lerpVectors(a, b, i / 14);
+      const gg = w.groundAt(q, g);
+      if (q.length() < gg.radius + pad) hits++;
+    }
+    return hits;
+  }
+
+  _segBlocked(a, b, pad = 0.3) {
+    const cols = this.world.colliders;
+    if (!cols || !cols.size) return 0;
+    const mid = _p.copy(a).add(b).multiplyScalar(0.5), reach = a.distanceTo(b) * 0.5 + pad + 30;
+    const near = [];
+    for (const c of cols) { const ce = c.center || c.position; if (ce && ce.distanceToSquared(mid) < reach * reach) near.push(c); }
+    if (!near.length) return 0;
+    let hits = 0;
+    const q = new THREE.Vector3(), l = new THREE.Vector3(), iq = new THREE.Quaternion();
+    for (let i = 0; i <= 16; i++) {
+      q.lerpVectors(a, b, i / 16);
+      for (const c of near) {
+        if (c.type === 'sphere') { if (q.distanceTo(c.center) < c.radius + pad) { hits++; break; } }
+        else if (c.type === 'cylinder') {
+          l.copy(q).sub(c.center); const h = l.dot(c.up);
+          if (h > -pad && h < c.height + pad && l.addScaledVector(c.up, -h).length() < c.radius + pad) { hits++; break; }
+        } else if (c.type === 'box') {
+          l.copy(q).sub(c.center); if (c.quaternion) l.applyQuaternion(iq.copy(c.quaternion).invert());
+          if (Math.abs(l.x) < c.half.x + pad && Math.abs(l.y) < c.half.y + pad && Math.abs(l.z) < c.half.z + pad) { hits++; break; }
+        }
+      }
+    }
+    return hits;
+  }
+
+  /**
+   * Tree probability at a surface direction (0 open land … ~1 deep forest): mirrors the flora
+   * Trees layer's placement field so shot runs can avoid woods that are not colliders.
+   */
+  _treeDensity(dir) {
+    const fl = this.level.flora, tr = fl?.trees;
+    if (!tr || !tr.T || typeof tr._clim !== 'function') return 0;
+    try {
+      const s = this.world.terrain.sample(dir.x, dir.y, dir.z);
+      if (tr.sea > -1e8 && s.h < tr.sea + 0.7) return 0;
+      let p = tr._clim(s);
+      if (!(p > 0)) return 0;
+      const T = tr.T, rr = (tr.R || this.world.radius) + s.h, x = dir.x * rr, y = dir.y * rr, z = dir.z * rr;
+      const fz = fl.noiseScale.forest;
+      const fm = valueFbm3(x * fz, y * fz, z * fz, 3);
+      const gv = valueNoise3(x * 0.016, y * 0.016, z * 0.016, 11);
+      const forestK = smooth(fm + (s.biome === 2 ? 0.25 : 0) + (T.cover ?? 0) + (s.moisture - 0.5) * 0.45, -0.02, 0.14);
+      const grove = smooth(gv + 0.2, -0.1, 0.3);
+      p *= forestK * (0.5 + 0.5 * grove) + (1 - forestK) * (T.lone ?? 0.035) * (0.3 + grove);
+      return p * fl.siteClear(x, y, z, 1.0);
+    } catch (e) { return 0; }
+  }
+
+  /** Unit tangent at `dir` pointing toward `target` (any tangent if degenerate). */
+  _tangentTo(dir, target) {
+    const t = target.clone().normalize().sub(dir);
+    t.addScaledVector(dir, -t.dot(dir));
+    if (t.lengthSq() < 1e-12) t.set(0, 1, 0).cross(dir);
+    return t.normalize();
+  }
+
+  /** Called by PlanetLevel before every screenshot preset: drop all shot state. */
+  shotReset() {
+    this.shotCam = null; this.autopilot = null; this.shotDrive = null;
+    this.forceVortex = 0; this.forceContrail = 0;
+    this.shotGlide = false; this._glideClear = null;
+    this.streaks.mesh.visible = false;
+    this.engine.postfx?.setGrade?.({ motionBlur: 0, motionBlurNear: 0 }, 0);
+    for (const v of this.list) v._holdForShot = false;
+    const pl = this.level.player;
+    if (pl?.vehicle) { try { pl.alight(); } catch (e) { console.warn(e); } }
+    const fc = this.level.freeCam;
+    if (fc && (fc._vehicles || fc._shot)) this.level.freeCam = null;
+    this.level.maxNear = 0;
+    this.engine.ui.telemetry?.(null);
+  }
+
+  async shot(name, spot) {
+    if (!['bike', 'ship', 'orbit'].includes(name)) return false;
+    const level = this.level, w = this.world;
+    level.freeCam = null;
+    this.shotCam = null; this.autopilot = null; this.shotDrive = null;
+    this.forceVortex = 0; this.forceContrail = 0;
+    this.shotGlide = false; this._glideClear = null;
+    for (const v of this.list) v._holdForShot = false;
+    this.engine.ui.telemetry?.(null);
+    this._tOff = 0; this._t0 = this.time = this.engine.time;
+    const site = spot?.site || w.sites[0];
+    const sdir = (spot?.dir || site?.dir || w.focus.clone()).clone().normalize();
+
+    if (name === 'bike') {
+      const bike = this.list.find((v) => v.type === 'bike'), sp = this.shotParams || {};
+      w.setTimeOfDay(sp.tod ?? 0.33, sdir);
+      // pick a run: candidates around the settlement's open fringe (flora thins there, houses in view)
+      // and around the player spawn; score flatness, dryness and an obstacle-free corridor
+      const ss = this._playerSpawnSpot();
+      const center = site?.dir || sdir;
+      const cands = [];
+      const sd0 = ss.dir.clone().normalize();
+      for (let k = 0; k < 12; k++) cands.push({ d: sd0, hd: this._tangentTo(sd0, center.clone().multiplyScalar(w.radius)).applyAxisAngle(sd0, (k / 12) * Math.PI * 2) });
+      // open land around the spawn: rings out to ~600 m (meadows, shorelines, dune ridges)
+      {
+        const t0 = this._tangentTo(sd0, center.clone().multiplyScalar(w.radius));
+        for (const dist of [140, 300, 600]) for (let k = 0; k < 10; k++) {
+          const ax = t0.clone().applyAxisAngle(sd0, (k / 10) * Math.PI * 2 + dist);
+          const d = sd0.clone().addScaledVector(ax, dist / w.radius).normalize();
+          const hd = ax.clone().applyAxisAngle(d, Math.PI / 2 * (k % 2 ? 1 : -1));
+          hd.addScaledVector(d, -hd.dot(d)).normalize();
+          cands.push({ d, hd }, { d, hd: hd.clone().negate() });
+        }
+      }
+      if (site) {
+        const t1 = new THREE.Vector3(0, 1, 0).cross(center); if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0); t1.normalize();
+        for (const rf of [0.5, 0.6, 0.72, 0.9]) for (let k = 0; k < 16; k++) {
+          const ax = t1.clone().applyAxisAngle(center, (k / 16) * Math.PI * 2);
+          const d = center.clone().addScaledVector(ax, site.radius * rf / w.radius).normalize();
+          const radial = this._tangentTo(d, center.clone().multiplyScalar(w.radius)).negate();
+          const tang = radial.clone().cross(d).normalize();
+          cands.push({ d, hd: tang }, { d, hd: tang.clone().negate() });
+        }
+      }
+      let best = null, bs = Infinity;
+      const P = (d, hd, m, lat = 0) => { const q = d.clone().addScaledVector(hd, m / w.radius); if (lat) q.addScaledVector(_v.crossVectors(d, hd), lat / w.radius); return q.normalize(); };
+      for (const c of cands) {
+        const hs = [-90, -45, 0, 30].map((m) => w.heightAt(P(c.d, c.hd, m)));
+        if (w.hasOcean && Math.min(...hs) < w.seaLevel + 1.5) continue;
+        let sc = Math.abs(hs[0] - hs[2]) * 0.5 + Math.abs(hs[1] - (hs[0] + hs[2]) / 2) + Math.abs(hs[3] - hs[2]) * 0.6;
+        // obstacles near the path / the chase camera (houses, trees, poles)
+        const p0 = P(c.d, c.hd, -70).multiplyScalar(w.radius + hs[0]), p1 = P(c.d, c.hd, 15).multiplyScalar(w.radius + hs[2]);
+        sc += this._segBlocked(p0, p1, 4.5) * 4;
+        // woods are not colliders: sample the flora's tree field along the run, beside it and down the view
+        let dens = 0;
+        for (const m of [-60, -40, -20, -8, 0, 15, 40, 80]) for (const lat of [-12, 0, 12]) dens += this._treeDensity(P(c.d, c.hd, m, lat));
+        sc += dens * 6;
+        if (sc < bs) { bs = sc; best = c; }
+      }
+      const sd = best.d, head = best.hd.clone();
+      if (sp.head) head.applyAxisAngle(sd, sp.head);
+      const start = sd.clone().addScaledVector(head, -64 / w.radius).normalize();
+      bike.place(start, head);
+      this._boardForShot(bike);
+      const inp = this.shotInput = new ScriptInput();
+      inp.move.y = 1; inp.move.x = 0.04; if (!sp.noboost) inp.held.add('sprint');
+      this.shotDrive = bike;
+      bike.velocity.copy(head).multiplyScalar(55);
+      bike._s = 55;
+      this._simulate(48);
+      // carve into a gentle turn for the last half-second: the machine leans 15-20° into it
+      const carve = sp.carve ?? 0.3;
+      inp.move.x = carve;
+      this._simulate(22);
+      // dramatic low chase off the rear quarter, high enough that grass never sits between lens and bike;
+      // tilted down so the horizon sits on the upper third and the bike on a lower-third power point
+      const side = sp.side ?? (() => {
+        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.4 * sg, 0.85, -5.2), target: new THREE.Vector3(-1.2 * sg, 0.9, 25) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
+        return tryS(1) <= tryS(-1) ? 1 : -1;
+      })();
+      // the boost FOV kick (+14 live) is half-applied: wide enough to feel fast, not fish-eyed
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.45) * side, sp.by ?? 0.85, -(sp.bz ?? 5.0)), target: new THREE.Vector3(-(sp.tx ?? -0.5) * side, sp.ty ?? 0.75, 25), fov: sp.fov ?? 58, minClear: 0.6, bankRoll: 0.22, streaks: sp.streaks ?? 0.08 };
+      bike._holdForShot = true;
+      this.shotGlide = true;
+      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.3, motionBlurNear: 6 }, 0);
+      // the rider's cloth was not stepped during the scripted run: make it re-settle at the seat
+      // (otherwise its interpolated anchors stretch it back along the 60 m path → a 'pole' in frame)
+      const S = this.level.player?.scarf;
+      if (S) { S._prevA = null; S.ready = false; }
+      this._updateShotCam();
+      return true;
+    }
+    if (name === 'ship') {
+      const ship = this.hero, sp = this.shotParams || {};
+      // per-planet choreography: every world gets its own pass (heading, bank, camera, lens)
+      const R = new Random(seedFrom(this.level.planet?.seed ?? 1, 'shipShot'));
+      w.setTimeOfDay(sp.tod ?? R.range(0.722, 0.73), sdir); // golden hour: sun a few degrees above the horizon
+      const sun = w.sunDir.clone();
+      const sunT = sun.addScaledVector(sdir, -sun.dot(sdir)).normalize();
+      // fly roughly across the low sun so the hull is side-lit (key + rim), not a backlit silhouette
+      const head = sunT.clone().applyAxisAngle(sdir, sp.head ?? (R.chance(0.5) ? 1 : -1) * R.range(1.2, 1.9));
+      // prefer a run over open water (spray, reflections) if there is sea nearby
+      let start = sdir.clone().addScaledVector(head, -1400 / w.radius).normalize(), wetRun = false;
+      if (w.hasOcean) {
+        const wet = (d) => w.heightAt(d) < w.seaLevel - 4;
+        search: for (const dist of [600, 1000, 1500, 2200, 3200, 4500]) {
+          for (let k = 0; k < 24; k++) {
+            const c = sdir.clone().addScaledVector(head.clone().applyAxisAngle(sdir, k * 0.2618), dist / w.radius).normalize();
+            if (!wet(c)) continue;
+            const hd = this._tangentTo(c, c.clone().addScaledVector(head, 0.01));
+            let ok = true;
+            for (const m of [150, 300, 450, 600]) if (!wet(c.clone().addScaledVector(hd, m / w.radius).normalize())) { ok = false; break; }
+            if (ok) { start = c; wetRun = true; break search; }
+          }
+        }
+      }
+      const g0 = w.groundAt(start.clone().multiplyScalar(w.radius + 5000), {});
+      const hd = this._tangentTo(start, start.clone().addScaledVector(head, 0.01));
+      let r0 = Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity) + 30;
+      if (!wetRun) {
+        // dune seas / hills: enter the pass above every crest of the run, or the autopilot flies into one
+        for (let m = 0; m <= 1800; m += 40) r0 = Math.max(r0, w.radius + w.heightAt(start.clone().addScaledVector(hd, m / w.radius).normalize()) + 22);
+      }
+      const pos = start.clone().multiplyScalar(r0);
+      this._boardForShot(ship);
+      ship.fly(pos, pos.clone().addScaledVector(hd, 100), 115, start);
+      const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
+      // low and a little slower: the sea is torn up right under the hull and the spray stays in frame
+      // over land (dunes, hills) the pass flies higher above the local relief: a crest must never
+      // stand between the lens and the hull
+      let alt = sp.alt ?? R.range(6.5, 10);
+      if (!wetRun && sp.alt == null) {
+        let lo = Infinity, hi = -Infinity;
+        for (let m = 0; m <= 1800; m += 60) {
+          const hm = w.heightAt(start.clone().addScaledVector(hd, m / w.radius).normalize());
+          lo = Math.min(lo, hm); hi = Math.max(hi, hm);
+        }
+        alt = clamp(16 + (hi - lo) * 0.3, 16, 40);
+      }
+      this.autopilot = ship; this.apParams = { alt, throttle: 0.48, yaw: sp.yaw ?? turn };
+      // humid sunset air: thin warm-lit vortex corkscrews peel off the wingtips
+      this.forceVortex = sp.vortex ?? 0.6;
+      this._simulate(150);
+      if (!wetRun && sp.alt == null) {
+        // the autopilot climbs lazily: lift the hull clear of every crest within ~60 m, level the flight path
+        const up0 = ship.position.clone().normalize(), t0 = this._tangentTo(up0, up0.clone().add(new THREE.Vector3(0.3, 0.7, 0.1)));
+        let top = -Infinity;
+        for (const rr of [0, 25, 50, 70]) for (let k = 0; k < (rr ? 10 : 1); k++) {
+          const q = up0.clone().addScaledVector(t0.clone().applyAxisAngle(up0, k * 0.6283), rr / w.radius).normalize();
+          top = Math.max(top, w.radius + w.heightAt(q));
+        }
+        const want = top + Math.max(10, alt * 0.55);
+        if (ship.position.length() < want) ship.position.setLength(want);
+        if (ship.landed) {
+          // touched a crest during the scripted run: back in the air, flying level along its heading
+          ship.landed = false; ship.gearT = 0; ship.thrSet = 0.48; ship.throttle = 0.6;
+          const f0 = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.quaternion);
+          f0.addScaledVector(up0, -f0.dot(up0)).normalize();
+          ship.velocity.copy(f0).multiplyScalar(105);
+        }
+        ship.velocity.addScaledVector(up0, -ship.velocity.dot(up0));
+      }
+      // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
+      const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
+      fw.addScaledVector(upS, -fw.dot(upS)).normalize();
+      const lft = new THREE.Vector3().crossVectors(upS, fw).normalize();
+      let best = null, bs = -Infinity;
+      const ahead = ship.position.clone().addScaledVector(fw, 14), shipC = ship.position.clone().addScaledVector(upS, 0.6);
+      for (let k = 0; k < 24; k++) {
+        // rear three-quarter, a little above the hull: the swept planform and the wake both read
+        const az = (R.chance(0.5) ? 1 : -1) * R.range(1.75, 2.55), d = R.range(19, 25), h = R.range(1.6, 3.8);
+        const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
+        const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
+        const view = ship.position.clone().sub(cam).normalize();
+        // sunset: low sun ~60° off the view axis (just off-frame) → hot specular rim on the hull,
+        // glowing horizon behind; the hull keeps a lit side (not a pure silhouette)
+        const th = Math.acos(clamp(view.dot(w.sunDir), -1, 1)) * 180 / Math.PI;
+        let sc = -Math.abs(th - (sp.sunAng ?? 62)) / 20 - Math.abs(h - 2.4) * 0.15 + R.range(0, 0.6);
+        // line of sight to the hull and to the air just ahead of it: terrain crests and buildings
+        sc -= (this._terrBlocked(cam, shipC, 0.5) * 6 + this._terrBlocked(cam, ahead, 0.5) * 2);
+        sc -= this._segBlocked(cam, shipC, 1.0) * 6;
+        const gc = w.groundAt(cam, this._cg || (this._cg = {}));
+        if (cam.length() < Math.max(gc.radius, gc.water ? gc.waterRadius : -Infinity) + 1.5) sc -= 8;
+        if (sc > bs) { bs = sc; best = o; }
+      }
+      // still occluded (deep dune field): rise and look down onto the hull
+      if (bs < -5) best.set(best.x * 0.8, Math.max(best.y, 9), best.z * 0.8);
+      const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
+      // aim slightly ahead of the ship along its path: the ship sits off-centre, leading the frame
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(37, 42), minClear: 1.2, bankRoll: 0.25, streaks: sp.streaks ?? 0 };
+      ship._holdForShot = true;
+      this.shotGlide = true;
+      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.55, motionBlurNear: Math.hypot(ox, oy, oz) + 9 }, 0);
+      this._updateShotCam();
+      return true;
+    }
+    if (name === 'orbit') {
+      const ship = this.hero;
+      w.setTimeOfDay(this.shotParams?.tod ?? 0.745, sdir);
+      // low orbit (the 2.5 R spawn) above the afternoon side; nose toward the limb
+      const side = new THREE.Vector3(0, 1, 0).cross(sdir).normalize();
+      const p = sdir.clone().addScaledVector(side, 0.35).normalize();
+      const rOrb = w.radius * (this.shotParams?.orbitR ?? 2.2); // a whole curved globe below
+      const pos = p.clone().multiplyScalar(rOrb);
+      const sunT = w.sunDir.clone().addScaledVector(p, -w.sunDir.dot(p)).normalize();
+      const T = sunT.clone().applyAxisAngle(p, this.shotParams?.orbitAz ?? 1.6);
+      const dep = Math.acos(w.radius / rOrb) - (this.shotParams?.dep ?? -0.2); // nose dipped below the limb: the arc sits high in frame
+      const look = T.clone().multiplyScalar(Math.cos(dep)).addScaledVector(p, -Math.sin(dep)).normalize();
+      this._boardForShot(ship);
+      ship.fly(pos, pos.clone().add(look), 0, p);
+      ship.thrSet = 0.7; ship.throttle = 0.85; ship.boost = 0; ship.gearT = 0;
+      this._simulate(2);
+      ship.position.copy(pos); ship.velocity.set(0, 0, 0);
+      ship.space = 1;
+      ship._holdForShot = true;
+      // rear 3/4, ~30° off the tail axis: plume in profile, planet beyond the ship
+      this.shotCam = { vehicle: ship, frame: 'ship', offset: new THREE.Vector3(this.shotParams?.ox ?? 7.5, this.shotParams?.oy ?? 3.4, this.shotParams?.oz ?? -20), target: new THREE.Vector3(this.shotParams?.tx ?? 4.2, -4.5, 40), fov: this.shotParams?.fov ?? 48 };
+      this._updateShotCam();
+      return true;
+    }
+    return false;
+  }
+
+  dispose() {
+    for (const v of this.list) v.dispose();
+    this.list.length = 0;
+    this.dust.dispose(); this.spray.dispose(); this.streaks.dispose();
+    this.planetShine.removeFromParent(); this.planetShine.target.removeFromParent();
+    this.dust.points.removeFromParent(); this.spray.points.removeFromParent(); this.streaks.mesh.removeFromParent();
+    if (this.level.vehicles === this) this.level.vehicles = null;
+  }
+}

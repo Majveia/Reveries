@@ -1,0 +1,338 @@
+// Fauna shared helpers: GPU-rigged materials, geometry primitives, tangent frames.
+//
+// Every creature is an InstancedMesh whose vertices carry a small "rig"
+// (attribute aRig) and whose instances carry an animation state (attribute
+// aAnim). A GLSL function `rig(inout vec3 p, inout vec3 n)` injected into a
+// patched MeshStandardMaterial poses each vertex on the GPU (walk cycles, wing
+// flaps, swimming undulation) so creatures receive the same sun, sky IBL and
+// shadows as the terrain and cost no CPU skinning.
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+export const TAU = Math.PI * 2;
+export const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+export const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+export const lerp = (a, b, t) => a + (b - a) * t;
+
+const GLSL_COMMON = /* glsl */ `
+attribute vec4 aRig;
+attribute vec4 aAnim;
+attribute float aGlow;
+uniform float uFTime;
+uniform vec3 uGlowColor;
+varying float vGlow;
+vec2 fa_rot(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
+`;
+
+/**
+ * Patch a MeshStandardMaterial (and build its matching depth material) with a
+ * rig function body. `rigGLSL` must define `void rig(inout vec3 p, inout vec3 n)`.
+ * Extra uniforms are shared by reference.
+ */
+export function rigMaterial(params, rigGLSL, uniforms, key, opts = {}) {
+  // opts.sheen: a velvet lobe (MeshPhysicalMaterial sheen) so coats read as fur / hide, not matte plastic
+  const mat = opts.physical
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...opts.physical, ...params })
+    : opts.sheen
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, sheen: opts.sheenK ?? 0.35, sheenRoughness: 0.7, sheenColor: opts.sheen, ...params })
+    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, ...params });
+  const head = GLSL_COMMON + (uniforms.__decl || '') + rigGLSL;
+  const U = { ...uniforms }; delete U.__decl;
+  // Indirect light: creatures stand on (or fly far above) saturated ground. The
+  // lower-hemisphere bounce is desaturated and attenuated (more so with
+  // altitude), and an occlusion term from the rest-pose normal darkens bellies,
+  // armpits and the insides of limbs so animals keep their own colour and plant.
+  const bounce = (opts.bounce ?? 0.4).toFixed(3), aoMin = (opts.aoMin ?? 0.45).toFixed(3);
+  const surf = opts.surface || '';
+  // opts.haze: { color: {value: Color}, dist, max } — aerial perspective for creatures kilometres away
+  const hz = opts.haze;
+  if (hz) { U.uFaHaze = hz.color; U.uFaHazeDist = { value: hz.dist ?? 2500 }; U.uFaHazeMax = { value: hz.max ?? 0.85 }; }
+  // opts.hair: Kajiya-Kay strand highlights along a combed hair flow (body axis, down the legs);
+  // opts.rim: sky-tinted edge fuzz + sun forward-scatter through the silhouette (fur, hide, membranes)
+  if (opts.hair || opts.rim) {
+    mat.defines = { ...(mat.defines || {}) };
+    if (opts.hair) mat.defines.FA_HAIR = opts.hair.toFixed(3);
+    if (opts.rim) mat.defines.FA_RIM = opts.rim.toFixed(3);
+  }
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U);
+    if (hz) sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uFaHaze; uniform float uFaHazeDist; uniform float uFaHazeMax;')
+      .replace('#include <fog_fragment>', '#include <fog_fragment>\n{ float faD = length(vFaUp - cameraPosition); gl_FragColor.rgb = mix(gl_FragColor.rgb, uFaHaze, (1.0 - exp(-faD / uFaHazeDist)) * uFaHazeMax); }');
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\n' + head + '\nvarying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN; varying vec3 vFaT;')
+      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\nvec3 faPos = position;\nvFaObj = position; vFaObjN = normal;\nvFaAO = mix(' + aoMin + ', 1.0, smoothstep(-0.85, 0.45, normal.y));\nrig(faPos, objectNormal);\nvGlow = aGlow;')
+      .replace('#include <begin_vertex>', 'vec3 transformed = faPos;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec4 faW = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nfaW = instanceMatrix * faW;\n#endif\nvFaUp = (modelMatrix * faW).xyz; }' + HAIR_VERT);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uGlowColor;\nuniform float uFTime;\nvarying float vGlow; varying vec3 vFaUp; varying float vFaAO; varying vec3 vFaObj; varying vec3 vFaObjN; varying vec3 vFaT;\n' + FRAG_NOISE + surf)
+      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat faGlow = vGlow;\n' + (surf ? 'faSurface(vFaObj, normalize(vFaObjN), diffuseColor.rgb, faGlow);\n' : '') + (opts.surfaceMain || ''))
+      .replace('#include <lights_fragment_end>', `{
+  vec3 faWN = inverseTransformDirection(geometryNormal, viewMatrix);
+  vec3 faUpN = normalize(vFaUp);
+  float faH = dot(faWN, faUpN) * 0.5 + 0.5;
+  float faK = mix(${bounce}, 1.0, smoothstep(0.2, 0.8, faH)) * vFaAO;
+  float faSat = mix(0.3, 1.0, smoothstep(0.35, 0.85, faH));
+  irradiance = mix(vec3(dot(irradiance, vec3(0.2126, 0.7152, 0.0722))), irradiance, faSat) * faK;
+  iblIrradiance = mix(vec3(dot(iblIrradiance, vec3(0.2126, 0.7152, 0.0722))), iblIrradiance, faSat) * faK;
+  radiance *= mix(0.6, 1.0, vFaAO);
+}
+${HAIR_FRAG}
+#include <lights_fragment_end>`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uGlowColor * faGlow;');
+  };
+  mat.customProgramCacheKey = () => 'fauna-' + key;
+  const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  depth.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\n' + head)
+      .replace('#include <begin_vertex>', 'vec3 transformed = position; vec3 faN = vec3(0.0, 1.0, 0.0); rig(transformed, faN); vGlow = aGlow;');
+  };
+  depth.customProgramCacheKey = () => 'fauna-depth-' + key;
+  return { mat, depth };
+}
+
+const HAIR_VERT = `
+#if defined(FA_HAIR)
+{ vec3 faT = aRig.x > 0.5 ? vec3(0.0, -1.0, 0.05) : (aRig.z > 0.0 ? vec3(0.0, -0.75, -0.6) : vec3(0.0, -0.3, -1.0));
+#ifdef USE_INSTANCING
+  faT = mat3(instanceMatrix) * faT;
+#endif
+  vFaT = normalize(mat3(modelViewMatrix) * faT); }
+#endif
+`;
+const HAIR_FRAG = /* glsl */ `
+#if defined(FA_HAIR) || defined(FA_RIM)
+{
+  vec3 faN = normalize(normal), faV = normalize(vViewPosition);
+  float faNV = clamp(dot(faN, faV), 0.0, 1.0);
+#if NUM_DIR_LIGHTS > 0
+  vec3 faL = directionalLights[0].direction; vec3 faLC = directionalLights[0].color;
+#else
+  vec3 faL = vec3(0.0, 1.0, 0.0); vec3 faLC = vec3(0.0);
+#endif
+#ifdef FA_RIM
+  // edge fuzz lit by the sky (soft silhouettes), and the sun scattering through the rim when backlit
+  float faFr = pow(1.0 - faNV, 3.0);
+  irradiance *= 1.0 + faFr * FA_RIM * 1.4;
+  iblIrradiance *= 1.0 + faFr * FA_RIM * 1.4;
+  float faFs = pow(max(0.0, dot(-faV, faL)), 3.0) * pow(1.0 - faNV, 2.0);
+  reflectedLight.directDiffuse += faLC * faFs * FA_RIM * 0.5 * (diffuseColor.rgb + 0.06) * vFaAO;
+#endif
+#ifdef FA_HAIR
+  // Kajiya-Kay: a white primary lobe along the strands + a shifted, albedo-tinted secondary lobe
+  vec3 faT = normalize(vFaT - faN * dot(vFaT, faN));
+  vec3 faHv = normalize(faL + faV);
+  float faT1 = dot(normalize(faT + faN * 0.12), faHv), faT2 = dot(normalize(faT - faN * 0.22), faHv);
+  float faK1 = pow(sqrt(max(0.0, 1.0 - faT1 * faT1)), 80.0), faK2 = pow(sqrt(max(0.0, 1.0 - faT2 * faT2)), 16.0);
+  float faNL = smoothstep(-0.05, 0.35, dot(faN, faL));
+  reflectedLight.directSpecular += faLC * faNL * vFaAO * FA_HAIR * (faK1 * 0.05 + faK2 * 0.09 * diffuseColor.rgb);
+#endif
+}
+#endif
+`;
+
+/** Fragment-stage value noise for per-pixel creature patterns (stable in rest-pose object space). */
+const FRAG_NOISE = /* glsl */ `
+float faHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float faNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(faHash(i), faHash(i + vec3(1, 0, 0)), f.x), mix(faHash(i + vec3(0, 1, 0)), faHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(faHash(i + vec3(0, 0, 1)), faHash(i + vec3(1, 0, 1)), f.x), mix(faHash(i + vec3(0, 1, 1)), faHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// antialiased band: 1 where |d| < w, filtered over the pixel footprint
+float faLine(float d, float w) { float fw = max(fwidth(d), 1e-4); return 1.0 - smoothstep(w - fw, w + fw, abs(d)); }
+`;
+
+// ---------------------------------------------------------------------------------
+// Geometry building. Each piece is a non-indexed-or-indexed BufferGeometry with
+// position, normal, color, aRig, aGlow; merge them with `mergeParts`.
+// ---------------------------------------------------------------------------------
+
+/** Assign constant/functional attributes to a geometry: color fn(p,n)->[r,g,b], rig fn(p)->[x,y,z,w], glow fn(p)->f. */
+export function paint(geo, colorFn, rigFn, glowFn) {
+  const pos = geo.attributes.position, nor = geo.attributes.normal, n = pos.count;
+  const keep = rigFn === undefined && geo.attributes.aRig ? geo.attributes.aRig.array : null; // loft() bakes its own rig
+  const col = new Float32Array(n * 3), rig = keep ? keep.slice() : new Float32Array(n * 4), glow = new Float32Array(n);
+  const p = new THREE.Vector3(), q = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    p.fromBufferAttribute(pos, i); q.fromBufferAttribute(nor, i);
+    const c = colorFn(p, q); col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
+    if (!keep) { const r = rigFn ? rigFn(p, q) : [0, 0, 0, 0]; rig[i * 4] = r[0]; rig[i * 4 + 1] = r[1]; rig[i * 4 + 2] = r[2]; rig[i * 4 + 3] = r[3]; }
+    glow[i] = glowFn ? glowFn(p, q) : 0;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aRig', new THREE.BufferAttribute(rig, 4));
+  geo.setAttribute('aGlow', new THREE.BufferAttribute(glow, 1));
+  return geo;
+}
+
+export function mergeParts(parts) {
+  const norm = parts.map((g) => {
+    const x = g.index ? g.toNonIndexed() : g;
+    for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'color', 'aRig', 'aGlow'].includes(k)) x.deleteAttribute(k);
+    return x;
+  });
+  const m = mergeGeometries(norm, false);
+  for (const g of parts) g.dispose();
+  return m;
+}
+
+/**
+ * Ellipsoid-ish blob: a sphere scaled by (rx, ry, rz) with an optional profile
+ * function along z (t in -1..1) multiplying the cross-section.
+ */
+export function blob(rx, ry, rz, profile = null, ws = 16, hs = 12) {
+  const g = new THREE.SphereGeometry(1, ws, hs);
+  g.rotateX(Math.PI / 2); // poles on ±z
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i), y = pos.getY(i); const z = pos.getZ(i);
+    const k = profile ? profile(z, x, y) : 1;
+    x *= k; y *= k;
+    pos.setXYZ(i, x * rx, y * ry, z * rz);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Lofted sculpt: a smooth closed tube through a list of rings
+ * { c: centre, rx: half-width along the side axis, yt / yb: half-height on the
+ * "top" / "bottom" side, rig?: [x,y,z,w], sq?: squareness 0..1, keel?: 0..1 }.
+ * The side axis is `ref` (default +x: bilateral creatures); "top" = tangent × side.
+ * Ends are closed by the first / last rings (give them tiny radii). Smooth
+ * normals, no seam. Used for torsos, necks, heads, muscular legs and horns.
+ */
+export function loft(rings, around = 16, ref = new THREE.Vector3(1, 0, 0)) {
+  const n = rings.length, pos = [], rig = [], idx = [];
+  const t = new THREE.Vector3(), u = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const R = rings[i];
+    t.copy(rings[Math.min(n - 1, i + 1)].c).sub(rings[Math.max(0, i - 1)].c).normalize();
+    u.copy(ref).addScaledVector(t, -ref.dot(t));
+    if (u.lengthSq() < 1e-6) u.set(0, 0, 1).addScaledVector(t, -t.z);
+    u.normalize(); v.copy(t).cross(u).normalize();
+    const sq = R.sq ?? 0.15, kl = R.keel ?? 0;
+    for (let j = 0; j < around; j++) {
+      const a = (j / around) * TAU, ca = Math.cos(a), sa = Math.sin(a);
+      // superellipse-ish section; the lower half narrows into a keel
+      const ex = Math.sign(ca) * Math.pow(Math.abs(ca), 1 - sq * 0.5), ey = Math.sign(sa) * Math.pow(Math.abs(sa), 1 - sq * 0.5);
+      const w = R.rx * (sa < 0 ? 1 - kl * (-sa) * 0.45 : 1);
+      const h = sa > 0 ? R.yt : R.yb;
+      pos.push(R.c.x + u.x * ex * w + v.x * ey * h, R.c.y + u.y * ex * w + v.y * ey * h, R.c.z + u.z * ex * w + v.z * ey * h);
+      const r = R.rig || [0, 0, 0, 0]; rig.push(r[0], r[1], r[2], r[3]);
+    }
+  }
+  for (let i = 0; i < n - 1; i++) for (let j = 0; j < around; j++) {
+    const a = i * around + j, b = a + around, a1 = i * around + (j + 1) % around, b1 = a1 + around;
+    idx.push(a, a1, b, b, a1, b1);
+  }
+  // end caps (fans to the ring centres)
+  const c0 = pos.length / 3; pos.push(rings[0].c.x, rings[0].c.y, rings[0].c.z); rig.push(...(rings[0].rig || [0, 0, 0, 0]));
+  const c1 = c0 + 1; pos.push(rings[n - 1].c.x, rings[n - 1].c.y, rings[n - 1].c.z); rig.push(...(rings[n - 1].rig || [0, 0, 0, 0]));
+  for (let j = 0; j < around; j++) {
+    const j1 = (j + 1) % around;
+    idx.push(c0, j1, j);
+    idx.push(c1, (n - 1) * around + j, (n - 1) * around + j1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aRig', new THREE.Float32BufferAttribute(rig, 4));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Tapered tube between points a and b (radii ra, rb), with rounded ends. */
+export function limb(a, b, ra, rb, seg = 8, rings = 4) {
+  const len = a.distanceTo(b);
+  const g = new THREE.CylinderGeometry(rb, ra, len, seg, rings, false);
+  g.translate(0, len / 2, 0);
+  // round the ends a little
+  const cap1 = new THREE.SphereGeometry(ra, seg, 4, 0, TAU, Math.PI / 2, Math.PI / 2);
+  const cap2 = new THREE.SphereGeometry(rb, seg, 4, 0, TAU, 0, Math.PI / 2); cap2.translate(0, len, 0);
+  const m = mergeGeometries([g.toNonIndexed(), cap1.toNonIndexed(), cap2.toNonIndexed()].map((x) => { x.deleteAttribute('uv'); return x; }));
+  g.dispose(); cap1.dispose(); cap2.dispose();
+  const dir = b.clone().sub(a).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  m.applyQuaternion(q); m.translate(a.x, a.y, a.z);
+  return m;
+}
+
+/** A flat (slightly cambered) membrane polygon in the XZ plane from an outline [[x,z],...] (fan from first point). */
+export function membrane(outline, thickness = 0.01) {
+  const verts = [];
+  const c = outline.reduce((s, p) => [s[0] + p[0] / outline.length, s[1] + p[1] / outline.length], [0, 0]);
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i], b = outline[(i + 1) % outline.length];
+    verts.push(c[0], thickness, c[1], a[0], 0, a[1], b[0], 0, b[1]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.computeVertexNormals();
+  // force normals to point up (double-sided material lights both faces)
+  const n = g.attributes.normal; for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
+  return g;
+}
+
+export function hexColor(h) { return new THREE.Color(h); }
+export function mixColor(a, b, t) { return [lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t)]; }
+
+/** Cheap deterministic hash noise in JS (for vertex color patterns). */
+export function hnoise(x, y, z) {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return s - Math.floor(s);
+}
+export function vnoise(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const fx = x - ix, fy = y - iy, fz = z - iz;
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy), uz = fz * fz * (3 - 2 * fz);
+  let r = 0;
+  for (let k = 0; k < 8; k++) {
+    const dx = k & 1, dy = (k >> 1) & 1, dz = (k >> 2) & 1;
+    r += hnoise(ix + dx, iy + dy, iz + dz) * (dx ? ux : 1 - ux) * (dy ? uy : 1 - uy) * (dz ? uz : 1 - uz);
+  }
+  return r;
+}
+
+/** Tangent basis at a unit direction. */
+export function tangentBasis(dir, t1 = new THREE.Vector3(), t2 = new THREE.Vector3()) {
+  t1.set(0, 1, 0); if (Math.abs(dir.y) > 0.9) t1.set(1, 0, 0);
+  t1.cross(dir).normalize(); t2.copy(dir).cross(t1).normalize();
+  return [t1, t2];
+}
+
+const _m = new THREE.Matrix4(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+/**
+ * Write a TRS matrix (forward = +Z, up = +Y) into an InstancedMesh array at index i,
+ * position relative to anchor.
+ */
+export function writeInstance(arr, i, pos, anchor, fwd, up, s) {
+  _y.copy(up).normalize();
+  _z.copy(fwd).addScaledVector(_y, -fwd.dot(_y));
+  if (_z.lengthSq() < 1e-8) _z.set(1, 0, 0).addScaledVector(_y, -_y.x);
+  _z.normalize();
+  _x.copy(_y).cross(_z);
+  const o = i * 16;
+  arr[o] = _x.x * s; arr[o + 1] = _x.y * s; arr[o + 2] = _x.z * s; arr[o + 3] = 0;
+  arr[o + 4] = _y.x * s; arr[o + 5] = _y.y * s; arr[o + 6] = _y.z * s; arr[o + 7] = 0;
+  arr[o + 8] = _z.x * s; arr[o + 9] = _z.y * s; arr[o + 10] = _z.z * s; arr[o + 11] = 0;
+  arr[o + 12] = pos.x - anchor.x; arr[o + 13] = pos.y - anchor.y; arr[o + 14] = pos.z - anchor.z; arr[o + 15] = 1;
+}
+void _m;
+
+/** Create an InstancedMesh with an aAnim instanced attribute. */
+export function makeInstanced(geo, mats, max, { shadow = true } = {}) {
+  const anim = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4);
+  anim.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aAnim', anim);
+  const mesh = new THREE.InstancedMesh(geo, mats.mat, max);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.customDepthMaterial = mats.depth;
+  mesh.castShadow = shadow; mesh.receiveShadow = shadow;
+  mesh.frustumCulled = false;
+  mesh.count = 0;
+  return { mesh, anim };
+}
