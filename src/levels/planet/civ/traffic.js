@@ -79,10 +79,12 @@ function ornithopter(rng, pal) {
   B.boxC(0, -L * 0.12, L * 0.3, 0.6, 0.35, 0.6);
   const body = B.toGeometry();
   const Wb = new MeshBuilder(256);
-  Wb.mat(M.METAL, 0.5, 0, 3).color(col('#6e6354')).ext(1, 0, F.NOWIN, 0);
-  // one wing, hinged at x = 0, extends +x
-  Wb.box(0, -0.04, -L * 0.07, L * 0.62, 0.04, L * 0.07);
-  Wb.box(L * 0.1, -0.03, -L * 0.1, L * 0.56, 0.03, -L * 0.07);
+  Wb.mat(M.METAL, 0.5, 0, 3).color(col('#7a6c5a')).ext(1, 0, F.NOWIN, 0);
+  // one solid dragonfly wing, hinged at x = 0, extends +x: a broad tapered blade with a thick
+  // spar (thin strut lines alias into sawtooth scribbles at range)
+  Wb.box(0, -0.16, -L * 0.11, L * 0.2, 0.16, L * 0.11);
+  Wb.box(L * 0.2, -0.13, -L * 0.095, L * 0.42, 0.13, L * 0.095);
+  Wb.box(L * 0.42, -0.1, -L * 0.07, L * 0.56, 0.1, L * 0.07);
   void pal;
   return { geo: body, wing: Wb.toGeometry(), len: L };
 }
@@ -150,9 +152,11 @@ export class Traffic {
         add(a.geo, loopCurve(frame, plan, rng, Rb * 0.9, Rb * 2.4, rng.range(140, 260), 0.15), rng.range(6, 10), { bank: 0.12 });
       }
     } else if (style === 'monolithic') {
-      for (let i = 0; i < n + 1; i++) {
+      // a few ornithopters on staggered altitudes (a swarm in one layer reads as a pattern, not traffic)
+      const nO = settlement.main ? q.pick(2, 2, 3, 4) : 1;
+      for (let i = 0; i < nO; i++) {
         const o = ornithopter(rng, pal);
-        const it = add(o.geo, loopCurve(frame, plan, rng, Rb * 0.4, Rb * 1.5, rng.range(45, 110), 0.4, 8), rng.range(28, 42), { bank: 0.6, flap: 1 });
+        const it = add(o.geo, loopCurve(frame, plan, rng, Rb * 0.4, Rb * 1.5, 50 + 70 * (i / Math.max(1, nO - 1)) + rng.range(-8, 8), 0.3, 8), rng.range(28, 42), { bank: 0.6, flap: 1 });
         it.wings = [];
         for (const [sx, z] of [[1, 0.12], [-1, 0.12], [1, -0.12], [-1, -0.12]]) {
           const wm = new THREE.Mesh(o.wing, mat);
@@ -244,6 +248,10 @@ export class Traffic {
       if (it.shuttle) { this._shuttle(it, t); continue; }
       it.u = (it.u + (it.speed * dt) / it.len) % 1;
       it.curve.getPointAt(it.u, _p);
+      // screenshots: never let a craft hang right in front of the lens (a smeared wedge across the frame)
+      if (this.s.level.engine.shotMode && !it.boat && camLocal) {
+        for (let k = 0; k < 40 && _p.distanceTo(camLocal) < 260; k++) { it.u = (it.u + 0.025) % 1; it.curve.getPointAt(it.u, _p); }
+      }
       it.curve.getTangentAt(it.u, _t);
       // local up ≈ radial up at the point
       _u.set(_p.x / (frame.R + frame.h0), 1 + _p.y / (frame.R + frame.h0), _p.z / (frame.R + frame.h0)).normalize();
