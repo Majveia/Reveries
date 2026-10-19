@@ -401,7 +401,7 @@ void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, 
   // metre-scale mottling in settlement space (breaks up identical walls across the town)
   float m1 = civF2(vLoc.xz * 0.045 + vLoc.y * 0.03 + 7.1);
   float m2 = civN2(vLoc.xz * 0.21 + vLoc.y * 0.17);
-  s.alb *= 0.84 + 0.24 * m1 + 0.08 * m2;
+  s.alb *= 0.9 + 0.14 * m1 + 0.05 * m2;
   if (wallLike) {
     float far = smoothstep(0.08, 0.5, fwm);
     // rain / soot streaks under the eaves and sills
@@ -422,6 +422,8 @@ void civWeather(inout CivS s, int id, float seed, vec2 uv, float fwm, float up, 
     s.alb = mix(s.alb, bandC, band * (id == 6 || id == 17 ? 0.7 : 0.5));
     // contact occlusion at the wall foot (alley/ground junction)
     s.ao *= mix(0.42, 1.0, smoothstep(0.0, 2.6, uv.y + 0.2));
+    // broad sky occlusion low in the streets: wall feet sit in the alley's shade, upper storeys open to the sky
+    s.ao *= mix(0.68, 1.0, smoothstep(0.0, 9.0, uv.y));
     // edge darkening near the top (parapet run-off)
     s.alb *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, 0.7, H - uv.y)) * step(uv.y, H);
     // per-window light variance: some brighter, some dim, a few cool; lanterns breathe
@@ -578,7 +580,7 @@ CivS civSurface(){
     // temple barrel tiles (barrels stay resolved down to ~2 px each: the rows are what sells the roof)
     float P = 0.44;
     float xr = fract(uv.x / P) - 0.5;
-    float far = smoothstep(0.1, 0.3, fw.x);
+    float far = smoothstep(P * 0.1, P * 0.3, fw.x);
     float ax = abs(xr) / 0.3;
     float barrel = clamp((0.3 - abs(xr)) * P / max(fw.x, 1e-4) + 0.5, 0.0, 1.0);
     float prof = sqrt(max(0.0, 1.0 - ax * ax));
@@ -599,7 +601,7 @@ CivS civSurface(){
     // so the sweeping roofs read as lustrous ceramic instead of flat black caps
     float glaze = mix(0.3 + 0.5 * prof * barrel, 0.45, far) * (1.0 - moss * 0.7);
     s.rough = mix(0.62, 0.34, glaze);
-    s.glass = 0.55 * glaze;
+    s.glass = 0.55 * glaze * (1.0 - smoothstep(0.02, 0.09, fw.x));
     // mid/far: coarse tile courses + the rhythm of barrel ridges (every 3 barrels) survive as tone
     float cP = 0.42 * 3.0, cL = civLines(uv.y, cP, cP * 0.14, fw.y);
     float rL = civLines(uv.x, P * 2.0, P * 0.6, fw.x);
@@ -644,23 +646,23 @@ CivS civSurface(){
     vec2 wq = uv * vec2(0.06, 0.25);
     wq += (vec2(civN2(uv * 0.035 + seed * 4.0), civN2(uv * 0.035 - seed * 2.0 + 7.3)) - 0.5) * vec2(3.0, 1.6);
     float strata = civN2(wq + seed) * 0.6 + civN2(wq * 2.7 - seed) * 0.4;
-    float streak = civN2(vec2(uv.x * 0.9 + seed * 7.0, uv.y * 0.09));
+    float streak = civN2(vec2(uv.x * 0.22 + seed * 7.0, uv.y * 0.03));
     float lift = civLines(uv.y + 0.03, 6.0, 0.06, fw.y);
     float macro = civF2(vec2(uv.x * 0.028, uv.y * 0.04) + seed * 5.0);
-    s.alb *= 0.56 + 0.52 * macro + 0.14 * big + 0.14 * (strata - 0.5) + 0.1 * (cellV - 0.5) * (1.0 - far * 0.5);
+    s.alb *= 0.8 + 0.26 * macro + 0.06 * big + 0.12 * (strata - 0.5) + 0.1 * (cellV - 0.5) * (1.0 - far * 0.5);
     // wind scour: long vertical runnels of darker, rougher concrete, broken by the courses
-    float runnel = smoothstep(0.52, 0.9, civN2(vec2(uv.x * 0.55 + seed * 13.0, uv.y * 0.022))) * (0.6 + 0.4 * civN2(vec2(uv.x * 3.1, uv.y * 0.3)));
-    s.alb *= 1.0 - 0.26 * runnel;
+    float runnel = smoothstep(0.55, 0.9, civN2(vec2(uv.x * 0.18 + seed * 13.0, uv.y * 0.018))) * (0.75 + 0.25 * civN2(vec2(uv.x * 1.2, uv.y * 0.12)));
+    s.alb *= 1.0 - 0.18 * runnel;
     // dust patina: fine sand settled into the pores, warming the slab toward the dune colour
     float patina = civF2(vec2(uv.x * 0.09, uv.y * 0.05) - seed * 2.0);
     s.alb = mix(s.alb, uCivSand * 0.62 * (0.8 + 0.4 * macro), 0.18 + 0.22 * smoothstep(0.35, 0.8, patina));
     // dark run-off stains hanging under every ledge (lift line), fading over ~1.5 m with streaks
     float dl = 6.0 * (1.0 - fract((uv.y + 0.03) / 6.0));
-    float stain = (1.0 - smoothstep(0.0, 1.0 + 3.4 * streak, dl)) * (0.55 + 0.45 * civN2(vec2(uv.x * 0.6, seed)));
-    s.alb *= 1.0 - 0.3 * stain;
+    float stain = (1.0 - smoothstep(0.0, 0.8 + 2.2 * streak, dl)) * (0.7 + 0.3 * civN2(vec2(uv.x * 0.25, seed)));
+    s.alb *= 1.0 - 0.16 * stain;
     // long soot/run-off tails under the crown, streaked by the wind
     float tail = (1.0 - smoothstep(0.0, 8.0 + 14.0 * streak, H - uv.y)) * smoothstep(0.35, 0.8, streak) * step(uv.y, H);
-    s.alb *= 1.0 - 0.28 * tail;
+    s.alb *= 1.0 - 0.18 * tail;
     // wind-scoured, sun-bleached upper edges of every lift
     s.alb *= 1.0 + 0.14 * (1.0 - smoothstep(0.0, 1.6, H - uv.y)) * step(uv.y, H);
     s.alb *= 1.0 - 0.3 * lift;
@@ -774,6 +776,8 @@ CivS civSurface(){
 
   if (wallLike) civWindows(s, uv, fw, fwm, s.alb);
   civWeather(s, id, seed, uv, fwm, up, H, roof, wallLike);
+  { float emx = max(s.emit.r, max(s.emit.g, s.emit.b));
+    if (emx > 1.6 && id != 14 && id != 9 && id != 26) s.emit *= (1.6 + 0.45 * log(1.0 + (emx - 1.6))) / emx; }
   // snow settles on up-facing surfaces (ice worlds)
   if (uCivSnow > 0.0 && id != 14 && id != 9 && id != 26 && id != 23) {
     float sn = smoothstep(0.3, 0.7, up + (civF2(vLoc.xz * 0.35) - 0.5) * 0.5) * uCivSnow;
@@ -917,7 +921,7 @@ CivS civSurface(){
     s.alb = mix(s.alb, vec3(0.85, 0.89, 0.95), sn); s.rough = mix(s.rough, 0.75, sn); s.h += sn * 0.02;
   }
   // lantern light pools (albedo-modulated, warm)
-  s.emit += s.alb * uCivLamp * vMat.w * uCivNight * 3.0;
+  s.emit += max(s.alb, vec3(0.08)) * uCivLamp * pow(vMat.w, 1.3) * uCivNight * 5.0;
   return s;
 }
 `;
@@ -1019,7 +1023,9 @@ vec3 civPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir){
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = civS.rough;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = civS.metal;')
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-{ float hh = civS.h; vec2 dH = vec2(dFdx(hh), dFdy(hh)); if (abs(dH.x) + abs(dH.y) > 1e-7) normal = civPerturb(-vViewPosition, normal, dH * 1.4, faceDirection); }`)
+{ float hh = civS.h; vec2 dH = vec2(dFdx(hh), dFdy(hh)); if (abs(dH.x) + abs(dH.y) > 1e-7) normal = civPerturb(-vViewPosition, normal, dH * 1.4, faceDirection); }
+{ vec3 cnx = dFdx(normal), cny = dFdy(normal); float cva = min(2.0 * (dot(cnx, cnx) + dot(cny, cny)), 0.2);
+  roughnessFactor = sqrt(roughnessFactor * roughnessFactor + cva); civS.glass *= 1.0 - smoothstep(0.015, 0.12, cva); }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 totalEmissiveRadiance += civS.emit;
 if (civS.glass > 0.001) {
@@ -1048,7 +1054,7 @@ if (civS.glass > 0.001) {
     float civLobe = smoothstep(-0.35, 0.75, civNL) * mix(1.0, civSh, 0.7);
     float civMx = max(uCivSunC.r, max(uCivSunC.g, uCivSunC.b));
     vec3 civTint = civMx > 1e-5 ? uCivSunC / civMx : vec3(1.0);
-    vec3 civFill = mix(vec3(uCivKey.x), (1.0 + (uCivKey.y - 1.0) * 0.9) * mix(vec3(1.0), civTint, 0.45), civLobe);
+    vec3 civFill = mix(vec3(uCivKey.x) * vec3(0.84, 0.93, 1.16), (1.0 + (uCivKey.y - 1.0) * 0.9) * mix(vec3(1.0), civTint, 0.45), civLobe);
     reflectedLight.indirectDiffuse *= mix(vec3(1.0), civFill, civKd);
     reflectedLight.directDiffuse *= mix(1.0, uCivKey.y, civKd);
     // hot grazing rim on sun-side edges and silhouettes (sand-scoured slabs, lacquer, plaster)

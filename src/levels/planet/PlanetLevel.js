@@ -361,7 +361,9 @@ export default class PlanetLevel {
       presets[k] = async () => {
         for (const s of this.subsystems) { try { s.shotReset?.(); } catch (e) { console.warn(e); } }
         this.freeCam = null; this.maxNear = 0;
-        return fn();
+        const r = await fn();
+        try { await this.sys?.terrain?.shotSettle?.(); } catch (e) { console.warn(e); } // terrain LOD built in parallel workers
+        return r;
       };
     }
     return presets;

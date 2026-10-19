@@ -488,6 +488,20 @@ export default class Terrain {
     if (built > 0 && performance.now() - t0 > 5000) console.info(`[terrain] converge ${built} builds ${it} passes ${(performance.now() - t0) | 0} ms, ${this.drawCount} drawn`);
   }
 
+  /**
+   * Screenshot pre-settle (called by the planet's shot presets): let one frame pose
+   * the camera, then build the view's chunks in the worker pool in parallel instead
+   * of serially on the main thread (the sync _converge then only tops up).
+   */
+  async shotSettle(maxMs = 90000) {
+    if (!this.ready || !this.engine.shotMode || !this.workers.some((w) => !w.dead)) return false;
+    this._holdConverge = true;
+    try {
+      for (let i = 0; i < 2; i++) await new Promise((r) => requestAnimationFrame(() => r()));
+      return await this.settle(maxMs);
+    } finally { this._holdConverge = false; }
+  }
+
   /** Stream until the current view needs nothing more (async, uses workers). */
   async settle(maxMs = 20000) {
     const t0 = performance.now();
@@ -496,7 +510,10 @@ export default class Terrain {
       this._applyResults(Infinity);
       const want = this._select();
       if (!want.length && !this.jobs.size) return true;
-      await Promise.all(want.map((n) => this._request(n)));
+      // jobs in flight but nothing new to ask for: yield to the event loop so worker
+      // results can arrive (an empty Promise.all would spin on microtasks forever)
+      if (want.length) await Promise.all(want.map((n) => this._request(n)));
+      else await new Promise((r) => setTimeout(r, 5));
       if (performance.now() - t0 > maxMs) return false;
     }
   }
@@ -512,7 +529,7 @@ export default class Terrain {
     const o = this.detailOrigin.set(Math.round(this.camPos.x / S) * S, Math.round(this.camPos.y / S) * S, Math.round(this.camPos.z / S) * S);
     this.uniforms.uDetailOrigin.value.copy(o);
     this.uniforms.uLodK.value = (this.pxPerRadLod || this.pxPerRad) / this.pixelError / N;
-    if (this.engine.shotMode) {
+    if (this.engine.shotMode && !this._holdConverge) {
       this._converge();
     } else {
       this._applyResults(this.uploadBudget);

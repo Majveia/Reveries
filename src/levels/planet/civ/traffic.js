@@ -246,7 +246,8 @@ export class Traffic {
     const frame = this.s.frame;
     for (const it of this.items) {
       if (it.shuttle) { this._shuttle(it, t); continue; }
-      it.u = (it.u + (it.speed * dt) / it.len) % 1;
+      // shots: craft hold still (a 30-40 m/s pass smears into comb-like scribbles across the accumulated frames)
+      if (!this.s.level.engine.shotMode || it.boat) it.u = (it.u + (it.speed * dt) / it.len) % 1;
       it.curve.getPointAt(it.u, _p);
       // screenshots: never let a craft hang right in front of the lens (a smeared wedge across the frame)
       if (this.s.level.engine.shotMode && !it.boat && camLocal) {

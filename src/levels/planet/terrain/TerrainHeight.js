@@ -535,7 +535,12 @@ export function createTerrain(p) {
     const lat = Math.abs(y);
     const tn = fbm(nK, x * 3.3 + 1.7, y * 3.3 - 4.1, z * 3.3 + 2.9, 2);
     const alt = Math.max(0, h);
-    let temp = clim.temp0 - 0.62 * Math.pow(lat, 1.7) - (alt / rel) * 0.5 + tn * 0.07;
+    // temperate styles: snowline follows the ranges (stronger lapse) and the poles,
+    // never noise-driven patches on mid-latitude lowlands
+    const temperate = style === 'rolling' || style === 'archipelago' || style === 'highlands' || style === 'karst';
+    let temp = temperate
+      ? clim.temp0 + 0.03 - 0.7 * Math.pow(lat, 2.6) - (alt / rel) * 0.52 + tn * 0.04
+      : clim.temp0 - 0.62 * Math.pow(lat, 1.7) - (alt / rel) * 0.5 + tn * 0.07;
     temp = clamp01(temp);
     const mn = fbm(nK, x * 2.4 - 6.1, y * 2.4 + 3.3, z * 2.4 - 1.4, 3);
     // Hadley circulation: a dry subtropical belt (~20–35°) where the continents are deep
@@ -597,9 +602,18 @@ export function createTerrain(p) {
     const wq = fbmM(nW, X, Y, Z, 7000, 2, 2.0, 0.5, 3.1, 0, -2.2) * 0.9;
     const hl = erodedFbm(nH, X / 2600 + wq, Y / 2600 - wq, Z / 2600 + wq * 0.5, x, y, z, 7, 2.0, 0.5, 1.15, 2600, 0.7);
     const hillAmp = rel * 0.17 * (0.5 + 0.9 * mReg);
-    const hills = hillAmp * (0.5 + 0.5 * hl) * k;
+    // ---- structural hierarchy: broad plains ↔ hill country ↔ foothills ↔ ranges ----
+    // (one regional mask at ~14 km; hill relief swells toward the mountain belts so
+    // the land reads plains → foothill skirts → ranges instead of uniform wrinkles;
+    // the mean height is kept, only the relief amplitude changes → coastlines stay)
+    const tw0 = fbmM(nW, X, Y, Z, 30000, 2, 2.0, 0.5, 7.7, 1.3, -4.1) * 0.6;
+    const tl0 = Math.abs(fbmM(nM, X, Y, Z, 26000, 3, 2.0, 0.5, 2.9 + tw0, -3.3 - tw0, 0.8 + tw0));
+    const nearBelt = (1 - smoothstep(0.0, 0.45, tl0)) * smoothstep(0.02, 0.2, e);
+    const pm = fbmM(nM, X, Y, Z, 14000, 3, 2.0, 0.5, -3.7, 5.1, 1.9) * 0.5 + 0.5;
+    const hillK = smoothstep(0.38, 0.68, pm + nearBelt * 0.55 + smoothstep(0.36, 0.76, mReg + e * 0.35) * 0.35);
+    const hills = hillAmp * (0.5 + 0.5 * hl * (0.16 + 0.84 * hillK)) * k;
     // knolls & swales
-    const kn = fbmM(nH, X, Y, Z, 420, 3, 2.0, 0.5, 5.5, -1.1, 0) * rel * 0.008 * k;
+    const kn = fbmM(nH, X, Y, Z, 420, 3, 2.0, 0.5, 5.5, -1.1, 0) * rel * 0.008 * k * (0.45 + 0.55 * hillK);
     // ---- escarpments: hill country stepped into pale rock benches ----
     const em = smoothstep(0.44, 0.64, fbmM(nS, X, Y, Z, 9000, 3, 2.0, 0.5, 1.7, -6.2, 2.4) * 0.5 + 0.5);
     let ter = hills;
@@ -612,9 +626,7 @@ export function createTerrain(p) {
     }
     // ---- highlands & distant blue mountains ----
     // tectonic arcs: long curved belts along the zero set of a warped noise
-    const tw = fbmM(nW, X, Y, Z, 30000, 2, 2.0, 0.5, 7.7, 1.3, -4.1) * 0.6;
-    const tl = Math.abs(fbmM(nM, X, Y, Z, 26000, 3, 2.0, 0.5, 2.9 + tw, -3.3 - tw, 0.8 + tw));
-    const tect = (1 - smoothstep(0.0, 0.2, tl)) * smoothstep(0.02, 0.2, e);
+    const tect = (1 - smoothstep(0.0, 0.2, tl0)) * smoothstep(0.02, 0.2, e);
     const mm = Math.max(smoothstep(0.36, 0.76, mReg + e * 0.35), tect * 0.85);
     let mnt = 0;
     if (mm > 0) {
@@ -766,7 +778,10 @@ export function createTerrain(p) {
     const k = smoothstep(-0.05, 0.08, e);
     // alluvial plains: low, gently undulating, wet (rice terraces, oxbows) with meso swells
     const plain = fbmM(nH, X, Y, Z, 1800, 3, 2.0, 0.5, 0, 0, 0) * 9 + fbmM(nH, X, Y, Z, 600, 2, 2.0, 0.5, 3.1, -1.7, 0.4) * 9
-      + fbmM(nH, X, Y, Z, 300, 2, 2.0, 0.5, 0, 0, 0) * 1.5 + 9;
+      + fbmM(nH, X, Y, Z, 300, 2, 2.0, 0.5, 0, 0, 0) * 1.5 + 9
+      // grassy hummocks with sharp drainage creases (|n|) + swales: the meadow is never a carpet
+      + (Math.abs(fbmM(nD, X, Y, Z, 90, 3, 2.0, 0.5, 2.7, -0.9, 3.3)) - 0.22) * 3.4
+      + fbmM(nD, X, Y, Z, 26, 2, 2.0, 0.5, -1.3, 4.1, 0.7) * 0.55;
     const base = h * 0.3 + plain * k;
     // distant ink-wash mountain ranges
     const mm = smoothstep(0.52, 0.86, mReg + e * 0.3);

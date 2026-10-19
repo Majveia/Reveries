@@ -126,7 +126,7 @@ export function noiseTextures() {
 const STYLE = {
   rolling: { strataH: 7, strata: 0.35, runnel: 0.35, ripple: 0.4, moss: 0.6, blocks: 0.8, hue: 0.25, glow: 0, grassK: 1 },
   dunes: { strataH: 11, strata: 0.9, runnel: 0.2, ripple: 1.0, moss: 0, blocks: 0.6, hue: 0.5, glow: 0, grassK: 0.2 },
-  karst: { strataH: 7, strata: 0.8, runnel: 0.4, ripple: 0.2, moss: 0.8, blocks: 1.0, hue: 0.35, glow: 0, grassK: 1 },
+  karst: { strataH: 7, strata: 1.0, runnel: 0.15, ripple: 0.2, moss: 0.5, blocks: 1.0, hue: 0.6, glow: 0, grassK: 1 },
   glacial: { strataH: 5, strata: 0.3, runnel: 0.5, ripple: 0.3, moss: 0.15, blocks: 1.0, hue: 0.15, glow: 0, grassK: 0.6 },
   mesas: { strataH: 9, strata: 1.0, runnel: 0.45, ripple: 0.7, moss: 0.05, blocks: 0.7, hue: 0.9, glow: 0, grassK: 0.4 },
   canyons: { strataH: 8, strata: 1.0, runnel: 0.5, ripple: 0.6, moss: 0.1, blocks: 0.8, hue: 0.8, glow: 0, grassK: 0.5 },
@@ -336,6 +336,10 @@ const FRAG_SURFACE = /* glsl */`
   vec4 m3 = octW( 1.0 / 64.0, pix ) > 0.0 ? nA( D + 1.3, 1.0 / 64.0 ) : vec4( 0.0 );
   float macro = m0.w * 0.45 + m1.w * 0.35 + m2.w * 0.2;
   float meso = m2.w * 0.6 + m3.w * 0.4;
+  // sheer walls: the vertex/chunk cavity is interpolated along tall sliver triangles
+  // (a height field stretched up a cliff) → it prints vertical 'wood-grain' streaks.
+  // Let the wall's own bedding / joints carry the value structure instead.
+  cav = mix( cav, 0.5 + 0.06 * m2.w, smoothstep( 0.55, 0.85, slope ) * 0.8 );
 
   // ---- layer weights (before detail: lets us skip invisible layers) ----
   // sand never turns to rock just because it is steep (slip faces sit at 30–34°)
@@ -357,7 +361,10 @@ const FRAG_SURFACE = /* glsl */`
     float gully = smoothstep( 0.5, 0.62, cav ), ridge = smoothstep( 0.48, 0.36, cav );
     float hold = 1.0 - smoothstep( 0.1 + 0.12 * gully, 0.3 + 0.16 * gully, slope + meso * 0.05 + m1.w * 0.03 );
     float cover = snowA * 1.35 - 0.12 + gully * 0.25 - ridge * 0.3 * smoothstep( 0.04, 0.16, slope );
-    cover += ( m2.w * 0.22 + m1.w * 0.16 + m3.w * 0.12 ) * ( 1.0 - 0.5 * smoothstep( 0.9, 1.3, snowA * 1.35 ) );
+    float snowFar = smoothstep( 4.0, 40.0, pix );
+    cover += ( m2.w * 0.22 * ( 1.0 - 0.7 * snowFar ) + m1.w * 0.16 * ( 1.0 - 0.4 * snowFar ) + m3.w * 0.12 ) * ( 1.0 - 0.5 * smoothstep( 0.9, 1.3, snowA * 1.35 ) );
+    // from altitude snow is veined along the drainage (held in gullies, scoured off ribs)
+    cover += snowFar * ( gully * 0.18 - ridge * 0.12 );
     float cfw = min( fwidth( cover ) * 1.5, 0.35 ); // footprint-widened edge: no salt-and-pepper specks at range
     snowW = smoothstep( 0.38 - cfw, 0.62 + cfw, cover ) * hold * step( 0.02, snowA );
   }
@@ -487,10 +494,13 @@ const FRAG_SURFACE = /* glsl */`
     // ~12 cm wind ripples; a 1 m phase warp makes them bifurcate (Y-junctions)
     vec4 wf = octW( 1.0 / 8.0, pix ) > 0.0 ? nA( D.yzx + 7.0, 1.0 / 8.0 ) : vec4( 0.0 );
     vec4 wl4 = nA( D.zxy + 13.0, 1.0 / 32.0 );
-    float lam = 0.3 * ( 1.0 + 0.45 * wl4.w );   // 16–45 cm ripples, coarser in patches
-    float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + dot( D, wb ) * 0.2;
+    // constant wavelengths: dividing the (km-sized) detail coordinate by a spatially
+    // varying wavelength turned the noise's iso-lines into closed 'contour rings';
+    // patchy coarseness now comes from an additive phase term instead
+    float lam = 0.3;
+    float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + wl4.w * 3.0 + dot( D, wb ) * 0.2;
     vec4 wq2 = nA( D.zxy + 5.0, 1.0 / 64.0 );
-    float lam2 = 1.6 * ( 1.0 + 0.35 * wl4.w );
+    float lam2 = 1.6;
     float ph2 = dot( D, wt ) / lam2 + wq.w * 2.6 + wq2.w * 4.5 + dot( D, wb ) * ( 0.05 + 0.12 * wq2.w );
     float f1 = fract( ph1 ), f2 = fract( ph2 );
     // band-limit softly: ripples stay as shading bands well into the mid field
@@ -516,7 +526,7 @@ const FRAG_SURFACE = /* glsl */`
     // never read as flat planes; troughs gather darker heavy-mineral lag
     {
       vec4 wq3 = nA( D.yzx - 9.0, 1.0 / 128.0 );
-      float lam3 = 7.5 * ( 1.0 + 0.4 * wq3.w );
+      float lam3 = 7.5;
       float ph3 = dot( D, wt ) / lam3 + wq2.w * 0.7 + wq3.w * 0.9 + dot( D, wb ) * 0.03 * wq3.w; // gentle bends: strong warps closed the crests into onion rings
       float f3 = fract( ph3 );
       float bl3 = 1.0 - smoothstep( 0.2, 0.6, fwidth( ph3 ) );
@@ -580,7 +590,9 @@ const FRAG_SURFACE = /* glsl */`
   {
     vec3 Dv = D - up * dot( D, up ) * 0.85;
     float gul = nA( Dv.zxy + 7.0, 1.0 / 48.0 ).w * 0.7 + nA( Dv.yzx + 2.0, 1.0 / 16.0 ).w * 0.3 * octW( 1.0 / 16.0, pix * 0.5 );
-    float gw = smoothstep( 0.22, 0.55, slope ) * octW( 1.0 / 48.0, pix * 0.35 );
+    // bedded limestone (strata-dominated styles): horizontal beds lead, not vertical gullies
+    float bedLead = 1.0 - 0.6 * smoothstep( 0.85, 1.0, uStyleA.y );
+    float gw = smoothstep( 0.22, 0.55, slope ) * octW( 1.0 / 48.0, pix * 0.35 ) * bedLead;
     rockCol *= 1.0 - gw * smoothstep( 0.05, 0.6, gul ) * 0.48;
     rockCol *= 1.0 + gw * smoothstep( -0.15, -0.6, gul ) * 0.2;
     // coarse couloirs / scree chutes (~30 m wide): carry wall structure out to several km
@@ -644,9 +656,20 @@ const FRAG_SURFACE = /* glsl */`
     grassCol = mix( grassCol, mix( grassCol, uGround3, 0.45 ) * vec3( 1.06, 1.0, 0.84 ), scrubF * farM * 0.55 );
   }
   // physically plausible floor: meadows are never darker than ~0.07 linear
+  // (relaxed for forest canopy beyond the flora's reach: woods are dark masses, ~0.05)
+  float canopyK = 0.0;
   {
     float gl = dot( grassCol, vec3( 0.2126, 0.7152, 0.0722 ) );
-    grassCol *= clamp( 0.105 / max( gl, 1e-3 ), 1.0, 1.9 );
+    float farC = smoothstep( 2.5, 14.0, pix );
+    float vgC = m1.w * 0.5 + m0.w * 0.35 + m2.w * 0.25;
+    canopyK = smoothstep( 0.42, 0.7, moist + vgC * 0.35 + smoothstep( 0.5, 0.62, cav ) * 0.2 ) * smoothstep( 0.2, 0.4, temp ) * ( 1.0 - smoothstep( 0.35, 0.6, slope ) ) * farC;
+    grassCol *= clamp( mix( 0.105, 0.045, canopyK ) / max( gl, 1e-3 ), 1.0, 1.9 );
+    // canopy: deep blue-green, crown-mottled where the crowns approach a pixel
+    vec3 canopy = mix( uGround1, uGround0, 0.3 ) * vec3( 0.3, 0.38, 0.38 ) * ( 0.85 + 0.3 * m3.w * ( 1.0 - smoothstep( 8.0, 30.0, pix ) ) + 0.12 * m2.w );
+    grassCol = mix( grassCol, canopy, canopyK * 0.85 );
+    // dry savanna / sun-baked downs: ochre-gold, paler (value structure from the air)
+    float dryK = smoothstep( 0.42, 0.22, moist + vgC * 0.25 ) * farC * ( 1.0 - canopyK );
+    grassCol = mix( grassCol, mix( uGround3, uSoil * 1.6, 0.35 ) * vec3( 1.12, 1.0, 0.7 ), dryK * 0.6 );
   }
   // ---- near-field ground cover (0.1–1 m): the earth between the grass blades ----
   // clumps of turf with dark soil gaps, leaf litter / dry thatch specks and
@@ -691,7 +714,7 @@ const FRAG_SURFACE = /* glsl */`
   }
   {
     float gl2 = dot( grassCol, vec3( 0.2126, 0.7152, 0.0722 ) );
-    grassCol *= clamp( 0.1 / max( gl2, 1e-3 ), 1.0, 1.7 );
+    grassCol *= clamp( mix( 0.1, 0.045, canopyK ) / max( gl2, 1e-3 ), 1.0, 1.7 );
   }
   // soil / scree
   vec3 soilCol = mix( uSoil, uSoil * 1.25, hGrass * 0.5 + 0.5 );
