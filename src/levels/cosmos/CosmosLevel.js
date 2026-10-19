@@ -74,6 +74,7 @@ export default class CosmosLevel {
 
     this.web = new WebRenderer(e, this.sim, { galaxies: e.quality.pick(32768, 65536, 131072, 262144), subs: e.quality.pick(2, 3, 4, 6) });
     this.scene.add(this.web.galaxies);
+    this._p0 = { ...this.web.params };   // pristine look; every frame starts from it (shot presets must not leak into the next shot)
     this.lights = new ClusterLights(e.quality.pick(48, 64, 96, 128));
     this.scene.add(this.lights.points);
     this.glow = new GasGlow(this.sim, e.quality.pick(24, 32, 40, 56));
@@ -288,6 +289,7 @@ export default class CosmosLevel {
     const inside = 1 - smooth((camD - 0.5 * this.L) / (0.35 * this.L));
     this.center.lerpVectors(this.rig.target, this.camera.position, inside);
     const p = this.web.params;
+    Object.assign(p, this._p0);
     p.shape = 2;
     p.fog = 260 - 205 * inside;
     p.fogNear = inside > 0.5 ? Math.max(0, camD - 24) : Math.max(0, camD - 0.45 * this.L);
@@ -492,8 +494,8 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.5, lights: 0, veil: 0.3, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 2.5, heatK: 1.45, hi: 0.0, cap: 0.38, gain: 0.32 };
-        this._pose(this.home, this._heroOffset((o.ed ?? 0.5) * this.L, HERO.yaw + 0.4, o.ep ?? 0.42), o.ef ?? 46, 0.0, 0);
+        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 2.6, galaxies: 0.5, lights: 0, veil: 0.2, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 1.2, heatK: 1.45, hi: 0.0, cap: 0.6, gain: 0.55, fog: 22 };
+        this._pose(this.home, this._heroOffset((o.ed ?? 0.22) * this.L, HERO.yaw + 0.4, o.ep ?? 0.42), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {

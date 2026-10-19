@@ -154,6 +154,9 @@ void main(){
   float fd = max(dist - uFogNear, 0.0);
   float tr = exp(-fd / uFog);
   val *= tr * uDim;
+  // phase-space shimmer: virialised members flicker on their own orbital phase, so collapsed cores
+  // sparkle (caustic glints) instead of glowing flat; cold filament streams stay steady
+  val *= 1.0 + uShimmer * hh * (0.45 * sin(uTime * om * 2.7 + ph.y) + 0.25 * sin(uTime * om * 6.1 + ph.z));
   // primordial glow (the first instants after the Bang): warm amber plasma
   val *= 1.0 + 5.0 * uWarm * uWarm;
   // r: Σ mass·heat · g: Σ mass·haze · b: sample count (×1e-3) · a: Σ mass
@@ -232,7 +235,8 @@ void main(){
   vec3 col = mix(fl, cl, smoothstep(0.55, 0.85, heat));
   col = mix(col, tint > 0.72 ? vec3(1.5, 0.62, 0.30) : vec3(0.75, 0.90, 1.45), uEarly);   // first protogalaxies: blue-white starbursts, ember sparks
   col = mix(col, vec3(1.25, 0.62, 0.28), uWarm);
-  vCol = col * b / max(1.0, core * core * 0.35);
+  // HDR-capped: a point brighter than this only prints the bloom kernel (square tiles), not a star
+  vCol = col * min(b, 5.0) / max(1.0, core * core * 0.35);
 }`;
 const GALAXY_FRAG = /* glsl */ `
 varying vec3 vCol; varying float vSpike; varying float vPx;

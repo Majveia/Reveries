@@ -234,7 +234,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       // chipping at two scales: fine flakes + larger scuffed patches that read at 3rd-person distance
       float chips = rvFbm(bp * 160.0) * 0.6 + rvFbm(bp * 38.0 + 3.7) * 0.4;
       float wear = smoothstep(0.55, 0.8, clamp(curv, -1.0, 1.0) * 0.85 + (chips - 0.5) * 0.7) * step(0.3, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
-      wear *= rvAA(0.012, px) * 0.8;
+      wear *= rvAA(0.012, px) * 0.45; // thin chipped edges only: no white outline around every plate
       // broad weathering: sun-faded tops, darker scuffed lower edges
       diffuseColor.rgb *= 0.9 + 0.14 * rvFbm(bp * 6.0 + 11.0);
       float grime = smoothstep(-0.08, -0.5, curv) * 0.5 + (1.0 - vAO.x) * 0.25;
@@ -280,7 +280,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       .replace('#include <roughnessmap_fragment>', /* glsl */`#include <roughnessmap_fragment>
       roughnessFactor = clamp(mix(max(vMat.x + 0.12, 0.44), 0.5, isB) + (smudge - 0.5) * 0.18 + scratch * 0.06 * rvAA(0.003, px) + groove * 0.3 + dust * 0.35 + grime * 0.2 - wear * 0.05, 0.3, 1.0);`)
       .replace('#include <metalnessmap_fragment>', /* glsl */`#include <metalnessmap_fragment>
-      metalnessFactor = clamp(max(mix(vMat.y, 0.45, isB), wear * 0.9), 0.0, 1.0);`)
+      metalnessFactor = clamp(max(mix(vMat.y, 0.45, isB), wear * 0.6), 0.0, 1.0);`)
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rvBump(normal, bumpH);\n' + SPEC_AA)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvEmit;')
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n' + aoBlock('vAO.x * (1.0 - groove * 0.5)'))

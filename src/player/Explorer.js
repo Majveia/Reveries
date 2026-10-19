@@ -47,7 +47,7 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 
 // ---- palette (sRGB hex → linear) ---------------------------------------------------
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
-const HELM_REAR = lin('#8f877a');
+const HELM_REAR = lin('#a69d8c');
 export const PALETTE = {
   ivory: lin('#e3d9c4'),
   signal: lin('#c4632a'),
@@ -56,7 +56,7 @@ export const PALETTE = {
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#958a6f'), // mid khaki: holds a distinct value against dark ground / bark
+  suit: lin('#9c8762'), // mid khaki: holds a distinct value against dark ground / bark
   suitDark: lin('#4c463d'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
@@ -436,7 +436,9 @@ function makePieces(spec, body) {
       const lo = [Math.min(sh[0], el[0]) - 0.12, sh[1] - 0.17, -0.13], hi = [Math.max(sh[0], el[0]) + 0.12, sh[1] + 0.12, 0.1];
       pieces.push({
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
-        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return (s > 0 && t < 0.044 && y > sh[1] + 0.005) || (s < 0 && t > 0.085) ? PALETTE.signal : ivory; },
+        // deliberate asymmetry: left cap ivory with a signal crown, right cap gunmetal over
+        // ivory lames (breaks the twin 'white ball' read from the 3/4-rear camera)
+        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); if (s > 0) return t < 0.044 && y > sh[1] + 0.005 ? PALETTE.signal : ivory; return t < 0.046 ? PALETTE.gunmetal : t > 0.085 ? PALETTE.signal : ivory; },
         mat: () => [0.36, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
         line: () => FAR,
         seam: (x, y, z) => dot(sub([x, y, z], sh), dA) - 0.086,
@@ -680,7 +682,10 @@ function makePieces(spec, body) {
         const crest = Math.min(0.0105 - ax, y - 1.73);
         const chin = 1.57 - y;
         const rear = Math.min(-0.02 - z, 1.632 - (z + 0.02) * 0.6 - y); // graphite neck guard
-        return -Math.max(pod, chin, rear) + 0 * crest;
+        // (rear graphite split removed: interpolated per-vertex it cut a jagged black/white
+        // line across the back of the dome -> 'bowling ball'; the rear guard is now a warm
+        // grey vertex tone with a panel seam)
+        return -Math.max(pod, chin) + 0 * rear * crest;
       },
       line: (x, y, z) => {
         // (no rear glow line: under the neck guard it read as a second visor 'eye')

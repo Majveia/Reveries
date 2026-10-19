@@ -556,7 +556,7 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.air ?? this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.3); // tails stream back, drooping ~25° (no rigid flag)
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 0.82); // ~1.8 m/s: tails stream back AND droop ~27° (tan = g / (kN·W)), never a rigid flag
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
@@ -642,12 +642,12 @@ export default class Player {
     const key = L?.keyColor ? _c2.copy(L.keyColor) : _c2.copy(sun.color).multiplyScalar(sun.intensity);
     const skyC = L?.skyColor || _c3.setRGB(0.3, 0.45, 0.7).multiplyScalar(w.daylight);
     // rim: key-tinted by day, sky-fed under overcast, a cool sliver of sky light at night
-    addSc(U.uRim.value.copy(key).multiplyScalar(0.36), skyC, 0.6).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    addSc(U.uRim.value.copy(key).multiplyScalar(0.34), skyC, 0.32).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
     // character kicker: behind-side, on the sun's side of the frame (view space)
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    addSc(U.uKick.value.copy(key).multiplyScalar(1.05), skyC, 0.6).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(1.0), skyC, 0.3).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     // overcast / fog: the key is weak, but the hero must still separate from dark ground
     // ...but in fog / haze the hero must sit IN the air, not be cut out of it: the floor
     // fades away, the kicker + rim dim and tint toward the fog colour (no pasted-in look)
@@ -883,12 +883,12 @@ export default class Player {
       const speed = 5.2; // a real run gait: flight phase, heel kick, driven arm pump
       this.shotPose = { state: 'ground', speed, look: [-0.5, 0.1], leanAdd: 0.2, air: 2.2 };
       cam.view = 'third';
-      cam.distance = portrait ? 3.0 : 2.5; cam.shoulder = portrait ? 0.25 : 0.58;
+      cam.distance = portrait ? 2.6 : 2.5; cam.shoulder = portrait ? 0.22 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.35 : 1.12; // slightly low, heroic angle
+      cam.pivotHeight = portrait ? 1.55 : 1.12; // landscape: slightly low, heroic angle; portrait: lifted over the grass
       let camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
       // 3/4 profile: the wrap visor and the face side of the helmet read from the lens
-      this.ctl.setFacing(turn(camH, -0.95));
+      this.ctl.setFacing(turn(camH, -0.6)); // ~34° off the lens: over-the-shoulder, pack + visor wrap both read
       if (level.floraClear) {
         // set-piece clearing (as for 'fp'): no tree on the lens -> hero corridor, none hugging
         // the silhouette from behind (dark bark swallowing the suit)
@@ -899,12 +899,12 @@ export default class Player {
       // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
       // run 'contact' key pose: lead foot just planted ahead (knee soft), trailing heel kicked
       // up high behind, arms at full counter-swing, pelvis and chest counter-rotated
-      this.anim.phase = 0.035;
+      this.anim.phase = 0.085; // stance foot flat + weighted (no floating toe), rear leg trailing
       this.anim.freezePhase = true;
       // debug: ?pclose=1 (harness --extra "pclose=1") frames the head close up for look-dev
       const pclose = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pclose');
       if (pclose) { cam.distance = 1.1; cam.shoulder = 0; cam.pivotHeight = 1.5; if (pclose === '2') camH = turn(camH, -1.9); }
-      cam.snap(this.ctl.pos, up, camH, portrait ? -0.06 : -0.13);
+      cam.snap(this.ctl.pos, up, camH, portrait ? -0.16 : -0.13);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);

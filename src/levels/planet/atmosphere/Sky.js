@@ -312,7 +312,7 @@ void main(){
     // (keyed to the band itself — the old gl*90 saturated over the whole diffuse disk, so
     // ~60k faint stars covered every direction evenly: TV static instead of a river)
     float dens = smoothstep(0.008, 0.05, gd) * (0.2 + 0.8 * bandM);
-    stars += starLayer(dc, 70.0, 1.0, 0.075 + 0.08 * dens, 0.004, 16.0, uStarCut);                         // naked-eye stars: a few dozen brilliant anchors per hemisphere
+    stars += starLayer(dc, 70.0, 1.0, 0.11 + 0.08 * dens, 0.004, 16.0, uStarCut);                         // naked-eye stars: a few dozen brilliant anchors per hemisphere
     stars += starLayer(dc, 190.0, 7.0, 0.0012 + 0.5 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
     if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.0018, 0.05, uStarCut * 0.4); // band grain: the river is made of stars
     // scintillation near the horizon
@@ -572,7 +572,7 @@ export default class Sky {
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);
-    u.uStarCut.value = THREE.MathUtils.lerp(0.0065, 0.06, litPlanet);
+    u.uStarCut.value = THREE.MathUtils.lerp(0.0065, 0.035, litPlanet); // (orbit by day: a sparse handful of anchors, never an empty black)
     u.uSpace.value = space;
     // aurora (weather decides)
     const ws = L.weatherState;

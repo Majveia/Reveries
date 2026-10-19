@@ -1042,8 +1042,14 @@ if (civS.glass > 0.001) {
   ${ground ? '' : `{
     float civNL = dot(normalize(vLocN), uCivSunL);
     float civKd = uCivDay * uCivKey.w;
-    // the shadow side drops its ambient (the sky fill), the lit side takes a stronger key
-    reflectedLight.indirectDiffuse *= mix(1.0, uCivKey.x, smoothstep(0.1, -0.3, civNL) * civKd);
+    // hazy skies are not uniform: the forward-scattering lobe around the sun makes the sky fill
+    // directional, so sun-side planes glow warm while the far side falls into the blue shadow.
+    // (on dusty worlds the sun disc is nearly extinct and this lobe IS the key light)
+    float civLobe = smoothstep(-0.35, 0.75, civNL) * mix(1.0, civSh, 0.7);
+    float civMx = max(uCivSunC.r, max(uCivSunC.g, uCivSunC.b));
+    vec3 civTint = civMx > 1e-5 ? uCivSunC / civMx : vec3(1.0);
+    vec3 civFill = mix(vec3(uCivKey.x), (1.0 + (uCivKey.y - 1.0) * 0.9) * mix(vec3(1.0), civTint, 0.45), civLobe);
+    reflectedLight.indirectDiffuse *= mix(vec3(1.0), civFill, civKd);
     reflectedLight.directDiffuse *= mix(1.0, uCivKey.y, civKd);
     // hot grazing rim on sun-side edges and silhouettes (sand-scoured slabs, lacquer, plaster)
     float civRim = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 4.0) * smoothstep(-0.2, 0.3, civNL);
