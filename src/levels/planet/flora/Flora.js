@@ -170,6 +170,7 @@ export default class Flora {
 
   shot(name, spot) {
     this.sight = null;
+    if (this.engine.shotMode) console.warn(`[flora] shot ${name} glowPools ${!!this.profile?.glowPools} trees ${!!this.trees}`);
     if (name === 'night' && spot?.lookAt && this.profile?.glowPools) { try { this._heroGrove(spot); } catch (e) { this._err('grove', e); } return false; }
     if (name !== 'flora' || !this.trees?.landmark) return false;
     const w = this.world, L = this.trees.landmark;
@@ -224,19 +225,23 @@ export default class Flora {
       if (w.hasOcean && h < w.seaLevel + 0.8) return;
       list.push({ kind, position: d0.clone().multiplyScalar(w.radius + h - 0.2), scale, seed: rnd() * 1000 });
     };
+    // the shot camera sits ~6.5 m behind the spot looking along fw: place the
+    // groves by view angle so they frame the sky from both edges of the frame
     for (const sgn of [-1, 1]) {
-      // the glowing wood: a loose grove along each flank, nearer trees taller
-      for (let k = 0; k < 9; k++) {
-        const d = 22 + k * 15 + rnd() * 10;
-        put('biolum', d, sgn * (clearR(d) + 4 + rnd() * (8 + k * 2.2)), 0.95 + rnd() * 0.5);
+      // the glowing wood: a loose grove along each flank, layered in depth
+      for (let k = 0; k < 10; k++) {
+        const D = 30 + k * 13 + rnd() * 9, th = (0.36 + 0.24 * rnd()) * (k < 4 ? 1 : 0.9);
+        put('biolum', D - 6.5, sgn * D * Math.tan(th), 0.9 + rnd() * 0.5);
       }
       // giant glowing fungi and coral at the grove's feet, closer to the lens
       for (let k = 0; k < 4; k++) {
-        const d = 8 + k * 9 + rnd() * 6;
-        put(k % 2 ? 'coral' : 'fungus', d, sgn * (clearR(d) + 1 + rnd() * 6), 0.55 + rnd() * 0.35);
+        const D = 14 + k * 8 + rnd() * 5, th = 0.42 + 0.2 * rnd();
+        put(k % 2 ? 'coral' : 'fungus', D - 6.5, sgn * D * Math.tan(th), 0.5 + rnd() * 0.3);
       }
     }
-    this.trees.plant(list);
+    void clearR;
+    const n = this.trees.plant(list);
+    if (FLORA_STATS || this.engine.shotMode) console.warn(`[flora] night grove: ${n} planted of ${list.length}`);
   }
 
   // Streaming runs after camera rigs have placed the camera this frame.

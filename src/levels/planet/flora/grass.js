@@ -182,7 +182,8 @@ const BLADE_BODY = /* glsl */ `
     p += side * position.x * aDat.z * wk;
   }
 #else
-  p += side * position.x * aDat.z * wk * (1.0 - 0.75 * t * t);
+  // blades right at the lens thin out (no 50 px flat ribbons in the foreground)
+  p += side * position.x * aDat.z * wk * (1.0 - 0.75 * t * t) * mix(0.6, 1.0, smoothstep(0.8, 5.0, dC));
 #endif
   vec3 bn = normalize(cross(side, tang));
   if (dot(bn, toC) > 0.0) bn = -bn;
