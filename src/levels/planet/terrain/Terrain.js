@@ -69,8 +69,12 @@ export default class Terrain {
     // allowed projected geometric error (px, 720-line reference). Triangles go where
     // the surface bends: ridges, crests, cliffs refine further; flat plains/slopes
     // stay coarser than the spacing rule (flatK) → about the same budget, crisper landforms
-    this.errPx = q.pick(5, 3.2, 1.6, 1.1);
-    this.flatK = q.pick(1.15, 1.25, 1.35, 1.35);
+    // The per-chunk detail maps (2× vertex resolution normals) now carry the shading of
+    // ridges and gullies between vertices, so geometry only has to hold silhouettes:
+    // a looser error and coarser flats keep the call/triangle budget (p2 vista went
+    // to 167 terrain calls at high with errPx 1.6 / flatK 1.35).
+    this.errPx = q.pick(7, 4.5, 2.6, 1.8);
+    this.flatK = q.pick(1.5, 1.5, 1.5, 1.4);
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
     this.relief = w.terrainParams.relief;
