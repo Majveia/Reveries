@@ -366,8 +366,8 @@ void main(){
   float cov = A / (A + uA0 * 0.6);
   // the first knots: no flat plateau — a log-column cusp that keeps rising toward their centres,
   // while the lattice term itself backs off inside them (they are rare, small and pin-bright)
-  float Il = uGain * 2.2 * cov * pow(smoothstep(0.15, 0.42, hm), uLatticeK) * (1.0 - 0.88 * smoothstep(0.38, 0.66, hm))
-            + uGain * 0.22 * log(1.0 + A / (uA0 * 6.0)) * smoothstep(0.4, 0.7, hm)
+  float Il = uGain * 2.2 * cov * pow(smoothstep(0.15, 0.42, hm), uLatticeK) * (1.0 - 0.8 * smoothstep(0.5, 0.82, hm))
+            + uGain * 0.22 * log(1.0 + A / (uA0 * 6.0)) * smoothstep(0.6, 0.9, hm)
             + uDetail * detail * 0.6;
   I = mix(I, Il, uEarly * uEarlyLattice);
   // optical-depth soft cap: a filament seen end-on integrates its whole length — it stays a bright

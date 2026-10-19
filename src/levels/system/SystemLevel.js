@@ -249,7 +249,7 @@ export default class SystemLevel {
       const hov = sp === this.hover;
       if (hov || sp === this.focus || far || ui.mapNames !== false) { // quiet always-on names (ui module)
         _p.copy(sp.position); _p.y += sp.R * 1.15;
-        ui.labelWorld?.(`sys-${p.index}`, _p, this.camera, p.name, { sub: hov ? `${KIND_LABEL[p.kind] || p.kind}${p.aesthetic ? ' · ' + (AESTHETICS[p.aesthetic]?.name || '') : ''}` : '', hover: hov, kind: 'planet', quiet: !hov && sp !== this.focus });
+        ui.labelWorld?.(`sys-${p.index}`, _p, this.camera, p.name, { sub: hov ? `${KIND_LABEL[p.kind] || p.kind}${p.aesthetic ? ' · ' + (AESTHETICS[p.aesthetic]?.name || '') : ''}` : '', hover: hov, kind: p.kind === 'gas' ? 'giant' : 'planet', quiet: !hov && sp !== this.focus, center: sp.position, bodyRadius: sp.planet.rings ? (sp.ringOut || sp.R * 2.2) : sp.R });
       }
     }
     if (this.hover) this.engine.canvas.style.cursor = 'pointer';

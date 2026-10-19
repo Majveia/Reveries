@@ -494,7 +494,7 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 2.6, galaxies: 0.5, lights: 0, veil: 0.2, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 1.2, heatK: 1.45, hi: 0.0, cap: 0.6, gain: 0.55, fog: 22 };
+        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 2.6, galaxies: 0.5, lights: 0, veil: 0.2, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 1.2, heatK: 1.2, hi: 0.0, cap: 0.6, gain: 0.6, fog: 22 };
         this._pose(this.home, this._heroOffset((o.ed ?? 0.22) * this.L, HERO.yaw + 0.4, o.ep ?? 0.42), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
