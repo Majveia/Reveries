@@ -556,7 +556,7 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.air ?? this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.08); // ~2.4 m/s: tails stream back and droop (2.9 m/s held a rigid flag, 1.8 m/s hung like a cape)
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.55).addScaledVector(ctl.up, sp * 0.12);
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
@@ -567,8 +567,8 @@ export default class Player {
       S.wind.multiplyScalar(0.4).addScaledVector(_v2.crossVectors(ctl.up, ctl.facing).normalize(), 0.32 * Math.max(sp, 1.5));
       // a frozen instant of a gusting wind: livelier travelling S-waves + curl swirls, so the
       // settled ribbon carries folds and a twist instead of its static streaming equilibrium
-      S.flutter = 30; S.turbulence = 13;
-    } else { S.airOffset.set(0, 0, 0); S.flutter = 18; S.turbulence = 7.5; }
+      S.flutter = 30; S.turbulence = 13; S.fold = 1.25; S.twist = 16;
+    } else { S.airOffset.set(0, 0, 0); S.flutter = 18; S.turbulence = 7.5; S.fold = 0.6; S.twist = 6; }
     // screenshot poses: once settled the cloth holds its (rippled) instant, so temporal AA
     // never smears a moving ribbon across a frozen frame
     const hold = this.shotPose && this.engine.shotMode && S.ready && this._scarfHeld;
@@ -642,25 +642,15 @@ export default class Player {
     const key = L?.keyColor ? _c2.copy(L.keyColor) : _c2.copy(sun.color).multiplyScalar(sun.intensity);
     const skyC = L?.skyColor || _c3.setRGB(0.3, 0.45, 0.7).multiplyScalar(w.daylight);
     // rim: key-tinted by day, sky-fed under overcast, a cool sliver of sky light at night
-    addSc(U.uRim.value.copy(key).multiplyScalar(0.34), skyC, 0.32).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
+    addSc(U.uRim.value.copy(key).multiplyScalar(0.36), skyC, 0.6).add(_c.setRGB(0.012, 0.018, 0.03).multiplyScalar(0.4 + night));
     // character kicker: behind-side, on the sun's side of the frame (view space)
     const sv = _v3.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     const side = sv.x >= 0 ? 1 : -1;
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
-    addSc(U.uKick.value.copy(key).multiplyScalar(1.0), skyC, 0.3).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
+    addSc(U.uKick.value.copy(key).multiplyScalar(1.05), skyC, 0.6).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     // overcast / fog: the key is weak, but the hero must still separate from dark ground
-    // ...but in fog / haze the hero must sit IN the air, not be cut out of it: the floor
-    // fades away, the kicker + rim dim and tint toward the fog colour (no pasted-in look)
-    const fogK = clamp((this.level.weatherState?.fog || 0) * 1.6, 0, 1);
-    { const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11, floor = 0.15 * w.daylight * (1 - fogK);
+    { const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11, floor = 0.15 * w.daylight;
       if (kl < floor) U.uKick.value.multiplyScalar(kl > 1e-4 ? floor / kl : 0).add(kl > 1e-4 ? _c.setRGB(0, 0, 0) : _c.setRGB(floor, floor, floor * 1.05)); }
-    if (fogK > 0) {
-      const fc = this.level.sys?.weather?.fogColor;
-      const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11;
-      if (fc) U.uKick.value.lerp(_c.copy(fc).multiplyScalar(kl), 0.6 * fogK);
-      U.uKick.value.multiplyScalar(1 - 0.55 * fogK);
-      U.uRim.value.multiplyScalar(1 - 0.45 * fogK);
-    }
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
@@ -881,39 +871,35 @@ export default class Player {
       // no near cliffs / walls filling the view, settlement visible over the terrain.
       const portrait = this.level.camera.aspect < 1;
       const speed = 5.2; // a real run gait: flight phase, heel kick, driven arm pump
-      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.1], leanAdd: 0.2, air: 2.2 };
+      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.06], leanAdd: 0.12, air: 2.4 };
       cam.view = 'third';
-      cam.distance = portrait ? 2.6 : 2.5; cam.shoulder = portrait ? 0.22 : 0.58;
+      cam.distance = portrait ? 3.0 : 2.5; cam.shoulder = portrait ? 0.25 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
-      cam.pivotHeight = portrait ? 1.55 : 1.12; // landscape: slightly low, heroic angle; portrait: lifted over the grass
+      cam.pivotHeight = portrait ? 1.35 : 1.12; // slightly low, heroic angle
       let camH = this._searchHeroYaw(siteDir, up, target, cam.distance, cam.pivotHeight, cam.shoulder);
       // 3/4 profile: the wrap visor and the face side of the helmet read from the lens
-      this.ctl.setFacing(turn(camH, -0.6)); // ~34° off the lens: over-the-shoulder, pack + visor wrap both read
+      this.ctl.setFacing(turn(camH, -0.95));
       if (level.floraClear) {
         // set-piece clearing (as for 'fp'): no tree on the lens -> hero corridor, none hugging
         // the silhouette from behind (dark bark swallowing the suit)
         const hp = this.ctl.pos;
         for (const [d, r] of [[-cam.distance, 3.5], [0, 3], [6, 5]]) level.floraClear(hp.clone().addScaledVector(camH, d), r);
-        // ...and the frame flanks: a trunk / shrub mass hugging one side of the lens filled a third
-        // of the p3 hero frame with dark bark — keep the near left / right thirds open too
-        const rt = new THREE.Vector3().crossVectors(camH, up).normalize();
-        for (const sd of [-1, 1]) level.floraClear(hp.clone().addScaledVector(camH, 1.5).addScaledVector(rt, sd * 3.6), 2.6);
       }
       // passing / push-off instant: the rear foot rolls onto its toe behind the hips while the
       // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
       // run 'contact' key pose: lead foot just planted ahead (knee soft), trailing heel kicked
       // up high behind, arms at full counter-swing, pelvis and chest counter-rotated
-      this.anim.phase = 0.085; // stance foot flat + weighted (no floating toe), rear leg trailing
+      this.anim.phase = 0.035;
       this.anim.freezePhase = true;
       // debug: ?pclose=1 (harness --extra "pclose=1") frames the head close up for look-dev
       const pclose = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pclose');
       if (pclose) { cam.distance = 1.1; cam.shoulder = 0; cam.pivotHeight = 1.5; if (pclose === '2') camH = turn(camH, -1.9); }
-      cam.snap(this.ctl.pos, up, camH, portrait ? -0.16 : -0.13);
+      cam.snap(this.ctl.pos, up, camH, portrait ? -0.06 : -0.13);
     } else if (name === 'fp') {
       this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);
       cam.view = 'first';
-      cam.snap(this.ctl.pos, up, siteDir, -0.05); // gaze level on the settlement, horizon just above centre
+      cam.snap(this.ctl.pos, up, siteDir, -0.05); // gaze level on the settlement: a near ground layer grounds the eye
     } else if (name === 'vista') {
       this.shotPose = { state: 'ground', speed: 0, look: [0.35, 0.08] };
       this.ctl.setFacing(turn(siteDir, 0.15));

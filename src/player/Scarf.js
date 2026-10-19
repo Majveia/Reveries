@@ -33,7 +33,7 @@ class Ribbon {
       if (r + 1 < rows) add(i, i + cols, 1);
       if (r + 1 < rows && q + 1 < cols) { add(i, i + cols + 1, 0.6); add(i + 1, i + cols, 0.6); }
       // soft bending: the cloth folds into travelling S-waves and curls across its width
-      if (r + 2 < rows) add(i, i + 2 * cols, 0.018); // lazier, larger curls
+      if (r + 2 < rows) add(i, i + 2 * cols, 0.009);
       if (q + 2 < cols) add(i, i + 2, 0.005);
     }
     this.con = new Float64Array(c);
@@ -56,8 +56,8 @@ export class Scarf {
   constructor(material, quality = 2) {
     const rows = [18, 24, 32, 34][quality] ?? 32;
     this.ribbons = [
-      new Ribbon(3, 7, rows, 1.35, 0.32),
-      new Ribbon(3, 5, Math.round(rows * 0.66), 0.88, 0.23),
+      new Ribbon(3, 7, rows, 1.35, 0.25),
+      new Ribbon(3, 5, Math.round(rows * 0.66), 0.88, 0.18),
     ];
     this.object = new THREE.Group();
     this.object.name = 'explorer-scarf';
@@ -74,6 +74,8 @@ export class Scarf {
     this.time = 0;
     this.flutter = 18;
     this.turbulence = 7.5;
+    this.fold = 0.6;  // short fold ripples (scaled by the flutter amplitude)
+    this.twist = 6;   // hem-vs-hem roll along the band
     this.ribbons.forEach((rb, i) => { rb.phase = i * 2.1; });
   }
 
@@ -183,6 +185,15 @@ export class Scarf {
       const along = r * rb.seg;
       const wave = Math.sin(t * (7 + rel * 1.1) - along * 5.5 + rb.phase) + 0.45 * Math.sin(t * (12.3 + rel * 0.7) - along * 9.0 + q * 0.8 + rb.phase * 1.7);
       fx += nx * amp * wave; fy += ny * amp * wave; fz += nz * amp * wave;
+      // fold ripples (short wavelength, ~3 crests along the band) + a slow travelling twist:
+      // opposite normal pushes on the two hems roll the band about its centre line, so it
+      // turns its reverse side and narrows edge-on in places — woven cloth, not a flat plank
+      {
+        const cq = (q / (cols - 1)) * 2 - 1;
+        const fold = this.fold * amp * 0.55 * Math.sin(t * (15 + rel * 1.3) - along * 14.0 + rb.phase * 2.3 + cq * 0.9);
+        const tw = this.twist * cq * (0.15 + 0.85 * s01) * (Math.sin(along * 3.6 - t * 2.7 + rb.phase * 1.3) + 0.5 * Math.sin(along * 7.1 + t * 1.9 + rb.phase));
+        fx += nx * (fold + tw); fy += ny * (fold + tw); fz += nz * (fold + tw);
+      }
       // curl-like turbulence: smooth, divergence-poor swirls that vary in time and along
       // the length, so the ribbon twists and billows instead of streaming like a plank
       {

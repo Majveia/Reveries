@@ -413,7 +413,10 @@ export class Animator {
     const swingL = -Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const swingR = Math.cos(TAU * ph) * A + 0.02 - 0.1 * spr;
     const elBase = lerp(lerp(0.36, 1.32, g), 1.45, spr) * move + 0.22 * (1 - move);
-    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * 0.16 - Math.max(0, -swingL) * 0.22, elBase + Math.max(0, swingR) * 0.16 - Math.max(0, -swingR) * 0.22, lerp(0.08, 0.13, g * move), 0.12 * g * move);
+    // run: the forward hand pumps to chest height (elbow opens as it swings forward, never up at
+    // the visor), the trailing arm extends back past the hip
+    const elF = lerp(0.16, -0.3, g * move), elB = lerp(0.22, 0.42, g * move);
+    this._arms(p, swingL + 0.05 * br * (1 - move), swingR + 0.05 * br * (1 - move), elBase + Math.max(0, swingL) * elF - Math.max(0, -swingL) * elB, elBase + Math.max(0, swingR) * elF - Math.max(0, -swingR) * elB, lerp(0.08, 0.13, g * move), 0.12 * g * move);
     // shoulders lift with breathing / run; the forward-swinging arm's shoulder protracts
     for (const [S, s, sw] of [['L', 1, swingL], ['R', -1, swingR]]) qYXZ(p.D[B['clav' + S]], 0, -s * clamp(sw, -1, 1) * 0.13 * move, s * (0.03 * br * (1 - move) + 0.04 * g * move));
   }

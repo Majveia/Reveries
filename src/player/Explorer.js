@@ -47,7 +47,7 @@ const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 
 
 // ---- palette (sRGB hex → linear) ---------------------------------------------------
 const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
-const HELM_REAR = lin('#a69d8c');
+const HELM_REAR = lin('#8f877a');
 export const PALETTE = {
   ivory: lin('#e3d9c4'),
   signal: lin('#c4632a'),
@@ -56,7 +56,7 @@ export const PALETTE = {
   ivoryWarm: lin('#d9d0bd'),
   graphite: lin('#2a2d33'),
   gunmetal: lin('#3b3f47'),
-  suit: lin('#9c8762'), // mid khaki: holds a distinct value against dark ground / bark
+  suit: lin('#857a63'), // mid khaki: holds a distinct value against dark ground / bark
   suitDark: lin('#4c463d'),
   glove: lin('#1b1d21'),
   sole: lin('#121316'),
@@ -404,7 +404,7 @@ function makePieces(spec, body) {
     {
       const c = add(sh, [s * 0.026, 0.03, -0.006]);
       const out = norm([s * 1, 0.25, 0]);
-      const big = s > 0 ? 0.9 : 0.86; // ~25% smaller: a layered plate, not a ball over the joint
+      const big = s > 0 ? 1.16 : 1.1;
       const facetN = norm([s * 0.42, 1, 0.08]), facetB = norm([s * 0.2, 0.35, -1]), facetF = norm([s * 0.2, 0.35, 1]);
       const f = (x, y, z) => {
         const p = [x, y, z];
@@ -421,27 +421,22 @@ function makePieces(spec, body) {
         // second lame (layered): cut a step
         return smax(d, region, 0.008);
       };
-      // two overlapping articulated lames stepping down the upper arm (each sits proud of the
-      // next, open toward the body) — the stacked-plate read of a real pauldron
-      const lameAt = (t0, t1, r0, off) => (x, y, z) => {
+      const lame = (x, y, z) => {
         const p = [x, y, z];
-        const d = shell(sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], r0, r0 * 0.78), off, 0.012);
+        const d = shell(sdRoundCone(x, y, z, sh[0], sh[1], sh[2], el[0], el[1], el[2], 0.065, 0.05), 0.013, 0.014);
         const t = dot(sub(p, sh), dA);
-        let region = Math.max(t0 - t, t - t1);
-        region = Math.max(region, -dot(sub(p, sh), out) + 0.004);
-        return smax(d, region, 0.005);
+        let region = Math.max(0.055 - t, t - 0.105);
+        region = Math.max(region, -dot(sub(p, sh), out) + 0.01);
+        return smax(d, region, 0.006);
       };
-      const lame1 = lameAt(0.046, 0.088, 0.064, 0.016), lame2 = lameAt(0.082, 0.124, 0.06, 0.011);
-      const g = (x, y, z) => Math.min(f(x, y, z), lame1(x, y, z), lame2(x, y, z));
+      const g = (x, y, z) => Math.min(f(x, y, z), lame(x, y, z));
       const lo = [Math.min(sh[0], el[0]) - 0.12, sh[1] - 0.17, -0.13], hi = [Math.max(sh[0], el[0]) + 0.12, sh[1] + 0.12, 0.1];
       pieces.push({
         name: 'pauldron' + S, bone: B['upperArm' + S], f: g, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], h: 0.0062,
-        // deliberate asymmetry: left cap ivory with a signal crown, right cap gunmetal over
-        // ivory lames (breaks the twin 'white ball' read from the 3/4-rear camera)
-        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); if (s > 0) return t < 0.044 && y > sh[1] + 0.005 ? PALETTE.signal : ivory; return t < 0.046 ? PALETTE.gunmetal : t > 0.085 ? PALETTE.signal : ivory; },
-        mat: () => [0.36, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
+        color: (x, y, z) => { const t = dot(sub([x, y, z], sh), dA); return (s > 0 && t > 0.036 && t < 0.056) || (s < 0 && t > 0.06) ? PALETTE.signal : ivory; },
+        mat: () => [0.32, 0], split: (x, y, z) => 0.05 - dot(sub([x, y, z], sh), dA),
         line: () => FAR,
-        seam: (x, y, z) => dot(sub([x, y, z], sh), dA) - 0.086,
+        seam: () => FAR,
       });
     }
     // ---- bracer + wrist cuff ---------------------------------------------------------------
@@ -682,10 +677,7 @@ function makePieces(spec, body) {
         const crest = Math.min(0.0105 - ax, y - 1.73);
         const chin = 1.57 - y;
         const rear = Math.min(-0.02 - z, 1.632 - (z + 0.02) * 0.6 - y); // graphite neck guard
-        // (rear graphite split removed: interpolated per-vertex it cut a jagged black/white
-        // line across the back of the dome -> 'bowling ball'; the rear guard is now a warm
-        // grey vertex tone with a panel seam)
-        return -Math.max(pod, chin) + 0 * rear * crest;
+        return -Math.max(pod, chin, rear) + 0 * crest;
       },
       line: (x, y, z) => {
         // (no rear glow line: under the neck guard it read as a second visor 'eye')
@@ -798,17 +790,17 @@ function makePieces(spec, body) {
     const caps = []; // [a, b, r]
     const K = add(add(wr, mul(dA, 0.086)), mul(pn, 0.003));
     const FING = [
-      [0.026, [0.036, 0.024, 0.02], [0.5, 0.78, 0.6], 1.0],
-      [0.0085, [0.04, 0.027, 0.021], [0.58, 0.84, 0.64], 1.03],
-      [-0.009, [0.037, 0.025, 0.02], [0.64, 0.9, 0.66], 0.98],
-      [-0.025, [0.03, 0.02, 0.017], [0.7, 0.94, 0.68], 0.88],
+      [0.026, [0.036, 0.024, 0.02], [0.28, 0.48, 0.4], 1.0],
+      [0.0085, [0.04, 0.027, 0.021], [0.36, 0.56, 0.44], 1.03],
+      [-0.009, [0.037, 0.025, 0.02], [0.44, 0.62, 0.46], 0.98],
+      [-0.025, [0.03, 0.02, 0.017], [0.52, 0.68, 0.5], 0.88],
     ];
     for (const [off, L, C, rs] of FING) {
       let p0 = add(K, mul(wAx, off));
       let ang = 0;
       for (let k = 0; k < 3; k++) {
         ang += C[k];
-        const dir = norm(add(add(mul(dA, Math.cos(ang)), mul(pn, Math.sin(ang))), mul(wAx, off * 0.08)));
+        const dir = norm(add(add(mul(dA, Math.cos(ang)), mul(pn, Math.sin(ang))), mul(wAx, off * 0.25)));
         const p1 = add(p0, mul(dir, L[k]));
         caps.push([p0, p1, [0.0094, 0.0086, 0.0078][k] * rs]);
         p0 = p1;
@@ -1196,8 +1188,8 @@ function visorPoint(f, u, v, out) {
   // mirrored strip, not a single round 'eye'). The band narrows and sweeps down toward
   // the temples like a sports visor.
   const au = Math.abs(u);
-  const phi = u * 1.3; // wide continuous wrap (one band of glass, temple to temple)
-  const el = -0.05 + v * 0.47 * (1 - 0.4 * au * au) - 0.1 * au * au; // taller face shield (~55% of the front)
+  const phi = u * 1.2; // wide continuous wrap (one band of glass, temple to temple)
+  const el = -0.06 + v * 0.4 * (1 - 0.42 * au * au) - 0.1 * au * au;
   const dx = Math.sin(phi) * Math.cos(el), dy = Math.sin(el), dz = Math.cos(phi) * Math.cos(el);
   const [cx, cy, cz] = HELM_C;
   let t0 = 0.0, t1 = 0.3;

@@ -290,7 +290,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.38 }, uTmax: { value: 9600 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.4 }, uTmax: { value: 8100 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

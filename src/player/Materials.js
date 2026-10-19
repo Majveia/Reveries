@@ -59,10 +59,6 @@ const RIM_GLSL = /* glsl */`
   }
 `;
 
-// geometric specular AA: widen roughness where the (bumped) normal varies within a pixel,
-// so faceted / micro-bumped plate edges don't sparkle (Kaplanyan-style, cheap)
-const SPEC_AA = /* glsl */`{ vec3 nd = fwidth(normal); roughnessFactor = min(1.0, sqrt(roughnessFactor * roughnessFactor + min(0.35, dot(nd, nd) * 1.6))); }`;
-
 const DECAL_GLSL = /* glsl */`
 float rvSegD(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
 // stencil seven-segment digit in a 1 x 1.6 cell (p.x 0..1, p.y 0..1.6), anti-aliased
@@ -112,7 +108,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
     uTime: { value: 0 },
     uGlow: { value: 0 },
     uDust: { value: new THREE.Color('#8a7a62') },
-    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(4.2) },
+    uAccent: { value: new THREE.Color(PALETTE.accent).multiplyScalar(2.2) },
     uGlyph: { value: new THREE.Color(PALETTE.glyph).multiplyScalar(3.0) },
     uVisorGlow: { value: 1 },
     uJet: { value: 0 },
@@ -141,8 +137,8 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
 
   // ---- under-suit (skinned fabric) --------------------------------------------------
   const body = new THREE.MeshPhysicalMaterial({
-    vertexColors: true, roughness: 0.8, metalness: 0, sheen: 0.45, sheenRoughness: 0.6,
-    sheenColor: new THREE.Color('#b3a88e'), envMap: env.texture, envMapIntensity: 0.9,
+    vertexColors: true, roughness: 0.8, metalness: 0, sheen: 1, sheenRoughness: 0.55,
+    sheenColor: new THREE.Color('#9a907a'), envMap: env.texture, envMapIntensity: 0.85,
   });
   body.onBeforeCompile = (sh) => {
     bind(sh);
@@ -188,15 +184,15 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       `)
       .replace('#include <roughnessmap_fragment>', /* glsl */`#include <roughnessmap_fragment>
       roughnessFactor = clamp(vMat.x + (macro - 0.5) * 0.12 + dust * 0.15, 0.25, 1.0);`)
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rvBump(normal, bumpH);\n' + SPEC_AA)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rvBump(normal, bumpH);')
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n' + aoBlock('vMat.w'))
       .replace('#include <opaque_fragment>', RIM_GLSL + '#include <opaque_fragment>');
   };
 
   // ---- hard-shell armour (rigid) ---------------------------------------------------------
   const hard = new THREE.MeshPhysicalMaterial({
-    vertexColors: true, roughness: 0.46, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.42,
-    envMap: env.texture, envMapIntensity: 0.85, specularIntensity: 0.5,
+    vertexColors: true, roughness: 0.3, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.22,
+    envMap: env.texture, envMapIntensity: 1.3, specularIntensity: 0.6,
   });
   hard.onBeforeCompile = (sh) => {
     bind(sh, { uAccent: U.uAccent, uJet: U.uJet, uColB: { value: new THREE.Color().setRGB(...PALETTE.graphite) } });
@@ -215,7 +211,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float isB = 1.0 - smoothstep(-splitW, splitW, splitD);
       diffuseColor.rgb = mix(diffuseColor.rgb, uColB, isB);
       float splitGroove = (1.0 - smoothstep(0.0, max(splitW * 1.5, 0.0012), abs(splitD))) * step(abs(splitD), 0.9);
-      float lineW = max(px * 0.9, 0.0032);
+      float lineW = max(px * 0.75, 0.0018);
       float seamW = max(px * 0.6, 0.0011);
       // panel seams: a recessed groove with a dark core
       float groove = max(1.0 - smoothstep(seamW * 0.4, seamW * 1.6, abs(seamD)), splitGroove * 0.8);
@@ -233,8 +229,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float curv = vAO.y;
       // chipping at two scales: fine flakes + larger scuffed patches that read at 3rd-person distance
       float chips = rvFbm(bp * 160.0) * 0.6 + rvFbm(bp * 38.0 + 3.7) * 0.4;
-      float wear = smoothstep(0.55, 0.8, clamp(curv, -1.0, 1.0) * 0.85 + (chips - 0.5) * 0.7) * step(0.3, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
-      wear *= rvAA(0.012, px) * 0.45; // thin chipped edges only: no white outline around every plate
+      float wear = smoothstep(0.4, 0.8, curv * 0.9 + (chips - 0.5) * 0.9) * step(0.3, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
       // broad weathering: sun-faded tops, darker scuffed lower edges
       diffuseColor.rgb *= 0.9 + 0.14 * rvFbm(bp * 6.0 + 11.0);
       float grime = smoothstep(-0.08, -0.5, curv) * 0.5 + (1.0 - vAO.x) * 0.25;
@@ -272,16 +267,16 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       }
       // accent emissive core + soft halo
       float core = 1.0 - smoothstep(lineW * 0.5, lineW * 1.25, abs(lineD));
-      float halo = exp(-abs(lineD) / 0.007) * 0.3;
+      float halo = exp(-abs(lineD) / 0.0045) * 0.18;
       float isLine = step(abs(lineD), 0.9);
       vec3 rvEmit = uAccent * (core + halo) * isLine;
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03), core * isLine * 0.7);
       `)
       .replace('#include <roughnessmap_fragment>', /* glsl */`#include <roughnessmap_fragment>
-      roughnessFactor = clamp(mix(max(vMat.x + 0.12, 0.44), 0.5, isB) + (smudge - 0.5) * 0.18 + scratch * 0.06 * rvAA(0.003, px) + groove * 0.3 + dust * 0.35 + grime * 0.2 - wear * 0.05, 0.3, 1.0);`)
+      roughnessFactor = clamp(mix(vMat.x, 0.44, isB) + (smudge - 0.5) * 0.16 + scratch * 0.06 * rvAA(0.003, px) + groove * 0.3 + dust * 0.3 + grime * 0.2 - wear * 0.05, 0.08, 1.0);`)
       .replace('#include <metalnessmap_fragment>', /* glsl */`#include <metalnessmap_fragment>
-      metalnessFactor = clamp(max(mix(vMat.y, 0.45, isB), wear * 0.6), 0.0, 1.0);`)
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rvBump(normal, bumpH);\n' + SPEC_AA)
+      metalnessFactor = clamp(max(mix(vMat.y, 0.45, isB), wear * 0.9), 0.0, 1.0);`)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rvBump(normal, bumpH);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvEmit;')
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n' + aoBlock('vAO.x * (1.0 - groove * 0.5)'))
       .replace('#include <opaque_fragment>', RIM_GLSL + '#include <opaque_fragment>');
@@ -313,10 +308,7 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
         // no closed glowing outline (it read as a single round 'eye' from the 3/4 rear):
         // only a thin HUD light strip along the lower lip of the wrap visor
         float lip = smoothstep(0.8, 0.96, -q.y) * (1.0 - smoothstep(0.55, 0.95, abs(q.x)));
-        vec3 Vg = normalize(vViewPosition);
-        float gfres = pow(1.0 - saturate(abs(dot(normalize(vNormal), Vg))), 3.0);
-        float gasket = smoothstep(0.9, 0.985, edge) * (0.35 + 0.65 * gfres);
-        vec3 glow = uAccent * (pool * 0.07 + lip * 0.42 + arc * 0.12 * (0.75 + 0.25 * scan) + gasket * 0.22);
+        vec3 glow = uAccent * (pool * 0.006 + lip * 0.035 + rim * 0.0 + arc * 0.0);
         totalEmissiveRadiance += glow * uVisorGlow;
       }`)
       .replace('#include <opaque_fragment>', /* glsl */`
@@ -359,30 +351,36 @@ export function createExplorerMaterials(renderer, quality = 2, shadowUniforms = 
       float border = smoothstep(0.075, 0.06, abs(across - 0.1)) + smoothstep(0.075, 0.06, abs(across - 0.9));
       border = min(border, 1.0) * (1.0 - smoothstep(0.035, 0.0, abs(abs(across - 0.5) - 0.4) - 0.01));
       float bline = 1.0 - smoothstep(0.012, 0.03, abs(abs(across - 0.5) - 0.4));
-      // embroidered motif band: interlocking chevrons with a diamond knot every 12 cm —
-      // a woven ornament that never reads as letters
+      // glyph band: one glyph every 9 cm, a 3x4 bit pattern per glyph
       float gi = floor(along / 0.12);
       float gl = fract(along / 0.12);
+      vec2 cell = vec2((across - 0.34) / 0.32, (gl - 0.2) / 0.6);
       float glyph = 0.0;
-      {
-        float cx = (across - 0.5) / 0.16; // -1..1 across the band
-        if (abs(cx) < 1.0) {
-          float sw = 0.14;
-          float chev = abs(fract(gl * 2.0 - abs(cx) * 0.45) - 0.5);
-          float ch = smoothstep(sw, sw * 0.45, chev) * step(abs(cx), 0.92);
-          vec2 kq = vec2(cx * 0.8, (gl - 0.5) * 2.4);
-          float dia = abs(kq.x) + abs(kq.y);
-          float knot = smoothstep(0.07, 0.035, abs(dia - 0.42)) + smoothstep(0.12, 0.07, dia);
-          glyph = clamp(mix(ch, knot, step(dia, 0.55)) , 0.0, 1.0);
+      if (cell.x > 0.0 && cell.x < 1.0 && cell.y > 0.0 && cell.y < 1.0) {
+        // calligraphic rune: a spine, hash-chosen bars and a diagonal (thin strokes)
+        float sw = 0.075;
+        vec2 c = cell - 0.5;
+        float spine = smoothstep(sw, sw * 0.5, abs(c.x)) * step(abs(c.y), 0.46);
+        float bars = 0.0;
+        for (int k = 0; k < 3; k++) {
+          float fk = float(k);
+          float on = step(0.4, rvHash(vec3(gi, fk, 1.7)));
+          float side = rvHash(vec3(gi, fk, 4.1)) > 0.5 ? 1.0 : -1.0;
+          float yk = -0.32 + fk * 0.32;
+          float len = 0.18 + 0.22 * rvHash(vec3(gi, fk, 9.2));
+          float inX = step(0.0, c.x * side) * step(c.x * side, len);
+          bars += on * inX * smoothstep(sw, sw * 0.5, abs(c.y - yk));
         }
+        float dg = step(0.55, rvHash(vec3(gi, 5.0, 2.2))) * smoothstep(sw * 1.2, sw * 0.6, abs(c.y - c.x * 1.4)) * step(abs(c.x), 0.3);
+        glyph = clamp(spine + bars + dg, 0.0, 1.0);
       }
-      float band = smoothstep(0.4, 0.55, along) * (1.0 - smoothstep(1.2, 1.35, along)) * rvAA(0.03, px2 * 0.5);
+      float band = smoothstep(0.45, 0.6, along) * (1.0 - smoothstep(1.15, 1.3, along)) * step(0.5, rvHash(vec3(gi, 3.1, 7.7)) + 0.35);
       glyph *= band;
       vec3 gold = vec3(0.62, 0.42, 0.14);
       // embroidered (raised thread, ~55% contrast), not printed
-      diffuseColor.rgb = mix(diffuseColor.rgb, gold * 0.8, bline * 0.55 + glyph * 0.42);
+      diffuseColor.rgb = mix(diffuseColor.rgb, gold * 0.8, bline * 0.55 + glyph * 0.32);
       bumpH += (glyph + bline * 0.6) * 0.00035;
-      rvEmit = uGlyph * (glyph * (0.02 + 0.9 * uGlow) + bline * 0.03 * uGlow);
+      rvEmit = uGlyph * (glyph * (0.05 + 1.4 * uGlow) + bline * 0.03 * uGlow);
       // frayed tip: loose threads of uneven length
       {
         float tip = vCloth.w;
@@ -494,9 +492,9 @@ class CharacterEnv {
           vec3 sky = mix(uHorizon, uSky, smoothstep(0.0, 0.25, e));
           sky = mix(sky, uZenith, smoothstep(0.25, 0.95, e));
           vec3 gnd = mix(uHorizon * 0.45, uGround, smoothstep(0.0, -0.3, e));
-          vec3 c = mix(gnd, sky, smoothstep(-0.14, 0.1, e));
+          vec3 c = e > 0.0 ? sky : gnd;
           float s = max(dot(d, uSun), 0.0);
-          c += uSunCol * (pow(s, 600.0) * 60.0 + pow(s, 12.0) * 0.6) * smoothstep(-0.08, 0.04, e);
+          c += uSunCol * (pow(s, 600.0) * 60.0 + pow(s, 12.0) * 0.6) * step(-0.02, e);
           c *= uDay;
           // a faint cool skylight that never quite disappears (night: starlight / moon)
           c += vec3(0.010, 0.014, 0.024) * smoothstep(-0.2, 0.6, e);
