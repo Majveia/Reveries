@@ -169,7 +169,8 @@ export class Celestial {
       m.dir.copy(m.pos).sub(cam);
       const d = m.dir.length();
       m.dir.multiplyScalar(1 / d);
-      m.angRadius = Math.max(Math.asin(Math.min(0.5, m.radius / d)), 0.0092); // cinematic floor (~1.05° across)
+      m.angRadiusTrue = Math.asin(Math.min(0.5, m.radius / d));
+      m.angRadius = Math.max(m.angRadiusTrue, 0.0092); // drawn with a cinematic floor (~1.05° across); light uses the true size
       // illuminated fraction seen from the camera
       const toSunFromMoon = w.sunDir;
       m.phaseCos = -m.dir.dot(toSunFromMoon); // 1 = full
@@ -183,7 +184,7 @@ export class Celestial {
     let best = null, bestE = 0, total = 0;
     for (const m of this.moons) {
       const vis = THREE.MathUtils.smoothstep(m.elev, -0.04, 0.12);
-      const size = Math.min(1.6, m.angRadius / 0.028);
+      const size = Math.min(1.6, (m.angRadiusTrue ?? m.angRadius) / 0.028);
       const E = vis * Math.pow(m.illum, 1.6) * size * (0.35 + m.albedo);
       total += E;
       if (E > bestE) { bestE = E; best = m; }

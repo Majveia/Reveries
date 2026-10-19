@@ -187,7 +187,7 @@ vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
   float alb = mix(1.0, 0.55, maria) * crater * fine + rim * 0.18;
   // highlands keep the moon's tint, maria go cool grey-blue (basalt), not brown
   vec3 grey = vec3(dot(tint, vec3(0.3333)));
-  vec3 col = mix(mix(tint, grey, 0.86) * 1.12, grey * vec3(0.82, 0.86, 0.94), maria) * alb;
+  vec3 col = mix(mix(tint, grey, 0.94) * 1.12, grey * vec3(0.82, 0.86, 0.94), maria) * alb;
   if (kind == 1) { // ice: bright with dark lineae
     float cracks = 1.0 - smoothstep(0.0, 0.06, abs(snoise(q * 2.5)) * (0.6 + 0.4 * snoise(q * 7.0)));
     col = mix(vec3(0.92, 0.95, 1.0), tint, 0.25) * (1.0 - cracks * 0.45) * (0.9 + 0.1 * crater);
@@ -228,7 +228,8 @@ void main(){
     float mu0 = max(ndl, 0.0), mu = max(dot(n, -md), 0.05);
     float ls = mu0 / (mu0 + mu) * 2.0;
     float lit = mix(mu0, ls, 0.5) * smoothstep(-0.05, 0.14, ndl) * (0.85 + 0.15 * smoothstep(0.0, 0.5, ndl));
-    vec3 L = alb * uMoonCol[i].a * uSunE * (5.2 / 3.14159) * lit;
+    // a luminous body that clips into the bloom (it keys the night), not a dull smudge
+    vec3 L = alb * uMoonCol[i].a * vec3(dot(uSunE, vec3(0.3333))) * (16.0 / 3.14159) * lit;
     // planetshine on the night side
     L += alb * uMoonInfo[i].z * (1.0 - smoothstep(-0.1, 0.2, ndl));
     L += em;

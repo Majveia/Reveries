@@ -37,7 +37,7 @@ export default class CosmosLevel {
     this.grade = {
       exposure: 1.0, agxPunch: 0.6, contrast: 1.08, saturation: 0.95, temperature: -0.02, tint: 0.02,
       blackPoint: 0.008, blackToe: 0.03, vignette: 0.2, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.55, bloomRadius: 0.5, bloomThreshold: 1.0, bloomKnee: 0.35, streak: 0.04,
+      bloomStrength: 0.55, bloomRadius: 0.5, bloomThreshold: 1.0, bloomKnee: 0.35, bloomCore: 0.0, glare: 0.0, streak: 0.04,
     };
     this.L = BOX;
     this.halos = [];
@@ -63,7 +63,7 @@ export default class CosmosLevel {
     const tier = e.params.has('cq') ? Math.max(0, Math.min(3, parseInt(e.params.get('cq'), 10))) : e.quality.level;
     this.sim = new PMSolver(e.renderer, {
       tier, seed: seedFrom(e.universe.seed, 'cosmic-web'),
-      steps: e.shotMode ? 24 : 40,
+      steps: 40,   // shots integrate the same 40 log-spaced KDK steps as live play
     });
     progress(0.04, 'seeding the primordial field');
     await this.sim.init((p) => progress(0.04 + p, 'seeding the primordial field'));
@@ -302,8 +302,8 @@ export default class CosmosLevel {
     // (the WHIM veil keeps the high floor; the web itself uses a lower, soft-toed floor so faint
     // violet sheets survive and no hard iso-contour edges appear)
     p.veilFloor = 0.4 + 0.75 * inside;
-    p.floor = 0.4 + 0.4 * inside;
-    p.envK = 0.12; p.detail = 2.6; p.latticeK = 1.6; p.veil = 0.8; p.heatK = 1;
+    p.floor = 0.5 + 0.45 * inside;
+    p.envK = 0.12; p.detail = 2.6; p.latticeK = 1.6; p.veil = 0.3; p.toe = 1.7; p.heatK = 1;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
     p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 2.6 + 1.5 * p.early;
     p.dim = 1; p.lights = 1;
@@ -492,8 +492,8 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, gain: 0.26, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.5, lights: 0, veil: 0.35, lattice: 1, latticeK: 2.2, envK: 0.1, detail: 2.5, heatK: 0.85, hi: 0.0, cap: 0.38 };
-        this._pose(this.home, this._heroOffset((o.ed ?? 0.34) * this.L, HERO.yaw + 0.4, 0.22), o.ef ?? 46, 0.0, 0);
+        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.5, lights: 0, veil: 0.3, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 2.5, heatK: 1.45, hi: 0.0, cap: 0.38, gain: 0.32 };
+        this._pose(this.home, this._heroOffset((o.ed ?? 0.5) * this.L, HERO.yaw + 0.4, o.ep ?? 0.42), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
       bang: async () => {
@@ -516,7 +516,7 @@ export default class CosmosLevel {
       // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
-        this._shotP = { near: 16, clampK: 2.5, gain: 0.18, cap: 0.55, heatK: 0.9, hi: 0.06, lights: 0.3 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
+        this._shotP = { near: 16, clampK: 2.5, gain: 0.18, cap: 0.55, heatK: 0.9, hi: 0.06, lights: 0.3, opt: 0.7 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
         const o = this._dbg || {};
         const { A, d } = this._filamentPair();
         const B = A.clone().add(d);

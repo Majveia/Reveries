@@ -556,7 +556,7 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.air ?? this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.55).addScaledVector(ctl.up, sp * 0.12);
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.3); // tails stream back, drooping ~25° (no rigid flag)
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
@@ -649,8 +649,18 @@ export default class Player {
     U.uKickDir.value.set(0.78 * side, 0.42, -0.46).normalize();
     addSc(U.uKick.value.copy(key).multiplyScalar(1.05), skyC, 0.6).add(_c.setRGB(0.02, 0.03, 0.05).multiplyScalar(night));
     // overcast / fog: the key is weak, but the hero must still separate from dark ground
-    { const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11, floor = 0.15 * w.daylight;
+    // ...but in fog / haze the hero must sit IN the air, not be cut out of it: the floor
+    // fades away, the kicker + rim dim and tint toward the fog colour (no pasted-in look)
+    const fogK = clamp((this.level.weatherState?.fog || 0) * 1.6, 0, 1);
+    { const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11, floor = 0.15 * w.daylight * (1 - fogK);
       if (kl < floor) U.uKick.value.multiplyScalar(kl > 1e-4 ? floor / kl : 0).add(kl > 1e-4 ? _c.setRGB(0, 0, 0) : _c.setRGB(floor, floor, floor * 1.05)); }
+    if (fogK > 0) {
+      const fc = this.level.sys?.weather?.fogColor;
+      const kl = U.uKick.value.r * 0.3 + U.uKick.value.g * 0.59 + U.uKick.value.b * 0.11;
+      if (fc) U.uKick.value.lerp(_c.copy(fc).multiplyScalar(kl), 0.6 * fogK);
+      U.uKick.value.multiplyScalar(1 - 0.55 * fogK);
+      U.uRim.value.multiplyScalar(1 - 0.45 * fogK);
+    }
     U.uSunView.value.copy(w.sunDir).transformDirection(cam.matrixWorldInverse);
     // accent lines read stronger at night
     // ...and breathe slowly (0.25 Hz), flaring while sprinting / flying
@@ -871,7 +881,7 @@ export default class Player {
       // no near cliffs / walls filling the view, settlement visible over the terrain.
       const portrait = this.level.camera.aspect < 1;
       const speed = 5.2; // a real run gait: flight phase, heel kick, driven arm pump
-      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.06], leanAdd: 0.12, air: 2.4 };
+      this.shotPose = { state: 'ground', speed, look: [-0.5, 0.1], leanAdd: 0.2, air: 2.2 };
       cam.view = 'third';
       cam.distance = portrait ? 3.0 : 2.5; cam.shoulder = portrait ? 0.25 : 0.58;
       this._shotPivot = this._shotPivot ?? cam.pivotHeight;
@@ -899,7 +909,7 @@ export default class Player {
       this.shotPose = { state: 'ground', speed: 0, look: [0, 0.04] };
       this.ctl.setFacing(siteDir);
       cam.view = 'first';
-      cam.snap(this.ctl.pos, up, siteDir, 0.1); // horizon low: settlement + sky dominate
+      cam.snap(this.ctl.pos, up, siteDir, -0.05); // gaze level on the settlement, horizon just above centre
     } else if (name === 'vista') {
       this.shotPose = { state: 'ground', speed: 0, look: [0.35, 0.08] };
       this.ctl.setFacing(turn(siteDir, 0.15));

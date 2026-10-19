@@ -14,7 +14,7 @@ export function palette(A, rng) {
   const P = A?.palette || {};
   void rng;
   return {
-    walls: ['#e8e2d4', '#ddd6c6', '#e4dccb', '#d6cfbf'].map(col),
+    walls: ['#d4cab6', '#c9bfaa', '#d8cdb8', '#c2b8a3', '#cfc2a8'].map(col), // aged lime plaster, not paper white
     roofs: ['#565d5b', '#4c5559', '#5c5f57', '#48545a', '#665b50', '#4e6258'].map(col),
     lacquer: col('#8e1f18'), lacquer2: col('#6e1a14'), gold: col('#c8963a'),
     stone: col('#8f8b80'), stoneDark: col('#6a675e'), wood: col('#4a3324'), woodDark: col('#2c1f16'), trim: col('#d9d2c2'), iron: col('#1c1c1e'),

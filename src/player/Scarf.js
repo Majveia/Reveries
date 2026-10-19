@@ -33,7 +33,7 @@ class Ribbon {
       if (r + 1 < rows) add(i, i + cols, 1);
       if (r + 1 < rows && q + 1 < cols) { add(i, i + cols + 1, 0.6); add(i + 1, i + cols, 0.6); }
       // soft bending: the cloth folds into travelling S-waves and curls across its width
-      if (r + 2 < rows) add(i, i + 2 * cols, 0.009);
+      if (r + 2 < rows) add(i, i + 2 * cols, 0.018); // lazier, larger curls
       if (q + 2 < cols) add(i, i + 2, 0.005);
     }
     this.con = new Float64Array(c);
@@ -56,8 +56,8 @@ export class Scarf {
   constructor(material, quality = 2) {
     const rows = [18, 24, 32, 34][quality] ?? 32;
     this.ribbons = [
-      new Ribbon(3, 7, rows, 1.35, 0.25),
-      new Ribbon(3, 5, Math.round(rows * 0.66), 0.88, 0.18),
+      new Ribbon(3, 7, rows, 1.35, 0.32),
+      new Ribbon(3, 5, Math.round(rows * 0.66), 0.88, 0.23),
     ];
     this.object = new THREE.Group();
     this.object.name = 'explorer-scarf';

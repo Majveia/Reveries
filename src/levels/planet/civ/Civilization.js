@@ -158,7 +158,8 @@ export default class Civilization {
     const pickTime = (from, to) => {
       if (o.night) return { tod: this._timeFor(s, target, from, to), vis: 1 };
       let bestT = null;
-      for (const dy of [0, 0.04, -0.03, 0.08, 0.13]) {
+      // dusk styles never climb back into the afternoon: a camera on the lit side beats a higher sun
+      for (const dy of target < 0.1 ? [0, 0.03, -0.02, 0.06] : [0, 0.04, -0.03, 0.08, 0.13]) {
         const tod = this._timeFor(s, target + dy, from, to);
         const vis = sunVis();
         if (!bestT || vis > bestT.vis + 0.01) bestT = { tod, vis };
@@ -360,6 +361,23 @@ export default class Civilization {
               const cov = fo / nr;
               sc -= Math.max(0, cov - 0.3) * 6 * (sh.fgOcc ?? 1) + cov * 0.6 * (sh.fgOcc ?? 1);
             }
+          }
+          // the lower band of the frame must hold the town (roofs, halls, walls), not a bare
+          // plain of ground or sand between the lens and the first buildings
+          {
+            const nearL = fpBlk.filter((bk) => bDist(bk, x, z) < dC * 0.9);
+            let bare = 0, nb = 0;
+            for (const u of [-0.8, -0.4, 0, 0.4, 0.8]) {
+              for (const v of [-0.9, -0.62, -0.34]) {
+                const py = pitch + v * vfov * 0.5, yw = yaw + u * hf * 0.5;
+                const g = march(x, z, camY, yw, py, dC * 1.6, 14);
+                if (!g) continue;
+                nb++;
+                const hd = nearL.length ? nearHit(nearL, x, z, camY, yw, py, g[0]) : 0;
+                if (!hd) bare += v < -0.5 ? 1.2 : 0.8;
+              }
+            }
+            if (nb) sc -= Math.max(0, bare / 15 - 0.25) * 9 * (sh.bare ?? 1);
           }
           // sun-lit town (the time's measured visibility) and no sun disc/glare inside the frame
           sc -= (1 - vis) * 7;

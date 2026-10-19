@@ -450,10 +450,16 @@ CivS civSurface(){
     float n1 = civF2(uv * vec2(0.3, 0.45) + seed * 17.0);
     float n2 = civN2(uv * 3.1 + seed * 5.0);
     s.alb *= 0.9 + 0.16 * n1 + 0.04 * n2 * (1.0 - smoothstep(0.02, 0.1, fwm));
+    // every house its own wash: value and warmth drift per building (no cloned cream boxes)
+    float hj = civH12(vec2(seed * 13.0, 3.7)), hw = civH12(vec2(seed * 7.0, 1.1));
+    s.alb *= (0.84 + 0.2 * hj) * mix(vec3(1.0), vec3(1.04, 0.98, 0.9), hw);
     float streak = civN2(vec2(uv.x * 1.4 + seed * 31.0, uv.y * 0.07));
-    s.alb *= 1.0 - 0.12 * smoothstep(0.55, 0.95, streak) * smoothstep(0.0, 3.0, H - uv.y);
-    float grime = 1.0 - smoothstep(0.0, 1.4 + 0.9 * n1, uv.y);
-    s.alb = mix(s.alb, s.alb * vec3(0.62, 0.57, 0.5), grime * 0.55);
+    s.alb *= 1.0 - 0.16 * smoothstep(0.5, 0.95, streak) * smoothstep(0.0, 3.0, H - uv.y);
+    // rain runs: narrow dark columns hanging from the eaves and sills, fading downward
+    float run = smoothstep(0.62, 0.92, civN2(vec2(uv.x * 3.3 + seed * 11.0, 0.5))) * smoothstep(H * 0.2, H, uv.y);
+    s.alb *= 1.0 - 0.14 * run * (1.0 - smoothstep(0.02, 0.12, fwm) * 0.5);
+    float grime = 1.0 - smoothstep(0.0, 1.8 + 1.2 * n1, uv.y);
+    s.alb = mix(s.alb, s.alb * vec3(0.56, 0.52, 0.45), grime * 0.7);
     float eave = smoothstep(H - 1.0, H, uv.y) * step(uv.y, H + 0.01);
     s.alb *= 1.0 - 0.18 * eave;
     s.h = (n1 * 0.008 + n2 * 0.002) * (1.0 - smoothstep(0.02, 0.1, fwm));
@@ -559,32 +565,35 @@ CivS civSurface(){
     s.alb *= mix(1.0, (1.0 - 0.42 * cL) * (0.9 + 0.2 * cH), far);
     s.ao *= mix(1.0, 1.0 - 0.25 * cL, far);
   } else if (id == 11) {
-    // temple barrel tiles
-    float P = 0.36;
+    // temple barrel tiles (barrels stay resolved down to ~2 px each: the rows are what sells the roof)
+    float P = 0.44;
     float xr = fract(uv.x / P) - 0.5;
-    float far = smoothstep(0.03, 0.14, fwm);
+    float far = smoothstep(0.1, 0.3, fw.x);
     float ax = abs(xr) / 0.3;
     float barrel = clamp((0.3 - abs(xr)) * P / max(fw.x, 1e-4) + 0.5, 0.0, 1.0);
     float prof = sqrt(max(0.0, 1.0 - ax * ax));
-    float seg = fract(uv.y / 0.38);
-    float hb = civH12(vec2(floor(uv.x / P), floor(uv.y / 0.38)) + seed);
+    float seg = fract(uv.y / 0.42);
+    float hb = civH12(vec2(floor(uv.x / P), floor(uv.y / 0.42)) + seed);
     vec3 base = s.alb * (0.92 + 0.16 * hb * (1.0 - far));
     s.alb = mix(base * 0.5, base * mix(0.85, 1.12, prof), mix(barrel, 0.62, far));
     s.ao *= mix(0.72 + 0.28 * barrel, 0.88, far) * mix(1.0 - 0.25 * smoothstep(0.85, 1.0, seg), 1.0, far);
     s.h = (barrel * prof * 0.06 + (1.0 - seg) * 0.01) * (1.0 - far);
-    float cap = step(uv.y, 0.22) * barrel;
-    s.alb = mix(s.alb, base * 1.15, cap * (1.0 - far));
-    float moss = smoothstep(0.6, 0.85, civF2(uv * 0.5 + seed * 2.0));
-    s.alb = mix(s.alb, uCivMoss * 0.8, moss * 0.4);
+    // eave end-cap discs: a bright ceramic bead on every barrel along the drip edge
+    float cap = step(uv.y, 0.3) * clamp((0.24 - abs(xr)) * P / max(fw.x, 1e-4) + 0.5, 0.0, 1.0);
+    s.alb = mix(s.alb, base * 1.5, cap * (1.0 - far * 0.6));
+    s.ao *= 1.0 - 0.35 * step(uv.y, 0.36) * step(0.3, uv.y);
+    // lichen and moss collect in the troughs and on the lower, wetter courses
+    float moss = smoothstep(0.55, 0.85, civF2(uv * 0.5 + seed * 2.0) + 0.25 * (1.0 - barrel) + 0.15 * (1.0 - smoothstep(0.0, 3.0, uv.y)));
+    s.alb = mix(s.alb, uCivMoss * 0.8, moss * 0.45);
     // fired glaze: the barrel crowns catch the sky (fresnel sky sheen) and the sun as a soft highlight,
     // so the sweeping roofs read as lustrous ceramic instead of flat black caps
     float glaze = mix(0.3 + 0.5 * prof * barrel, 0.45, far) * (1.0 - moss * 0.7);
     s.rough = mix(0.62, 0.34, glaze);
     s.glass = 0.55 * glaze;
     // mid/far: coarse tile courses + the rhythm of barrel ridges (every 3 barrels) survive as tone
-    float cP = 0.38 * 3.0, cL = civLines(uv.y, cP, cP * 0.14, fw.y);
-    float rL = civLines(uv.x, P * 3.0, P * 0.5, fw.x);
-    s.alb *= mix(1.0, (1.0 - 0.38 * cL) * (1.0 - 0.22 * rL), far);
+    float cP = 0.42 * 3.0, cL = civLines(uv.y, cP, cP * 0.14, fw.y);
+    float rL = civLines(uv.x, P * 2.0, P * 0.6, fw.x);
+    s.alb *= mix(1.0, (1.0 - 0.38 * cL) * (1.0 - 0.3 * rL), far);
     s.ao *= mix(1.0, 1.0 - 0.2 * cL, far);
   } else if (id == 5 || id == 27) {
     // painted metal panels (27 = rust)

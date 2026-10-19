@@ -34,7 +34,7 @@ export const gradeRoads = 45;
 export const plazaMat = () => G.SANDSTONE;
 /** The capital rides a graded podium above the dune field, its rim a battered dam wall (Settlement._podium). */
 export const podium = { r: 0.82, maxR: 48, blur: 110, lift: 0.7, raise: 1.5 };
-export const shotSun = 0.09; // dusk through the dust: slabs split into a hot rim and deep shadow planes, slit windows coming on
+export const shotSun = 0.17; // low evening sun high enough to cut through the dust: slabs split into a hot rim and deep shadow planes
 export const shot = { dist: 2.0, height: 18, sunAngle: 1.75, lmLift: 0.25, minFov: 24, maxFov: 36, sunPref: 1.45, maxDown: 0.06, skyTop: 0.16, fgOcc: 3 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
 
 function slab(ctx, lot, w, d, H) {

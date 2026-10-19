@@ -99,7 +99,7 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   // optical depth: linear in density × slice thickness, path-lengthened toward the limb
   float tau = tauSum * (1.2 + 1.5 * wx.g) * (0.7 + 0.6 * wx.b) / mu;
   // soft Beer-Lambert opacity: margins fade over kilometres instead of a decal cut
-  float alpha = (1.0 - exp(-tau * 0.6)) * smoothstep(0.0, 0.18, abs(dot(rd, n)));
+  float alpha = (1.0 - exp(-tau * 0.42)) * smoothstep(0.0, 0.18, abs(dot(rd, n)));
   // sunward self-shadow: sample the deck a little toward the light along the surface
   vec3 kT = uKeyDir - n * dot(uKeyDir, n);
   float kl = length(kT);
@@ -506,6 +506,8 @@ export default class Clouds {
     // scotopic tint: moonlit cloud tops read cool silver, never cream
     mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 10.0);
     const nightK = light ? light.night : 0;
+    // moonlit decks read cool silver-blue (scotopic), never cream under the warm grade
+    mu.uCloudAlbedo.value.set(1 - 0.16 * nightK, 1 - 0.07 * nightK, 1 + 0.06 * nightK);
     // starlight + airglow + scattered moonlight: unlit clouds read as dark blue-grey shapes over the stars
     mu.uNightAmb.value.set(0.75e-3, 1.05e-3, 1.7e-3).multiplyScalar(nightK); // starlit/airglow decks read slate-blue against the band, not black paper
     // curvature compression fades out with altitude (from high up the true terminator shows)

@@ -267,9 +267,11 @@ float cloudLayer2D(vec3 P, vec3 wx){
   // Beer-Lambert opacity turn into soft edges, cores still build up to full opacity)
   float e = cov * cov * 1.25 - 0.12 - (1.0 - fr) * 0.7;
   // (Nubis-style remap: a wide, graded ramp → thin translucent veils at the margins)
-  float c = smoothstep(-0.3, 0.5, e) * (0.15 + 0.85 * smoothstep(-0.05, 0.6, e));
+  // (wider, quadratic toe: the deck frays into translucent veils over tens of km — never a
+  // hard white decal edge that reads as snow)
+  float c = smoothstep(-0.38, 0.62, e); c *= c * (0.6 + 0.4 * smoothstep(0.0, 0.7, e));
   // popcorn / cloud-street texture inside the decks
-  c *= 0.55 + 0.45 * smoothstep(0.25, 0.8, n3 * 0.7 + n2 * 0.3);
+  c *= 0.42 + 0.58 * smoothstep(0.2, 0.85, n3 * 0.7 + n2 * 0.3);
   return c * (1.0 + wx.b * 0.6);
 }
 // Approximate shadow of the cloud layer on a point (sun at L).
