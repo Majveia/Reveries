@@ -611,9 +611,9 @@ export function createTerrain(p) {
     const nearBelt = (1 - smoothstep(0.0, 0.45, tl0)) * smoothstep(0.02, 0.2, e);
     const pm = fbmM(nM, X, Y, Z, 14000, 3, 2.0, 0.5, -3.7, 5.1, 1.9) * 0.5 + 0.5;
     const hillK = smoothstep(0.38, 0.68, pm + nearBelt * 0.55 + smoothstep(0.36, 0.76, mReg + e * 0.35) * 0.35);
-    const hills = hillAmp * (0.5 + 0.5 * hl * (0.16 + 0.84 * hillK)) * k;
+    const hills = hillAmp * (0.5 + 0.5 * hl * (0.62 + 0.38 * hillK)) * k;
     // knolls & swales
-    const kn = fbmM(nH, X, Y, Z, 420, 3, 2.0, 0.5, 5.5, -1.1, 0) * rel * 0.008 * k * (0.45 + 0.55 * hillK);
+    const kn = fbmM(nH, X, Y, Z, 420, 3, 2.0, 0.5, 5.5, -1.1, 0) * rel * 0.008 * k * (0.75 + 0.25 * hillK);
     // ---- escarpments: hill country stepped into pale rock benches ----
     const em = smoothstep(0.44, 0.64, fbmM(nS, X, Y, Z, 9000, 3, 2.0, 0.5, 1.7, -6.2, 2.4) * 0.5 + 0.5);
     let ter = hills;

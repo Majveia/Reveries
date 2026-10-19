@@ -178,7 +178,9 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
   vec3 camUp = normalize(ro);
   float silverPh = hg(cosK, 0.93);
   float cosK2 = dot(rd, uKey2Dir);
-  float phase2 = mix(hg(cosK2, 0.8), hg(cosK2, -0.3), 0.3);
+  // (broader lobe than the sun's: a tight g=0.8 lobe turned every thin veil within ~25° of the
+  // moon into a bright, grainy cone of unconverged march noise — the 'aureole' smear)
+  float phase2 = mix(hg(cosK2, 0.6), hg(cosK2, -0.3), 0.3);
   bool key2 = uKey2E.r + uKey2E.g + uKey2E.b > 0.0;
   float sigma = uCloudDensity;
   vec3 L = vec3(0.0);
@@ -264,7 +266,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
       // gentle powder only (no charcoal interiors at night)
       ms2 *= mix(1.0, 1.0 - exp(-ext * 380.0), 0.15 * smoothstep(-0.2, 0.6, -cosK2));
       // moonlit silver rims on the thin margins (forward lobe around the moon)
-      ms2 += (0.25 + 0.6 * smoothstep(0.6, 0.97, cosK2)) * hg(cosK2, 0.9) * exp(-od2 * 0.7) * (1.0 - smoothstep(0.0, 0.32, d));
+      ms2 += (0.12 + 0.18 * smoothstep(0.6, 0.97, cosK2)) * hg(cosK2, 0.75) * exp(-od2 * 0.7) * (1.0 - smoothstep(0.0, 0.32, d));
       vec3 Tm2 = transmittanceToLight(r, dot(upL, uKey2Dir));
       Sk += uKey2E * Tm2 * ms2 * 3.14159;
       // moonlit sky dome (the sky-scattering moon is deliberately dim; the deck sees the real one)
@@ -511,7 +513,7 @@ export default class Clouds {
     const k2 = sunUp > 0 && moonUp > 1e-6 ? 1 - THREE.MathUtils.smoothstep(sunEl, -0.25, 0.05) : 0;
     mu.uKey2Dir.value.copy(m.moonDir);
     // scotopic tint: moonlit cloud tops read cool silver, never cream
-    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 10.0);
+    mu.uKey2E.value.set(m.moonE.x * 0.62, m.moonE.y * 0.74, m.moonE.z * 0.92).multiplyScalar(k2 * 5.5); // ~1 stop under the old key: moonlit tops sit below the moon halo, night stays night
     const nightK = light ? light.night : 0;
     // moonlit decks read cool silver-blue (scotopic), never cream under the warm grade
     mu.uCloudAlbedo.value.set(1 - 0.16 * nightK, 1 - 0.07 * nightK, 1 + 0.06 * nightK);

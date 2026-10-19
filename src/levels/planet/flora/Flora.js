@@ -170,6 +170,7 @@ export default class Flora {
 
   shot(name, spot) {
     this.sight = null;
+    if (name === 'night' && spot?.lookAt && this.profile?.glowPools) { try { this._heroGrove(spot); } catch (e) { this._err('grove', e); } return false; }
     if (name !== 'flora' || !this.trees?.landmark) return false;
     const w = this.world, L = this.trees.landmark;
     const up = L.position.clone().normalize();
@@ -197,6 +198,45 @@ export default class Flora {
     this.sight = { a: pos.clone(), d: d.normalize(), len, r0: 6, k: Math.max(0.1, (L.crown || L.height * 0.5) / len), stop: 0 };
     if (this.trees.layer) this.trees.layer.dirty = true;
     return true;
+  }
+
+  // Night on a bioluminescent world: two glowing groves flank the sky-first
+  // sightline (Pandora framing), giant glowing fungi close by, so the frame's
+  // light comes from the forest itself. Deterministic per planet seed.
+  _heroGrove(spot) {
+    if (this._grove || !this.trees?.species?.length) return;
+    this._grove = true;
+    const w = this.world, P = spot.position, up = P.clone().normalize();
+    const fw = spot.lookAt.clone().sub(P); fw.addScaledVector(up, -fw.dot(up));
+    if (fw.lengthSq() < 1e-6) return; fw.normalize();
+    const side = fw.clone().cross(up).normalize();
+    // the level clears trees along the view: radius by distance along fw
+    const CR = [[-8, 9], [0, 10], [14, 15], [34, 24], [64, 34], [104, 46], [160, 60]];
+    const clearR = (d) => { for (let k = 1; k < CR.length; k++) if (d <= CR[k][0]) { const [d0, r0] = CR[k - 1], [d1, r1] = CR[k]; return r0 + (r1 - r0) * Math.max(0, (d - d0) / (d1 - d0)); } return 60; };
+    let s = (this.seed ^ 0x9e3779b9) >>> 0;
+    const rnd = () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const has = (k) => this.trees.species.some((sp) => sp.kind === k);
+    const list = [], d0 = new THREE.Vector3();
+    const put = (kind, d, lat, scale) => {
+      if (!has(kind)) return;
+      d0.copy(P).addScaledVector(fw, d).addScaledVector(side, lat).normalize();
+      const h = w.heightAt(d0);
+      if (w.hasOcean && h < w.seaLevel + 0.8) return;
+      list.push({ kind, position: d0.clone().multiplyScalar(w.radius + h - 0.2), scale, seed: rnd() * 1000 });
+    };
+    for (const sgn of [-1, 1]) {
+      // the glowing wood: a loose grove along each flank, nearer trees taller
+      for (let k = 0; k < 9; k++) {
+        const d = 22 + k * 15 + rnd() * 10;
+        put('biolum', d, sgn * (clearR(d) + 4 + rnd() * (8 + k * 2.2)), 0.95 + rnd() * 0.5);
+      }
+      // giant glowing fungi and coral at the grove's feet, closer to the lens
+      for (let k = 0; k < 4; k++) {
+        const d = 8 + k * 9 + rnd() * 6;
+        put(k % 2 ? 'coral' : 'fungus', d, sgn * (clearR(d) + 1 + rnd() * 6), 0.55 + rnd() * 0.35);
+      }
+    }
+    this.trees.plant(list);
   }
 
   // Streaming runs after camera rigs have placed the camera this frame.

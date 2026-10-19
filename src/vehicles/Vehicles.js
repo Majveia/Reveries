@@ -733,9 +733,14 @@ export default class Vehicles {
         }
       }
       const g0 = w.groundAt(start.clone().multiplyScalar(w.radius + 5000), {});
-      const pos = start.clone().multiplyScalar(Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity) + 30);
-      this._boardForShot(ship);
       const hd = this._tangentTo(start, start.clone().addScaledVector(head, 0.01));
+      let r0 = Math.max(g0.radius, g0.water ? g0.waterRadius : -Infinity) + 30;
+      if (!wetRun) {
+        // dune seas / hills: enter the pass above every crest of the run, or the autopilot flies into one
+        for (let m = 0; m <= 1800; m += 40) r0 = Math.max(r0, w.radius + w.heightAt(start.clone().addScaledVector(hd, m / w.radius).normalize()) + 22);
+      }
+      const pos = start.clone().multiplyScalar(r0);
+      this._boardForShot(ship);
       ship.fly(pos, pos.clone().addScaledVector(hd, 100), 115, start);
       const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
       // low and a little slower: the sea is torn up right under the hull and the spray stays in frame
@@ -764,6 +769,13 @@ export default class Vehicles {
         }
         const want = top + Math.max(10, alt * 0.55);
         if (ship.position.length() < want) ship.position.setLength(want);
+        if (ship.landed) {
+          // touched a crest during the scripted run: back in the air, flying level along its heading
+          ship.landed = false; ship.gearT = 0; ship.thrSet = 0.48; ship.throttle = 0.6;
+          const f0 = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.quaternion);
+          f0.addScaledVector(up0, -f0.dot(up0)).normalize();
+          ship.velocity.copy(f0).multiplyScalar(105);
+        }
         ship.velocity.addScaledVector(up0, -ship.velocity.dot(up0));
       }
       // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)

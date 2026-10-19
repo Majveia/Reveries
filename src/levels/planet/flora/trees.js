@@ -143,7 +143,7 @@ ${FADE_V}
   // crown self-occlusion: the shade side and the deep core fall to ~45%, the
   // sunlit shell stays bright (each lobe gets its own terminator)
   float flAO = clamp(vLAO, 0.0, 1.0);
-  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), flShell) * mix(0.56, 1.05, flShell * 0.55 + flAO * 0.45);
+  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), flShell) * mix(0.64, 1.05, flShell * 0.55 + flAO * 0.45);
   // backlit translucency (per pixel, wrapped): thin crown rims and outer leaves
   // glow when looking toward the sun; the dense core stays dark
   vec3 flV = normalize(vLWP - cameraPosition);
@@ -317,6 +317,9 @@ export class Trees {
     this.U = U;
     this.barkMat = barkMaterial(U); this.barkDepth = barkMaterial(U, true);
     this.leafMat = leafMaterial(U, this.atlas); this.leafDepth = leafMaterial(U, this.atlas, true);
+    // multisampled scene target: leaf cutouts resolve through alpha-to-coverage
+    // (soft, anti-aliased crown silhouettes instead of crunchy alpha-test edges)
+    if ((this.flora.engine.quality?.msaa | 0) > 0) this.leafMat.alphaToCoverage = true;
 
     // ---- species variants -------------------------------------------------
     const rng = new Random(seedFrom(fl.seed, 'flora-trees'));
@@ -638,6 +641,7 @@ export class Trees {
       const d2 = dx * dx + dy * dy + dz * dz;
       if (d2 > this.farRange * this.farRange) continue;
       t.fs = 1;
+      if (pools && t.v.glow > 0.3 && d2 < 160 * 160) pools.push(d2, t);
       if (d2 < mHi2 && fl.castsInView(dx, dy, dz, (t.v.crown || 3) * t.scale + 1, (t.v.height || 10) * t.scale)) t.v.list.push(t);
       if (d2 > mLo2 && fl.inView(dx, dy, dz, (t.v.impR || 8) * t.scale * (t.fs || 1))) imp.push(t);
       if (player) {

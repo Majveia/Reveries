@@ -33,7 +33,7 @@ export function floraProfile(kind, A) {
         density: 0.007, cover: 0.05, lone: 0.05, grassland: 0.6, arid: 0.08, wet: 0.5, rocky: 0.12, cliffTrees: 0.25, snowy: 0.02, snowLine: 0.4,
         species: [
           { kind: 'broad', w: 1.0, pal: (k) => ({ leaf: C(['#3f7a30', '#4f8a36', '#356a2c', '#5a9438', '#44803a'][k % 5]), leaf2: C('#7aa848'), bark: C('#57493c') }), tints: [C('#ffffff'), C('#e8ffd8'), C('#fff2c8')] },
-          { kind: 'conifer', w: 0.22, cold: 0.8, pal: () => ({ leaf: C('#2c4a2e'), bark: C('#4a3a30') }) },
+          { kind: 'conifer', w: 0.22, cold: 0.8, pal: () => ({ leaf: C('#3a5c38'), bark: C('#4a3a30') }) },
           { kind: 'birch', w: 0.25, pal: () => ({ leaf: C('#86ac46'), bark: C('#ddd8cc') }) },
           { kind: 'willow', w: 0.08, wet: 1.5, shore: 1.5, pal: () => ({ leaf: C('#7aa04a'), bark: C('#4a4238') }) },
           { kind: 'scrub', w: 0.9, sizeK: 1.0, pal: () => ({ leaf: C('#4f7f36'), bark: C('#4a3e30') }) },
@@ -52,7 +52,7 @@ export function floraProfile(kind, A) {
         density: 0.0072, cover: 0.2, lone: 0.06, grassland: 0.65, arid: 0.15, wet: 0.5, rocky: 0.4, cliffTrees: 0.55, crownTrees: 0.9, snowy: 0.05, snowLine: 0.45,
         species: [
           { kind: 'maple', w: 1.0, pal: (k) => ({ leaf: C(['#c8302a', '#b82a26', '#d8502a', '#e07a2a', '#a82424'][k % 5]), leaf2: C(['#e8a03a', '#d8642a'][k % 2]), bark: C('#3a302c') }), tints: [C('#ffffff'), C('#ffd8c8'), C('#ffe8b0')] },
-          { kind: 'pine', w: 0.55, cold: 0.6, rock: 1.2, pal: (k) => ({ leaf: C(['#3a4c30', '#34482e', '#425432'][k % 3]), bark: C('#4a3a32') }) },
+          { kind: 'pine', w: 0.55, cold: 0.6, rock: 1.2, pal: (k) => ({ leaf: C(['#4e5a34', '#475632', '#58603a'][k % 3]), bark: C('#4a3a32') }) },
           { kind: 'golden', w: 0.25, pal: () => ({ leaf: C('#e0a83a'), leaf2: C('#f0c050'), bark: C('#4a4038') }) },
           { kind: 'scrub', w: 0.6, rock: 0.8, pal: (k) => ({ leaf: C(['#8a3a26', '#a8482a', '#6a5a2a'][k % 3]), leaf2: C('#c8602a'), bark: C('#3a302c') }) },
         ],

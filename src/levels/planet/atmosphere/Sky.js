@@ -125,6 +125,7 @@ uniform float uGalaxyGain;
 uniform mat3 uCelToGal;
 uniform float uSpace;
 uniform float uStarVis;
+uniform float uStarGain;  // star radiance gain: the auto-exposure meters on a sunlit planet in orbit, so the field needs headroom
 uniform float uStarCut;   // adaptation: faint-star cutoff (raised in orbit beside a sunlit planet)
 uniform float uPixelAng;
 uniform float uTime;
@@ -313,7 +314,7 @@ void main(){
     // ~60k faint stars covered every direction evenly: TV static instead of a river)
     float dens = smoothstep(0.008, 0.05, gd) * (0.2 + 0.8 * bandM);
     stars += starLayer(dc, 70.0, 1.0, 0.11 + 0.08 * dens, 0.004, 16.0, uStarCut);                         // naked-eye stars: a few dozen brilliant anchors per hemisphere
-    stars += starLayer(dc, 190.0, 7.0, 0.0012 + 0.5 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
+    stars += starLayer(dc, 190.0, 7.0, 0.0035 + 0.5 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
     if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.0018, 0.05, uStarCut * 0.4); // band grain: the river is made of stars
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
@@ -327,7 +328,7 @@ void main(){
       float sig = uPixelAng * 0.8;
       pl += uPlanetCol[i] * uPlanetDir[i].w * exp(-a * a / (2.0 * sig * sig)) / (6.2831853 * sig * sig) * 2.5e-6;
     }
-    col += (galD + stars * tw + pl) * uStarVis * occl;
+    col += (galD + stars * tw * uStarGain + pl) * uStarVis * occl;
   }
 
   // ---- aurora curtains --------------------------------------------------------
@@ -487,7 +488,7 @@ export default class Sky {
       uWorldToCel: { value: cel.worldToCel },
       tGalaxy: { value: this.galaxyRT.texture },
       uGalaxyGain: { value: 1 }, uCelToGal: { value: cel.celToGal }, uSpace: { value: 0 },
-      uStarVis: { value: 0 }, uStarCut: { value: 0.004 },
+      uStarVis: { value: 0 }, uStarCut: { value: 0.004 }, uStarGain: { value: 1 },
       uPixelAng: { value: 0.001 },
       uTime: { value: 0 },
       uPlanetR: { value: m.Rb },
@@ -572,7 +573,11 @@ export default class Sky {
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);
-    u.uStarCut.value = THREE.MathUtils.lerp(0.0065, 0.035, litPlanet); // (orbit by day: a sparse handful of anchors, never an empty black)
+    // (orbit by day: the eye is adapted to the sunlit disc, so the faint end drops out, but a
+    // real magnitude hierarchy survives — a few blazing coloured anchors over a sparse dust —
+    // pushed through the exposure with a gain instead of cutting the field to an empty void)
+    u.uStarCut.value = THREE.MathUtils.lerp(0.0048, 0.011, litPlanet);
+    u.uStarGain.value = THREE.MathUtils.lerp(1.5, 5.5, litPlanet);
     u.uSpace.value = space;
     // aurora (weather decides)
     const ws = L.weatherState;

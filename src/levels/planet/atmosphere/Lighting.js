@@ -322,6 +322,15 @@ export class PlanetLighting {
         this._envFrame++;
       }
     }
+    // Key/fill balance. The IBL is one probe captured at the focus: right for the near field,
+    // wrong for planet-scale geometry seen from orbit (it lit the whole night hemisphere with
+    // daytime sky blue, so there was no terminator). Fade it out with altitude — space has no
+    // sky fill — and under a clear, high sun trim it so the key reads (warm key, cool fill).
+    {
+      const dayK = this.sunVisible * THREE.MathUtils.smoothstep(sunElev, 0.03, 0.3) * (useMoon ? 0 : 1);
+      const orbitK = THREE.MathUtils.smoothstep(alt, 18000, 70000);
+      this.level.scene.environmentIntensity = THREE.MathUtils.lerp(1 - 0.18 * dayK, 0.2, orbitK);
+    }
     // Hemisphere light: a fallback until the IBL exists, then off.
     const hemi = this.hemi;
     hemi.position.copy(up);

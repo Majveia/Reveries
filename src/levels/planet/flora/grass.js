@@ -189,7 +189,9 @@ const BLADE_BODY = /* glsl */ `
   bn = normalize(bn + side * position.x * 1.4);
   // mostly terrain-facing normals: the sward takes the same light as the ground
   // it grows from (blades never read as dark pins on a bright lawn)
-  bn = normalize(mix(bn, gUp, 0.74));
+  // near the lens blades keep more of their own facing (blade-to-blade
+  // shading, light catching the leaning sides); far away they take the ground's light
+  bn = normalize(mix(bn, gUp, mix(0.46, 0.76, smoothstep(5.0, 28.0, dC))));
   vec3 bc = fl_unpack(aDat.w);
 #ifdef FLOWER
   if (part > 0.5) {
@@ -206,9 +208,15 @@ const BLADE_BODY = /* glsl */ `
 #else
   // deep root occlusion inside the sward, sunlit tips; per-blade jitter fades
   // with distance so the far field resolves to the clump colour, not noise
-  float ao = mix(0.55, 1.0, smoothstep(0.0, 0.42, t));
-  vec3 tip = bc * vec3(1.18, 1.16, 0.86) + vec3(0.025, 0.022, 0.0);
-  vGCol = mix(bc * ao, tip, smoothstep(0.55, 1.0, t)) * mix(0.86 + 0.28 * rnd, 1.0, smoothstep(8.0, 35.0, dC));
+  // clump-scale structure (a few metres): domain-warped sine bands give the
+  // meadow light/shadow drifts and fresh/straw patches at every distance
+  float cw = sin(dot(wp, vec3(0.41, -0.37, 0.58)) * 0.9 + 1.3 * sin(dot(wp, vec3(-0.23, 0.52, 0.31)) * 0.8));
+  float clump = 0.5 + 0.5 * sin(dot(wp, vec3(0.47, 0.29, -0.43)) * 0.75 + 1.6 * cw);
+  float clump2 = 0.5 + 0.5 * sin(dot(wp, vec3(-0.19, 0.33, 0.27)) * 0.55 + 1.8 * sin(dot(wp, vec3(0.31, 0.21, -0.36)) * 0.42));
+  bc = mix(bc, bc * vec3(1.12, 1.02, 0.7) + vec3(0.03, 0.022, 0.0), smoothstep(0.55, 1.0, clump2) * 0.55);
+  float ao = mix(mix(0.32, 0.5, smoothstep(6.0, 30.0, dC)), 1.0, smoothstep(0.0, 0.5, t)) * mix(0.8, 1.1, clump);
+  vec3 tip = bc * vec3(1.2, 1.17, 0.84) + vec3(0.03, 0.026, 0.0);
+  vGCol = mix(bc * ao, tip * mix(0.9, 1.08, clump), smoothstep(0.55, 1.0, t)) * mix(0.84 + 0.32 * rnd, 1.0, smoothstep(8.0, 35.0, dC));
   // glowing blades come in patches (a few metres across), not as uniform frost
   vec3 gpc = floor((uAnchor + base) * 0.3);
   float gpatch = smoothstep(0.55, 0.85, fract(sin(dot(gpc, vec3(12.9898, 78.233, 37.719))) * 43758.5453));
@@ -260,7 +268,7 @@ function makeBladeMaterial(U, flower, spike = false, pools = false) {
   }
 #endif`)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifndef FLAT_SHADED\nnormal = normalize( vNormal );\n#endif')
-      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#ifdef GLOWPOOL\n  outgoingLight += (vGCol * 0.6 + uGlowCol * 0.35) * uGlowCol * min(vPool, 1.6) * (0.01 + 1.3 * uNight);\n#endif\n#include <opaque_fragment>');
+      .replace('#include <opaque_fragment>', 'outgoingLight += vGCol * vec3(1.18, 1.12, 0.72) * uKeyColor * vTrans * uTransK + mix(vGCol, uGlowCol, 0.9) * vGlow * (0.12 + 2.0 * uNight);\n#ifdef GLOWPOOL\n  outgoingLight += (vGCol * 0.6 + uGlowCol * 0.35) * uGlowCol * min(vPool, 1.6) * (0.01 + 1.3 * uNight);\n#endif\n#include <opaque_fragment>');
   }, (flower ? (spike ? 'flora-spike' : 'flora-flower') : 'flora-grass') + (pools ? '-gp' : ''));
 }
 
