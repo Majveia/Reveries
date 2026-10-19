@@ -14,7 +14,7 @@ export function palette(A, rng) {
   const P = A?.palette || {};
   void rng;
   return {
-    walls: ['#d4cab6', '#c9bfaa', '#d8cdb8', '#c2b8a3', '#cfc2a8'].map(col), // aged lime plaster, not paper white
+    walls: ['#dcc6a2', '#d2b997', '#e0caa8', '#c9b08f', '#d8bf9a'].map(col), // warm aged lime plaster (the jade grade would turn neutral plaster olive)
     roofs: ['#565d5b', '#4c5559', '#5c5f57', '#48545a', '#665b50', '#4e6258'].map(col),
     lacquer: col('#8e1f18'), lacquer2: col('#6e1a14'), gold: col('#c8963a'),
     stone: col('#8f8b80'), stoneDark: col('#6a675e'), wood: col('#4a3324'), woodDark: col('#2c1f16'), trim: col('#d9d2c2'), iron: col('#1c1c1e'),
@@ -33,7 +33,8 @@ export function roadMat(road, zone) {
   return G.DIRT;
 }
 export const plazaMat = () => G.FLAG;
-export const shotSun = 0.13; // late dusk: low enough for lanterns and windows, high enough (sunVis fallback) to clear the karst
+export const key = { shade: 0.62, gain: 1.35, rim: 0.5 }; // golden-hour key on lacquer and plaster; shadowed podiums stop glowing
+export const shotSun = 0.19; // late dusk: low enough for lanterns and windows, high enough (sunVis fallback) to clear the karst
 export const lightsEarly = 0.34; // lanterns lit in the mist of the late afternoon
 export const shot = { dist: 0.72, height: 32, sunAngle: 1.7, lmLift: 0.3, sunPref: 1.8, maxDown: 0.12, skyTop: 0.12 };
 

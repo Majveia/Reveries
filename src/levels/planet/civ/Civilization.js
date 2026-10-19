@@ -95,6 +95,12 @@ export default class Civilization {
       const e = (sun.intensity ?? 1) * Math.max(0, y) * 0.32 * (1 - u.uCivNight.value * 0.9);
       u.uCivBounce.value.set(sun.color.r, sun.color.g, sun.color.b).multiply(_b.set(0.3, 0.24, 0.17)).multiplyScalar(e);
     }
+    // per-style key-light shaping (see materials.js uCivKey)
+    if (u.uCivKey) {
+      const k = s.style?.key;
+      if (k) u.uCivKey.value.set(k.shade ?? 1, k.gain ?? 1, k.rim ?? 0, 1); else u.uCivKey.value.w = 0;
+      if (sun) u.uCivSunC.value.set(sun.color.r, sun.color.g, sun.color.b).multiplyScalar((sun.intensity ?? 1) * Math.min(1, Math.max(0, y) * 6));
+    }
     // world up at the site, in view space (for sky reflections)
     u.uCivUpV.value.copy(s.frame.up).transformDirection(this.level.camera.matrixWorldInverse);
   }

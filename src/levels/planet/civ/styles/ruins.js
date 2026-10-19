@@ -24,6 +24,7 @@ export function palette(A, rng) {
 export function roadMat(road) { return road.kind === 'avenue' || road.kind === 'main' ? G.FLAG : G.GRAVEL; }
 export const plazaMat = () => G.FLAG;
 export const people = false;
+export const key = { shade: 0.6, gain: 1.35, rim: 0.6 };
 export const shotSun = 0.14;
 export const shot = { dist: 0.7, height: 18, sunAngle: 1.5, lmLift: 0.35 };
 

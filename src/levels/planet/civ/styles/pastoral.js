@@ -29,6 +29,7 @@ export function roadMat(road, zone) {
 }
 export const plazaMat = (pz) => (pz.kind === 'main' ? G.FLAG : G.COBBLE);
 export const lampKind = 'iron';
+export const key = { shade: 0.75, gain: 1.2, rim: 0.45 };
 export const shotSun = 0.08; // dusk: warm rim on the gables, windows and lanterns coming on
 
 /** One house / tower / hall on a lot. */

@@ -971,6 +971,11 @@ export function createCivUniforms(world, palette = {}) {
     uCivNearFade: { value: 70 },
     uCivSnow: { value: 0 },
     uCivBounce: { value: new THREE.Vector3() },
+    // key-light shaping (art direction): x = ambient kept on faces turned from the sun, y = direct
+    // gain, z = grazing rim, w = enable. Dusty/hazy worlds drown direct light in ambient; this
+    // splits every mass into a lit plane and a shadow plane so the architecture reads as form.
+    uCivKey: { value: new THREE.Vector4(1, 1, 0, 0) },
+    uCivSunC: { value: new THREE.Vector3(1, 1, 1) },
     uCivPull: { value: 0 },
   };
 }
@@ -992,7 +997,7 @@ export function makeCivMaterial(uniforms, kind = 'building', opts = {}) {
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_MAIN}`)
       .replace('#include <project_vertex>', VERT_PROJECT);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <clipping_planes_pars_fragment>', `#include <clipping_planes_pars_fragment>\n${CIV_COMMON_GLSL}\n${ground ? GROUND_FRAG : BUILDING_FRAG}
+      .replace('#include <clipping_planes_pars_fragment>', `#include <clipping_planes_pars_fragment>\nuniform vec4 uCivKey; uniform vec3 uCivSunC;\n${CIV_COMMON_GLSL}\n${ground ? GROUND_FRAG : BUILDING_FRAG}
 vec3 civPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir){
   vec3 sx = dFdx(surf_pos), sy = dFdy(surf_pos);
   vec3 R1 = cross(sy, surf_norm), R2 = cross(surf_norm, sx);
@@ -1024,6 +1029,16 @@ if (civS.glass > 0.001) {
   // warm bounce from the sunlit ground onto walls and under the eaves
   float civUpN = clamp(normalize(vLocN).y, -1.0, 1.0);
   reflectedLight.indirectDiffuse += BRDF_Lambert(diffuseColor.rgb) * uCivBounce * (0.5 - 0.5 * civUpN) * (1.0 - smoothstep(25.0, 90.0, vLoc.y)) * civS.ao;
+  ${ground ? '' : `{
+    float civNL = dot(normalize(vLocN), uCivSunL);
+    float civKd = uCivDay * uCivKey.w;
+    // the shadow side drops its ambient (the sky fill), the lit side takes a stronger key
+    reflectedLight.indirectDiffuse *= mix(1.0, uCivKey.x, smoothstep(0.1, -0.3, civNL) * civKd);
+    reflectedLight.directDiffuse *= mix(1.0, uCivKey.y, civKd);
+    // hot grazing rim on sun-side edges and silhouettes (sand-scoured slabs, lacquer, plaster)
+    float civRim = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 4.0) * smoothstep(-0.2, 0.3, civNL);
+    reflectedLight.directDiffuse += diffuseColor.rgb * uCivSunC * civRim * uCivKey.z * civKd * civSh * civS.ao;
+  }`}
 }`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
 { float civAo = civS.ao; ${ground ? 'civAo = mix(civAo, 1.0, smoothstep(uCivNearFade * 0.6, uCivNearFade, vCivDist));' : ''}

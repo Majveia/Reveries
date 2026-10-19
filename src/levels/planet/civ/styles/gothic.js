@@ -27,6 +27,7 @@ export function palette(A, rng) {
 
 export function roadMat(road, zone) { return road.kind === 'lane' || zone > 0.7 ? G.DIRT : G.COBBLE; }
 export const plazaMat = () => G.FLAG;
+export const key = { shade: 0.65, gain: 1.3, rim: 0.5 };
 export const shotSun = 0.12;
 export const shot = { dist: 0.86, height: 27, sunAngle: 1.9, lmLift: 0.2 };
 
