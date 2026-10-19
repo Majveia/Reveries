@@ -35,9 +35,9 @@ export default class CosmosLevel {
     this.opts = opts;
     this.effects = [];
     this.grade = {
-      exposure: 1.0, agxPunch: 0.55, contrast: 1.06, saturation: 1.12, temperature: -0.02, tint: 0.02,
+      exposure: 1.0, agxPunch: 0.6, contrast: 1.08, saturation: 0.95, temperature: -0.02, tint: 0.02,
       blackPoint: 0.008, blackToe: 0.03, vignette: 0.2, vignetteSoftness: 0.6, grain: 0.0, chroma: 0.0006,
-      bloomStrength: 0.6, bloomRadius: 0.75, bloomThreshold: 0.7, bloomKnee: 0.3, streak: 0.04,
+      bloomStrength: 0.55, bloomRadius: 0.5, bloomThreshold: 1.0, bloomKnee: 0.35, streak: 0.04,
     };
     this.L = BOX;
     this.halos = [];
@@ -303,7 +303,7 @@ export default class CosmosLevel {
     // violet sheets survive and no hard iso-contour edges appear)
     p.veilFloor = 0.4 + 0.75 * inside;
     p.floor = 0.4 + 0.4 * inside;
-    p.envK = 0.42; p.detail = 1.6; p.latticeK = 1.6; p.veil = 0.8; p.heatK = 1;
+    p.envK = 0.12; p.detail = 2.6; p.latticeK = 1.6; p.veil = 0.8; p.heatK = 1;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
     p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 2.6 + 1.5 * p.early;
     p.dim = 1; p.lights = 1;
@@ -492,7 +492,7 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, gain: 0.75, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.35, lights: 0, veil: 0.5, lattice: 1, latticeK: 1.0, envK: 0.5, detail: 1.4, heatK: 0.85, hi: 0.0, cap: 0.6 };
+        this._shotP = { floor: 0.05, gain: 0.26, a0: 30, toe: 1.35, sharpA: 2.0, smooth: 1.6, galaxies: 0.5, lights: 0, veil: 0.35, lattice: 1, latticeK: 2.2, envK: 0.1, detail: 2.5, heatK: 0.85, hi: 0.0, cap: 0.38 };
         this._pose(this.home, this._heroOffset((o.ed ?? 0.34) * this.L, HERO.yaw + 0.4, 0.22), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
@@ -508,7 +508,7 @@ export default class CosmosLevel {
       node: async () => {
         // far enough that particle resolution never shows: the cluster's luminous gold heart (BCG +
         // ICL + members) with the cyan filaments that feed it converging from every side
-        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.14, a0: 110, cap: 1.1, envK: 0.36 };
+        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.14, a0: 110, cap: 0.8, envK: 0.12 };
         const o = this._dbg || {};
         this._pose(this.home, this._heroOffset(o.nd ?? 70, HERO.yaw + (o.ny ?? 2.2), 0.22), o.nf ?? 40, o.ns ?? -0.16, 0.04);
       },

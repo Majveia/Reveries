@@ -517,7 +517,7 @@ const FRAG_SURFACE = /* glsl */`
     {
       vec4 wq3 = nA( D.yzx - 9.0, 1.0 / 128.0 );
       float lam3 = 7.5 * ( 1.0 + 0.4 * wq3.w );
-      float ph3 = dot( D, wt ) / lam3 + wq2.w * 1.4 + wq3.w * 2.2 + dot( D, wb ) * 0.03 * wq3.w;
+      float ph3 = dot( D, wt ) / lam3 + wq2.w * 0.7 + wq3.w * 0.9 + dot( D, wb ) * 0.03 * wq3.w; // gentle bends: strong warps closed the crests into onion rings
       float f3 = fract( ph3 );
       float bl3 = 1.0 - smoothstep( 0.2, 0.6, fwidth( ph3 ) );
       float p3 = f3 < 0.68 ? f3 / 0.68 : ( 1.0 - f3 ) / 0.32;

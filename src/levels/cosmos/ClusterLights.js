@@ -25,7 +25,8 @@ void main(){
   gl_PointSize = px;
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float tw = 0.92 + 0.08 * sin(uTime * (0.6 + aSeed) + aSeed * 40.0);   // slow scintillation
-  float L = pow(10.0, 0.75 * m) * uGain * tr * tw * nearF;
+  // low-mass halos carry no visible BCG (they read as detached gold dots in voids)
+  float L = pow(10.0, 0.75 * m) * uGain * tr * tw * nearF * smoothstep(-0.2, 0.6, aMass);
   vCore = px / max(1.6 * uPxK, 1.0);                       // sprite radius in core units
   vIcl = clamp(pxR * 2.0 / px, 0.05, 1.0);                 // R200 relative to the sprite
   vSpike = smoothstep(1.4, 2.4, m);   // only the few richest clusters carry a (faint) PSF

@@ -187,7 +187,7 @@ vec3 moonSurface(vec3 n, int kind, float seed, vec3 tint, out vec3 emissive){
   float alb = mix(1.0, 0.55, maria) * crater * fine + rim * 0.18;
   // highlands keep the moon's tint, maria go cool grey-blue (basalt), not brown
   vec3 grey = vec3(dot(tint, vec3(0.3333)));
-  vec3 col = mix(mix(tint, grey, 0.68) * 1.12, grey * vec3(0.8, 0.86, 0.98), maria) * alb;
+  vec3 col = mix(mix(tint, grey, 0.86) * 1.12, grey * vec3(0.82, 0.86, 0.94), maria) * alb;
   if (kind == 1) { // ice: bright with dark lineae
     float cracks = 1.0 - smoothstep(0.0, 0.06, abs(snoise(q * 2.5)) * (0.6 + 0.4 * snoise(q * 7.0)));
     col = mix(vec3(0.92, 0.95, 1.0), tint, 0.25) * (1.0 - cracks * 0.45) * (0.9 + 0.1 * crater);
@@ -228,7 +228,7 @@ void main(){
     float mu0 = max(ndl, 0.0), mu = max(dot(n, -md), 0.05);
     float ls = mu0 / (mu0 + mu) * 2.0;
     float lit = mix(mu0, ls, 0.5) * smoothstep(-0.05, 0.14, ndl) * (0.85 + 0.15 * smoothstep(0.0, 0.5, ndl));
-    vec3 L = alb * uMoonCol[i].a * uSunE * (2.6 / 3.14159) * lit;
+    vec3 L = alb * uMoonCol[i].a * uSunE * (5.2 / 3.14159) * lit;
     // planetshine on the night side
     L += alb * uMoonInfo[i].z * (1.0 - smoothstep(-0.1, 0.2, ndl));
     L += em;
@@ -248,7 +248,7 @@ void main(){
     // moonlight through the night air reads cool (scotopic), never a warm daytime aureole
     vec3 Lm = vec3(dot(uMoonCol[i].rgb * uSunE, vec3(0.3333))) * vec3(0.72, 0.86, 1.12) * uMoonCol[i].a * 0.8 * frac * frac;
     float x = max(th - ar, 0.0);
-    float glow = 0.14 * exp(-x / (ar * 1.4)) + 0.03 * exp(-x / (ar * 5.0)) + 0.006 * exp(-x / (ar * 20.0));
+    float glow = 0.16 * exp(-x / (ar * 0.9)) + 0.012 * exp(-x / (ar * 4.0)) + 0.0015 * exp(-x / (ar * 16.0));
     col += Lm * glow * (1.0 - uSpace) * mix(0.75, 1.0, step(ar, th));
   }
 
@@ -280,9 +280,9 @@ void main(){
     vec3 galD = mix(vec3(gl) * gtint, gal, 0.1) * uGalaxyGain * 0.7;
     // steep toe: the diffuse disk glow we sit inside goes to OLED black, only the
     // band's core and the star clouds keep their light (a river, not a fog column)
-    galD *= smoothstep(0.011, 0.065, gd) * clamp(gd / 0.05, 0.25, 1.1);
+    galD *= smoothstep(0.004, 0.034, gd) * clamp(gd / 0.04, 0.35, 1.15);
     // soft shoulder on the bulge (dark-adapted eye keeps the rifts readable)
-    galD *= 1.0 / (1.0 + 9.0 * max(gd - 0.04, 0.0));
+    galD *= 1.0 / (1.0 + 6.0 * max(gd - 0.05, 0.0));
     vec3 dg = uCelToGal * dc;
     float bandM = exp(-dg.y * dg.y / 0.02);
     if (bandM > 0.01) {
@@ -309,8 +309,8 @@ void main(){
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
     float dens = smoothstep(0.0, 1.0, gl * 90.0);
-    stars += starLayer(dc, 70.0, 1.0, 0.3, 0.004, 9.0, uStarCut);                         // naked-eye stars, wide magnitude range
-    stars += starLayer(dc, 190.0, 7.0, 0.006 + 0.6 * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
+    stars += starLayer(dc, 70.0, 1.0, 0.16 + 0.12 * dens, 0.004, 12.0, uStarCut);                         // naked-eye stars, wide magnitude range
+    stars += starLayer(dc, 190.0, 7.0, 0.002 + 0.6 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
     if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.0018, 0.05, uStarCut * 0.4); // band grain: the river is made of stars
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);
@@ -565,11 +565,11 @@ export default class Sky {
     u.uStarVis.value = Math.max(night, space);
     // the band is the centrepiece of a dark night (adapted eye); beside a sunlit planet it fades
     const deepNight = night * (1 - THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2) * space);
-    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.36, 0.64, deepNight) * (1 + 0.25 * space) // (dark-adapted, but the bulge must keep its dust lanes, not blow out);
+    u.uGalaxyGain.value = this.galaxyGain ?? THREE.MathUtils.lerp(0.36, 1.0, deepNight) * (1 + 0.25 * space) // (dark-adapted, but the bulge must keep its dust lanes, not blow out);
     // adaptation: beside a sunlit planet (orbit by day) only the brightest stars survive;
     // on the ground at night a natural hierarchy down to a fine dusting
     const litPlanet = space * THREE.MathUtils.smoothstep(sunEl, -0.3, 0.2);
-    u.uStarCut.value = THREE.MathUtils.lerp(0.0045, 0.06, litPlanet);
+    u.uStarCut.value = THREE.MathUtils.lerp(0.0065, 0.06, litPlanet);
     u.uSpace.value = space;
     // aurora (weather decides)
     const ws = L.weatherState;

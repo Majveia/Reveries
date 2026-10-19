@@ -70,7 +70,7 @@ vec3 atmoAureole(vec3 ro, vec3 rd, float r){
   if (uMoonE.r + uMoonE.g + uMoonE.b > 0.0) {
     float c = dot(rd, uMoonDir);
     // (small: a moon glow must not wash the starfield into a grey-navy dome)
-    a += uMoonE * transmittanceToLight(r, dot(up, uMoonDir)) * (phaseHG(c, 0.97) * 0.18 + phaseHG(c, 0.85) * 0.12);
+    a += uMoonE * transmittanceToLight(r, dot(up, uMoonDir)) * phaseHG(c, 0.97) * 0.2; // tight lobe only: no grey moon halo
   }
   return a * (1.0 - exp(-tau)) * uAureole;
 }

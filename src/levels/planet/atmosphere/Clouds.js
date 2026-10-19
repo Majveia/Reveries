@@ -188,7 +188,7 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     if (wx.r < 0.02) continue;
     float lod = max(lod0, step(30000.0 + 6000.0 * jit, t)); // dithered LOD edge: no visible seam
     // near-field fade: flying through the deck shows soft wisps, not a smeared wall
-    float d = cloudDensityW(P, wx, lod) * graze * smoothstep(20.0, 320.0, t);
+    float d = cloudDensityW(P, wx, lod) * graze * smoothstep(40.0, 480.0, t);
     if (d <= 0.002) continue;
     float r = length(P);
     vec3 up = P / r;
@@ -236,14 +236,32 @@ vec4 marchClouds(out float dOut, out vec3 rdOut){
     float inP = mix(1.0, clamp(depthP, 0.0, 1.0) * vertP, 0.55 * smoothstep(0.75, 0.1, cosK));
     vec3 Sk = uKeyE * Tl * ms * powder * inP * 3.14159;
     if (key2) {
-      // moon: two shape-only light samples, same multiple-scattering octaves
-      float od2 = (cloudDensity(P + uKey2Dir * shellH * 0.04, lod) * 0.08 + cloudDensity(P + uKey2Dir * shellH * 0.16, 1.0) * 0.2 + cloudDensity(P + uKey2Dir * shellH * 0.5, 1.0) * 0.6) * shellH * sigma;
-      float ms2 = exp(-od2) * phase2 + 0.5 * exp(-od2 * 0.32) * mix(phase2, 0.0795775, 0.5) + 0.25 * exp(-od2 * 0.1) * 0.0795775;
-      // Beer-powder: dense interiors facing away from the moon stay dark, lit flanks glow
-      ms2 *= mix(1.0, 1.0 - exp(-ext * 380.0), 0.35 + 0.4 * smoothstep(-0.2, 0.6, -cosK2));
-      // moonlit silver rims on the thin margins (strong forward lobe: rims glow around the moon)
-      ms2 += (0.35 + 0.9 * smoothstep(0.6, 0.97, cosK2)) * hg(cosK2, 0.9) * exp(-od2 * 0.7) * (1.0 - smoothstep(0.0, 0.32, d));
-      Sk += uKey2E * transmittanceToLight(r, dot(upL, uKey2Dir)) * ms2 * 3.14159;
+      // moon: a geometric (×3) cone march like the sun's — first tap at full detail, the
+      // rest shape-only — and the same Wrenninge octaves. The old 3-tap estimate summed
+      // ~0.9 shell heights of optical depth, so every dense core went to exp(-200) = black
+      // paper with holes; a cumulus under a full moon is a soft grey-blue body instead.
+      float od2 = 0.0, lt2 = 0.0;
+      for (int j = 0; j < 3; j++) {
+        float len2 = shellH * 0.05 * pow(3.0, float(j));
+        lt2 += len2;
+        od2 += cloudDensity(P + uKey2Dir * (lt2 - 0.5 * len2), j == 0 ? lod : 1.0) * len2;
+      }
+      od2 *= sigma;
+      float ms2 = 0.0, a2 = 1.0, b2 = 1.0, c2 = 1.0;
+      for (int o = 0; o < 4; o++) {
+        ms2 += a2 * exp(-od2 * b2) * mix(phase2, 0.0795775, 1.0 - c2);
+        a2 *= 0.55; b2 *= 0.3; c2 *= 0.5;
+      }
+      // diffusion floor: moonlight random-walking through the body → cores stay grey-blue
+      ms2 += 0.012 + 0.045 / (1.0 + 0.03 * od2);
+      // gentle powder only (no charcoal interiors at night)
+      ms2 *= mix(1.0, 1.0 - exp(-ext * 380.0), 0.15 * smoothstep(-0.2, 0.6, -cosK2));
+      // moonlit silver rims on the thin margins (forward lobe around the moon)
+      ms2 += (0.25 + 0.6 * smoothstep(0.6, 0.97, cosK2)) * hg(cosK2, 0.9) * exp(-od2 * 0.7) * (1.0 - smoothstep(0.0, 0.32, d));
+      vec3 Tm2 = transmittanceToLight(r, dot(upL, uKey2Dir));
+      Sk += uKey2E * Tm2 * ms2 * 3.14159;
+      // moonlit sky dome (the sky-scattering moon is deliberately dim; the deck sees the real one)
+      Sk += uKey2E * Tm2 * (0.018 + 0.02 * sqrt(hl)) * 3.14159;
     }
     // ambient: sky from above, bounce from below, self-occluded toward the bottom/inside
     // vertical gradient within each cloud (relative to its own top): luminous tops,

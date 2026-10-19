@@ -37,7 +37,7 @@ void main() {
   // fade at the box edge and very near the camera
   vec2 e = abs(lp.xz - uCamL.xz) / (uBox * 0.5);
   float dc = length(wp - uCamW);
-  vFade = (1.0 - smoothstep(0.7, 1.0, max(e.x, e.y))) * smoothstep(0.4, 1.5, dc) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.48, dc) * uKind) * (1.0 - smoothstep(uHeight * 0.85, uHeight, lp.y - uGroundY));
+  vFade = (1.0 - smoothstep(0.7, 1.0, max(e.x, e.y))) * smoothstep(1.4, 2.8, dc) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.48, dc) * uKind) * (1.0 - smoothstep(uHeight * 0.85, uHeight, lp.y - uGroundY));
   // tumbling quad
   // slow two-axis tumble with a flutter phase (fast spins comb into streaks under TAA)
   float a1 = t * (0.55 + 0.8 * r) + r * 30.0 + 0.5 * sin(t * 2.3 + r * 9.0), a2 = t * (0.4 + 0.5 * r) + r * 11.0;
@@ -87,7 +87,7 @@ export class Motes {
   init() {
     const fl = this.flora, q = fl.engine.quality, k = this.kind;
     const cfg = {
-      leaves: { n: 170, box: 40, height: 11, fall: 0.5, size: 0.15, tile: TILE.maple, kind: 0 },
+      leaves: { n: 240, box: 40, height: 11, fall: 0.5, size: 0.085, tile: TILE.maple, kind: 0 },
       petals: { n: 90, box: 40, height: 8, fall: 0.25, size: 0.06, tile: TILE.small, kind: 0 },
       flies: { n: 420, box: 60, height: 5, fall: 0.0, size: 0.09, tile: TILE.solid, kind: 1 },
       spores: { n: 600, box: 70, height: 24, fall: 0.35, size: 0.06, tile: TILE.solid, kind: 1 },

@@ -72,8 +72,8 @@ export default class Terrain {
     // The per-chunk detail maps (2× vertex resolution normals) now carry the shading of
     // ridges and gullies between vertices, so geometry only has to hold silhouettes:
     // a looser error and coarser flats keep the call/triangle budget (p2 vista went
-    // to 167 terrain calls at high with errPx 1.6 / flatK 1.35).
-    this.errPx = q.pick(7, 4.5, 2.6, 1.8);
+    // to 167 terrain calls at high with errPx 1.6 / flatK 1.35, 145 with 2.6 / 1.5).
+    this.errPx = q.pick(10, 6.5, 4, 3);
     this.flatK = q.pick(1.5, 1.5, 1.5, 1.4);
     this.uploadBudget = q.pick(3, 5, 8, 12);
     this.maxChunks = q.pick(220, 320, 420, 600);
@@ -381,13 +381,20 @@ export default class Terrain {
     // error vs its children is ~half of that on smooth ground (more on sharp features)
     const ex = this.errPx > 0 && n.err !== undefined ? (n.err * 0.5 * this.pxPerRadLod) / Math.max(d, 1e-3) : -1;
     if (ex < 0) { if (px <= this.pixelError) return false; } // not built yet: spacing rule
-    else if (px <= this.pixelError * this.flatK && !(ex > this.errPx && px > this.pixelError * 0.3)) return false;
+    else if (px <= this.pixelError * this.flatK) {
+      // error-driven split (silhouettes): bounded per selection so sheer-walled styles
+      // (karst towers: every node has a huge err) cannot blow the draw-call budget
+      // (p3 vista reached 212 drawn chunks / 521 frame calls without the cap)
+      if (!(ex > this.errPx && px > this.pixelError * 0.5) || this._errBudget <= 0) return false;
+      this._errBudget--;
+    }
     return this._splitBudget-- > 0;
   }
 
   _select() {
     this.frame++;
     this._splitBudget = this.engine.shotMode ? 400 : 220; // hard cap on refinement work per selection
+    this._errBudget = this.engine.quality.pick(3, 6, 12, 18); // error-driven splits per selection (+3 chunks each)
     const want = [];
     const draw = this._draw || (this._draw = []);
     draw.length = 0;

@@ -13,22 +13,23 @@ vec3 webPalette(float h){
   // saturated cyan filament spines → pale crossover → amber groups → white-gold cluster cores.
   // Stops sit low enough that the mass-weighted heat of an ordinary filament (≈0.45-0.6) lands in
   // CYAN, not in blue: three distinct hues, not a single powder-blue.
-  vec3 c0 = vec3(0.004, 0.002, 0.012);   // void
-  vec3 c1 = vec3(0.060, 0.012, 0.170);   // faint sheet: deep indigo
-  vec3 c2 = vec3(0.360, 0.080, 0.760);   // magenta-violet sheet / thin filament
-  vec3 c3 = vec3(0.080, 0.250, 1.000);   // electric blue filament skirt
-  vec3 c4 = vec3(0.100, 0.700, 0.950);   // cyan filament spine
-  vec3 c45 = vec3(0.780, 0.950, 0.900);  // pale aqua crossover (where filaments feed a node)
-  vec3 c5 = vec3(1.700, 0.720, 0.200);   // amber group
-  vec3 c6 = vec3(3.000, 2.050, 1.050);   // white-gold cluster core (HDR: blooms)
+  // restrained like JWST / Millennium plates: mostly near-neutral emission with distinct accents
+  vec3 c0 = vec3(0.003, 0.002, 0.008);   // void
+  vec3 c1 = vec3(0.050, 0.016, 0.120);   // faint sheet: plum-indigo
+  vec3 c2 = vec3(0.230, 0.110, 0.520);   // violet sheet / thin filament
+  vec3 c3 = vec3(0.200, 0.320, 0.860);   // periwinkle filament skirt
+  vec3 c4 = vec3(0.380, 0.760, 0.950);   // cyan filament spine
+  vec3 c45 = vec3(0.880, 0.920, 0.940);  // near-white crossover (where filaments feed a node)
+  vec3 c5 = vec3(1.650, 0.980, 0.420);   // gold group
+  vec3 c6 = vec3(3.000, 2.300, 1.450);   // white-gold cluster core (HDR: blooms)
   h = clamp(h, 0.0, 1.2);
-  if (h < 0.16) return mix(c0, c1, h / 0.16);
-  if (h < 0.38) return mix(c1, c2, (h - 0.16) / 0.22);   // a wide violet veil band
-  if (h < 0.46) return mix(c2, c3, (h - 0.38) / 0.08);
-  if (h < 0.55) return mix(c3, c4, (h - 0.46) / 0.09);
-  if (h < 0.64) return mix(c4, c45, smoothstep(0.57, 0.64, h));
-  if (h < 0.72) return mix(c45, c5, smoothstep(0.64, 0.72, h));
-  return mix(c5, c6, clamp((h - 0.72) / 0.26, 0.0, 1.0));
+  if (h < 0.18) return mix(c0, c1, h / 0.18);
+  if (h < 0.42) return mix(c1, c2, (h - 0.18) / 0.24);   // a wide violet veil band
+  if (h < 0.50) return mix(c2, c3, (h - 0.42) / 0.08);
+  if (h < 0.58) return mix(c3, c4, (h - 0.50) / 0.08);
+  if (h < 0.66) return mix(c4, c45, smoothstep(0.60, 0.66, h));
+  if (h < 0.74) return mix(c45, c5, smoothstep(0.66, 0.74, h));
+  return mix(c5, c6, clamp((h - 0.74) / 0.30, 0.0, 1.0));
 }
 // the young universe (z ≳ 3): a delicate indigo-teal lattice whose first knots burn blue-white
 vec3 earlyPalette(float h){
@@ -260,10 +261,15 @@ void main(){
 const DOWN_FRAG = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uTexel; varying vec2 vUv;
 void main(){
-  // 4 bilinear taps = a 4×4 box of the finer level, then the blur below shapes it into a Gaussian
-  vec4 c = texture2D(tSrc, vUv + uTexel * vec2(-0.5, -0.5)) + texture2D(tSrc, vUv + uTexel * vec2(0.5, -0.5))
-         + texture2D(tSrc, vUv + uTexel * vec2(-0.5, 0.5)) + texture2D(tSrc, vUv + uTexel * vec2(0.5, 0.5));
-  gl_FragColor = c * 0.25;
+  // 13-tap (Jimenez/CoD) downsample: overlapping 4×4 boxes weighted into a radial kernel, so a
+  // single bright texel never prints a square footprint into the pyramid
+  vec2 t = uTexel;
+  vec4 a = texture2D(tSrc, vUv + t * vec2(-2.0, -2.0)), b = texture2D(tSrc, vUv + t * vec2(0.0, -2.0)), c = texture2D(tSrc, vUv + t * vec2(2.0, -2.0));
+  vec4 d = texture2D(tSrc, vUv + t * vec2(-2.0, 0.0)), e = texture2D(tSrc, vUv), f = texture2D(tSrc, vUv + t * vec2(2.0, 0.0));
+  vec4 g = texture2D(tSrc, vUv + t * vec2(-2.0, 2.0)), h = texture2D(tSrc, vUv + t * vec2(0.0, 2.0)), i = texture2D(tSrc, vUv + t * vec2(2.0, 2.0));
+  vec4 j = texture2D(tSrc, vUv + t * vec2(-1.0, -1.0)), k = texture2D(tSrc, vUv + t * vec2(1.0, -1.0));
+  vec4 l = texture2D(tSrc, vUv + t * vec2(-1.0, 1.0)), m = texture2D(tSrc, vUv + t * vec2(1.0, 1.0));
+  gl_FragColor = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
 }`;
 const BLUR_FRAG = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uDir; varying vec2 vUv;
@@ -321,14 +327,18 @@ void main(){
   //  · the SHARP layer — the full-resolution accumulation, crisp filament spines, halo cusps and
   //    individual tracers, which may only ADD light above the envelope (never punch holes in it).
   // Crossovers are driven by the smoothed (effective) sample counts only.
-  float kH = smoothstep(0.05 * sA, 0.45 * sA, cq);
-  float kF = smoothstep(0.18 * sA, 1.1 * sA, ch) * kH;
+  // The SHARP column is the visible body. Only genuinely under-sampled pixels (sparse sheets) fall
+  // back to the half level (σ≈4 px), and only near-empty ones to the quarter level; the envelope
+  // adds a faint additive halo (a PSF wing), never the body, so spines stay pin-sharp.
+  float kH = smoothstep(0.02 * sA, 0.22 * sA, cq);
+  float kF = smoothstep(0.04 * sA, 0.40 * sA, ch);
   vec4 env = mix(q, h, kH);
-  vec4 acc = mix(env, f, kF);
+  vec4 acc = mix(h, f, kF);
+  acc = mix(env, acc, kH);
   float Ae = min(env.a, 65000.0) * 10000.0;
   float A = min(acc.a, 65000.0) * 10000.0;
   float Ie = respI(Ae), Ia = respI(A);
-  float I = max(Ia, uEnvK * Ie);
+  float I = Ia + uEnvK * Ie * (1.0 - 0.5 * smoothstep(0.0, 1.0, Ia / max(Ie, 1e-6)));
   // the sharp spine detail (high-pass of the full-res column over the half level), weighted toward
   // dense structure so sparse sheets do not speckle: thread-thin filaments and pin-point halos
   float hmA = acc.r / max(acc.a, 1e-12), hmE = env.r / max(env.a, 1e-12);
