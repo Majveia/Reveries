@@ -115,8 +115,8 @@ export class Celestial {
     const gC = zen.clone().multiplyScalar(Math.cos(0.75)).addScaledVector(inPlane, Math.sin(0.75)).normalize();
     // tilt the plane about the centre direction: the band no longer stands straight up through
     // the zenith but crosses the sky on a diagonal (and rises over the horizon at an angle)
-    const tilt = 0.62 + this.rng.range(-0.12, 0.12);
-    const gNt = gN.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(new THREE.Vector3().crossVectors(gC, gN), Math.sin(tilt)).normalize();
+    const gTilt = 0.62 + this.rng.range(-0.12, 0.12);
+    const gNt = gN.clone().multiplyScalar(Math.cos(gTilt)).addScaledVector(new THREE.Vector3().crossVectors(gC, gN), Math.sin(gTilt)).normalize();
     gN.copy(gNt);
     // Galaxy frame (x toward centre from us is -starGal dir; y = north).
     const starDirGal = this.starGal.clone().setY(0).normalize();
