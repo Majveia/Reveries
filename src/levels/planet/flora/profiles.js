@@ -27,7 +27,7 @@ export function floraProfile(kind, A) {
   switch (kind) {
     case 'lush': return {
       grass: { density: 1.15, colors: meadow(4, 0.35).concat(['#8fb04a']), dry: '#c2b46a', reed: '#5f7f3a', h: [0.15, 0.56], seedH: 0.75, w: [0.026, 0.048], stiff: 1, cover: 0.55, needsWater: 0.6, rockVeg: 0.35 },
-      flowers: { style: 'spike', density: 1.35, colors: ['#a98cf0', '#8f78e0', '#f9b3cf', '#c8a8ff'], h: [0.3, 0.8], size: 0.066, patch: 0.0, scatter: 0.04,
+      flowers: { style: 'spike', density: 2.1, colors: ['#a98cf0', '#8f78e0', '#f9b3cf', '#c8a8ff'], h: [0.3, 0.8], size: 0.066, patch: 0.22, scatter: 0.015,
         second: { style: 'daisy', colors: ['#f6f3ea', '#ffe14d', '#fff27a', '#ffffff'], share: 0.45, size: 0.032, h: [0.2, 0.55] } },
       trees: {
         density: 0.007, cover: 0.05, lone: 0.05, grassland: 0.6, arid: 0.08, wet: 0.5, rocky: 0.12, cliffTrees: 0.25, snowy: 0.02, snowLine: 0.4,
@@ -45,8 +45,8 @@ export function floraProfile(kind, A) {
       rocks: { density: 0.0045, color: rock, moss: 0.75, mossCol: '#4e6e2c', size: 1 },
     };
     case 'maple': return {
-      grass: { density: 1.7, colors: ['#8a8a3c', '#a8904a', '#b89c52', '#7c7e3a', '#c4a24c', '#6e7436', '#9a7a3a'], dry: '#c8a456', reed: '#6a6a3a', h: [0.14, 0.52], w: [0.034, 0.062], stiff: 0.9, cover: 1.15, widthMax: 5, needsWater: 0.15, dryBias: 0.0, dryMax: 0.5, rockVeg: 0.6 },
-      flowers: { density: 0.75, colors: ['#d8342a', '#c8282a', '#e0482a'], h: [0.3, 0.75], size: 0.05, patch: 0.08, scatter: 0.02,
+      grass: { density: 1.7, colors: ['#9e9c46', '#c0a456', '#d0b05e', '#8e9044', '#dcb658', '#7f863e', '#b08c44'], dry: '#d8b462', reed: '#6a6a3a', h: [0.14, 0.52], w: [0.026, 0.05], stiff: 0.9, cover: 1.15, widthMax: 3.4, needsWater: 0.15, dryBias: 0.0, dryMax: 0.5, rockVeg: 0.6 },
+      flowers: { density: 1.15, colors: ['#d8342a', '#c8282a', '#e0482a'], h: [0.3, 0.75], size: 0.05, patch: 0.24, scatter: 0.01,
         second: { style: 'spike', colors: ['#f0a030', '#e8c048', '#e8e0d0'], share: 0.35, size: 0.045, h: [0.4, 0.85] } },
       trees: {
         density: 0.0072, cover: 0.2, lone: 0.06, grassland: 0.65, arid: 0.15, wet: 0.5, rocky: 0.4, cliffTrees: 0.55, crownTrees: 0.9, snowy: 0.05, snowLine: 0.45,

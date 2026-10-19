@@ -85,6 +85,25 @@ export default class Terrain {
     // wind for sand ripples
     uniforms.uWindDir.value.copy(w.wind);
 
+    // ---- per-chunk detail maps (normal + cavity at 2× vertex resolution, see
+    // ChunkBuilder): one RGBA16F texture array, one layer per resident chunk ----
+    {
+      const gl = this.engine.renderer.getContext();
+      let maxL = 256; try { maxL = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) || 256; } catch { /* default */ }
+      const L = Math.max(64, Math.min(maxL, this.maxChunks + 64));
+      const TM = 2 * N + 1;
+      this.texSize = TM;
+      const arr = new THREE.DataArrayTexture(new Uint16Array(TM * TM * 4 * L), TM, TM, L);
+      arr.format = THREE.RGBAFormat; arr.type = THREE.HalfFloatType;
+      arr.minFilter = arr.magFilter = THREE.LinearFilter;
+      arr.wrapS = arr.wrapT = THREE.ClampToEdgeWrapping;
+      arr.generateMipmaps = false; arr.unpackAlignment = 2;
+      arr.needsUpdate = true;
+      this.chunkTex = arr;
+      this.freeLayers = [];
+      for (let i = L - 1; i >= 0; i--) this.freeLayers.push(i);
+      uniforms.tChunkN.value = arr;
+    }
     this.index = new THREE.BufferAttribute(buildIndex(N), 1);
     this.VC = vertexCount(N);
     this.pool = [];
@@ -253,6 +272,7 @@ export default class Terrain {
     g.setAttribute('aHgt', new THREE.BufferAttribute(new Float32Array(VC), 1));
     g.setAttribute('aHorA', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
     g.setAttribute('aHorB', new THREE.BufferAttribute(new Uint8Array(VC * 4), 4, true));
+    g.setAttribute('aTex', new THREE.BufferAttribute(new Float32Array(VC).fill(-1), 1));
     g.setIndex(this.index);
     g.boundingSphere = new THREE.Sphere();
     g.boundingBox = new THREE.Box3();
@@ -278,6 +298,16 @@ export default class Terrain {
     A.aHgt.array.set(d.hgt); A.aHgt.needsUpdate = true;
     A.aHorA.array.set(d.horA); A.aHorA.needsUpdate = true;
     A.aHorB.array.set(d.horB); A.aHorB.needsUpdate = true;
+    // detail-map layer (−1: none free → the shader falls back to vertex normals)
+    const layer = d.tex && d.texSize === this.texSize && this.freeLayers.length ? this.freeLayers.pop() : -1;
+    if (layer >= 0) {
+      const ct = this.chunkTex, sz = d.tex.length;
+      ct.image.data.set(d.tex, layer * sz);
+      ct.addLayerUpdate(layer);
+      ct.needsUpdate = true;
+    }
+    if (A.aTex.array[0] !== layer) { A.aTex.array.fill(layer); A.aTex.needsUpdate = true; }
+    m.userData.layer = layer;
     g.boundingSphere.center.set(d.center[0], d.center[1], d.center[2]);
     g.boundingSphere.radius = d.radius;
     m.position.set(d.origin[0], d.origin[1], d.origin[2]);
@@ -299,6 +329,7 @@ export default class Terrain {
     if (!node.chunk) return;
     const m = node.chunk.mesh;
     m.visible = false;
+    if (m.userData.layer >= 0) { this.freeLayers.push(m.userData.layer); m.userData.layer = -1; }
     this.meshes.delete(m);
     this.pool.push(m);
     node.chunk = null;
@@ -588,6 +619,7 @@ export default class Terrain {
     this.material?.dispose();
     this.depthMaterial?.dispose();
     this._sunRT?.dispose();
+    this.chunkTex?.dispose();
     this.group?.removeFromParent();
   }
 }

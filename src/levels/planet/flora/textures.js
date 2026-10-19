@@ -26,7 +26,7 @@ function leafPath(ctx, len, wid, tipSharp = 0.5) {
 }
 
 function shadeLeaf(ctx, rng, len, wid, base) {
-  const l = base * (0.82 + rng.float() * 0.3);
+  const l = base * (0.9 + rng.float() * 0.14); // tight per-leaf jitter: crowns read by lobe, not confetti
   const g = ctx.createLinearGradient(-wid, 0, wid, len);
   const c1 = Math.round(255 * Math.min(1, l * 1.05)), c0 = Math.round(255 * l * 0.78);
   g.addColorStop(0, `rgb(${c0},${c0},${Math.round(c0 * 0.92)})`);
@@ -45,7 +45,7 @@ function drawBroad(ctx, S, rng, small = false) {
     ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2 + (rng.float() - 0.5) * 1.6);
     const len = (small ? 0.075 : 0.13) * S * (0.75 + rng.float() * 0.5), wid = len * (small ? 0.5 : 0.42);
     leafPath(ctx, len, wid, small ? 0.2 : 0.6);
-    shadeLeaf(ctx, rng, len, wid, 0.6 + 0.4 * (r / (S * 0.36)));
+    shadeLeaf(ctx, rng, len, wid, 0.7 + 0.3 * (r / (S * 0.36)));
     ctx.restore();
   }
 }
@@ -90,7 +90,7 @@ function drawMaple(ctx, S, rng) {
       if (k === 0) ctx.moveTo(Math.cos(ang) * rr, Math.sin(ang) * rr); else ctx.lineTo(Math.cos(ang) * rr, Math.sin(ang) * rr);
     }
     ctx.closePath();
-    const l = 0.62 + rng.float() * 0.38, c = Math.round(255 * l);
+    const l = 0.82 + rng.float() * 0.16, c = Math.round(255 * l);
     ctx.fillStyle = `rgb(${c},${c},${c})`; ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
     for (let k = 0; k < 5; k++) { const ang = (k / 5) * Math.PI * 2 - Math.PI / 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ang) * s * 0.8, Math.sin(ang) * s * 0.8); ctx.stroke(); }

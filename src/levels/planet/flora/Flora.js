@@ -23,6 +23,8 @@ import { Rocks } from './rocks.js';
 import { Motes } from './motes.js';
 
 const ANCHOR_SNAP = 256;
+// per-shot flora stats in the harness console: --extra "florastats=1"
+const FLORA_STATS = typeof location !== 'undefined' && /[?&]florastats=/.test(location.search);
 const _v = new THREE.Vector3(), _cam = new THREE.Vector3();
 
 export default class Flora {
@@ -247,7 +249,7 @@ export default class Flora {
     try { if (this.rocks && alt < 1500) this.rocks.update(_cam, col, budget * 0.4, force); } catch (e) { this._err('rocks', e); }
     for (const m of this.motes || []) { try { m.update(_cam); } catch (e) { this._err('motes', e); } }
     this._first = false;
-    if (shot && (this._logN || 0) < 4 && (!this._logAt || this._logAt.distanceTo(_cam) > 50)) { this._logN = (this._logN || 0) + 1; (this._logAt ||= new THREE.Vector3()).copy(_cam); console.warn(`[flora] ${this.kind}: grass ${this.grass?.count | 0}, trees ${this.trees?.meshCount | 0}+${this.trees?.impCount | 0} imp, under ${this.trees?.underCount | 0}, rocks ${this.rocks?.count | 0}, landmark ${this.trees?.landmark ? Math.round(this.trees.landmark.position.distanceTo(_cam)) + ' m' : '-'}`); }
+    if (shot && FLORA_STATS && (this._logN || 0) < 8 && (!this._logAt || this._logAt.distanceTo(_cam) > 50 || this.view.changed)) { this._logN = (this._logN || 0) + 1; (this._logAt ||= new THREE.Vector3()).copy(_cam); const sm = this.world.terrain?.sample?.(..._cam.clone().normalize().toArray()); console.warn(`[flora] cam alt ${alt.toFixed(1)} m, ground ${sm ? `rock ${sm.rock?.toFixed(2)} cliff ${sm.cliff?.toFixed(2)} moist ${sm.moisture?.toFixed(2)} sand ${sm.sand?.toFixed(2)} snow ${sm.snow?.toFixed(2)} biome ${sm.biome} h ${sm.h?.toFixed(1)} sea ${this.world.seaLevel?.toFixed?.(1)}` : '-'}, site ${this.siteClear(_cam.x, _cam.y, _cam.z, 0.78).toFixed(2)}, grass ${this.grass?.stats?.()}`); console.warn(`[flora] ${this.kind}: grass ${this.grass?.count | 0}, trees ${this.trees?.meshCount | 0}+${this.trees?.impCount | 0} imp, under ${this.trees?.underCount | 0}, rocks ${this.rocks?.count | 0}, landmark ${this.trees?.landmark ? Math.round(this.trees.landmark.position.distanceTo(_cam)) + ' m' : '-'}`); }
   }
 
   _err(name, e) {

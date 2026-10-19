@@ -309,9 +309,9 @@ export class Grass {
   init() {
     const fl = this.flora, q = fl.engine.quality, w = this.world, P = this.P;
     const qd = q.pick(0.28, 0.46, 1, 1.35);
-    this.dens0 = P.density * 70 * qd;              // blades per m² inside r0
+    this.dens0 = P.density * 82 * qd;              // blades per m² inside r0
     this.fdens0 = (this.F?.density || 0) * 9 * qd;  // flowers per m² inside r0 (in patches)
-    this.r0 = q.pick(6, 8, 10, 13);                 // full density inside r0
+    this.r0 = q.pick(6, 8, 11, 13.5);                 // full density inside r0
     this.fallK = q.pick(3.4, 3.1, 2.5, 2.2);         // density ∝ (r0/d)^fallK beyond (blades widen to keep cover)
     this.far = q.pick(30, 42, 72, 105) * (P.far || 1);
     this.R = w.radius;
@@ -324,7 +324,7 @@ export class Grass {
       uAnchor: fl.uniforms.uAnchor, uKeyColor: fl.uniforms.uKeyColor, uKeyDir: fl.uniforms.uKeyDir, uNight: fl.uniforms.uNight,
       uTime: w.uniforms.uTime, uWind: w.uniforms.uWind,
       uCam: fl.uniforms.uCam, uPlayer: fl.uniforms.uPlayer,
-      uR0: { value: this.r0 }, uFallK: { value: this.fallK }, uFar: { value: this.far }, uWidthMax: { value: P.widthMax ?? 4.2 }, uStiff: { value: P.stiff ?? 1 },
+      uR0: { value: this.r0 }, uFallK: { value: this.fallK }, uFar: { value: this.far }, uWidthMax: { value: Math.min(P.widthMax ?? 3.0, 3.4) }, uStiff: { value: P.stiff ?? 1 },
       uGlow: { value: P.glow || 0 }, uTransK: { value: 0.42 }, uGlowCol: { value: new THREE.Color(P.glowCol || '#6fe8ff') },
       uGlowPts: fl.uniforms.uGlowPts,
     };
@@ -422,12 +422,18 @@ export class Grass {
     faceDir(face, ((i + 0.5) / N) * 2 - 1, ((j + 0.5) / N) * 2 - 1, _dir);
     const hc = this.world.terrain.height(_dir[0], _dir[1], _dir[2]);
     const cx = _dir[0] * (R + hc), cy = _dir[1] * (R + hc), cz = _dir[2] * (R + hc);
+    const _dir0 = [_dir[0], _dir[1], _dir[2]];
     // height grid
     const H = new Float32Array(G * G);
     for (let gi = 0; gi < G; gi++) for (let gj = 0; gj < G; gj++) {
       faceDir(face, ((i + gi / (G - 1)) / N) * 2 - 1, ((j + gj / (G - 1)) / N) * 2 - 1, _dir);
       H[gi * G + gj] = this.world.terrain.height(_dir[0], _dir[1], _dir[2]);
     }
+    // culling sphere from the true height span (karst towers, cliffs: a cell can
+    // hold a tower top 15 m above its centre sample)
+    let hMin = Infinity, hMax = -Infinity;
+    for (let k = 0; k < H.length; k++) { if (H[k] < hMin) hMin = H[k]; if (H[k] > hMax) hMax = H[k]; }
+    const bh = (hMin + hMax) * 0.5 + 0.5 - hc, br = Math.hypot(CELL * 0.75 + 1, (hMax - hMin) * 0.5 + 1.2);
     const c00 = this._corner(face, i, j, N), c10 = this._corner(face, i + 1, j, N), c01 = this._corner(face, i, j + 1, N), c11 = this._corner(face, i + 1, j + 1, N);
     const cellG = Math.max(c00.g, c10.g, c01.g, c11.g);
     const shoreCell = sea > -1e8 && Math.min(c00.h, c10.h, c01.h, c11.h) < sea + 1.6 && Math.max(c00.h, c10.h, c01.h, c11.h) > sea - 0.8;
@@ -497,7 +503,7 @@ export class Grass {
         _c.multiplyScalar(0.84 + 0.3 * (n3 * 0.5 + 0.5));
         _c.r *= 1 + 0.16 * n3; _c.b *= 1 - 0.12 * n3;
         let hh = THREE.MathUtils.lerp(P.h[0], P.h[1], r3 * r3) * (0.75 + 0.5 * (n1 * 0.5 + 0.5)) * (0.55 + 0.45 * g) * (0.3 + 0.7 * clr * clr);
-        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2) * (P.wK ?? 1.4) * (1.6 - 0.6 * clr); // broad blades: a closed sward (wider lawn)
+        let ww = THREE.MathUtils.lerp(P.w[0], P.w[1], r2 * r2) * (P.wK ?? 0.95) * (1.2 - 0.2 * clr); // fine blades (most narrow, a few broad); lawns slightly wider
         let yaw = r2 * 6.2832 + u * 31.4;
         if (clump) {
           hh *= clump[2]; yaw = clump[3] + (r2 - 0.5) * 1.3;
@@ -566,7 +572,7 @@ export class Grass {
         }
       }
     }
-    c.data = { gen, fine, cx, cy, cz, blades: new Float32Array(out), flowers: new Float32Array(fout), flowers2: new Float32Array(fout2), litter: new Float32Array(out2), fgen: gen };
+    c.data = { gen, fine, cx, cy, cz, bx: cx + _dir0[0] * bh, by: cy + _dir0[1] * bh, bz: cz + _dir0[2] * bh, br, blades: new Float32Array(out), flowers: new Float32Array(fout), flowers2: new Float32Array(fout2), litter: new Float32Array(out2), fgen: gen };
   }
 
   _count(c, arr) {
@@ -585,9 +591,10 @@ export class Grass {
     const f2 = this.meshFar ? this.farFrom * this.farFrom : Infinity, m2 = this.meshMid ? this.midFrom * this.midFrom : Infinity;
     for (const c of this.layer.active.values()) {
       if (!c.data) continue;
-      const dx = c.data.cx - cam.x, dy = c.data.cy - cam.y, dz = c.data.cz - cam.z;
-      if (!fl.inView(dx, dy, dz, r, 0)) continue;
-      const dm = Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - r), dm2 = dm * dm;
+      const D = c.data, rr = D.br ?? r;
+      const dx = (D.bx ?? D.cx) - cam.x, dy = (D.by ?? D.cy) - cam.y, dz = (D.bz ?? D.cz) - cam.z;
+      if (!fl.inView(dx, dy, dz, rr, 0)) continue;
+      const dm = Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - rr), dm2 = dm * dm;
       (dm2 > f2 ? far : dm2 > m2 ? mid : near).push(c);
     }
     this._near = near; this._mid = mid; this._far = far;
@@ -639,6 +646,16 @@ export class Grass {
       if (this.fmesh2) this._pack(this.fmesh2, 'flowers2');
       if (this.lmesh) this._pack(this.lmesh, 'litter');
     }
+  }
+
+  stats() {
+    let a = 0, d = 0, b = 0;
+    for (const c of this.layer.active.values()) { a++; if (c.data) { d++; b += c.data.blades.length / STRIDE; } }
+    const cam = this.flora.level.camera.position, V = this.flora.view, near = [];
+    for (const c of this.layer.active.values()) if (c.data) { const dx = c.data.cx - cam.x, dy = c.data.cy - cam.y, dz = c.data.cz - cam.z, dd = Math.hypot(dx, dy, dz); near.push([dd, Math.acos((dx * V.fwd.x + dy * V.fwd.y + dz * V.fwd.z) / dd)]); }
+    near.sort((x, y) => x[0] - y[0]);
+    const dbg = `fwd ${V.fwd.toArray().map((v) => v.toFixed(2))} up ${cam.clone().normalize().toArray().map((v) => v.toFixed(2))} half ${V.half.toFixed(2)} on ${V.on} cells ${near.slice(0, 6).map(([dd, an]) => dd.toFixed(1) + '@' + an.toFixed(2)).join(' ')}`;
+    return dbg + ` cells ${a}/${d} blades ${b} near ${this._near?.length} mid ${this._mid?.length} far ${this._far?.length} inst ${this.mesh.geometry.instanceCount}/${this.meshFar.geometry.instanceCount} pending ${this.layer.pending}`;
   }
 
   get count() { return (this.mesh?.geometry.instanceCount || 0) + (this.meshFar?.geometry.instanceCount || 0) + (this.meshMid?.geometry.instanceCount || 0) + (this.fmesh?.geometry.instanceCount || 0) + (this.fmesh2?.geometry.instanceCount || 0); }

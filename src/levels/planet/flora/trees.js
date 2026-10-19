@@ -143,7 +143,7 @@ ${FADE_V}
   // crown self-occlusion: the shade side and the deep core fall to ~45%, the
   // sunlit shell stays bright (each lobe gets its own terminator)
   float flAO = clamp(vLAO, 0.0, 1.0);
-  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), flShell) * mix(0.45, 1.05, flShell * 0.55 + flAO * 0.45);
+  outgoingLight *= mix(vec3(0.85, 0.95, 1.07), vec3(1.07, 1.01, 0.88), flShell) * mix(0.56, 1.05, flShell * 0.55 + flAO * 0.45);
   // backlit translucency (per pixel, wrapped): thin crown rims and outer leaves
   // glow when looking toward the sun; the dense core stays dark
   vec3 flV = normalize(vLWP - cameraPosition);
@@ -264,6 +264,9 @@ vec2 fl_impUV(float a, float e) {
   vec3 iGC = uGlowCol;
   if (uHueVar > 0.5) iGC = vIHue < 0.5 ? uGlowCol : vIHue < 0.78 ? vec3(0.62, 0.38, 1.0) : vec3(0.36, 1.0, 0.7);
   outgoingLight += mix(diffuseColor.rgb, iGC, 0.75) * vIGlow * iNrm.a * 2.2 * (0.02 + 3.8 * uNight);
+  // far glowing forest at night: every crown keeps a soft lantern-like base
+  // glow (veins too fine to survive the bake still read as a field of light)
+  outgoingLight += iGC * vIGlow * (0.1 + 0.25 * iNrm.a) * smoothstep(0.35, 0.9, iAlb.a) * uNight;
 #include <opaque_fragment>`);
   }, 'flora-impostor-oct');
 }
@@ -284,7 +287,7 @@ void main() {
   gAlb = vec4(sqrt(clamp(t.rgb * vC, 0.0, 1.0)), 1.0);
   float lum = dot(t.rgb, vec3(0.333));
   float gm = uLeaf > 0.5 ? 0.08 + 1.5 * smoothstep(0.62, 0.95, lum) : 0.2;
-  gNrm = vec4(normalize(vN) * 0.5 + 0.5, clamp(vG * gm * 0.5, 0.0, 1.0));
+  gNrm = vec4(normalize(vN) * 0.5 + 0.5, clamp(vG * gm * 0.85, 0.0, 1.0));
 }`;
 
 export class Trees {

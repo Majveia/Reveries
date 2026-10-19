@@ -95,6 +95,15 @@ const HOR_COS = [], HOR_SIN = [];
 for (let k = 0; k < 8; k++) { HOR_COS.push(Math.cos((k * Math.PI) / 4)); HOR_SIN.push(Math.sin((k * Math.PI) / 4)); }
 
 const q8 = (v) => { const x = Math.round(v * 127); return x < -127 ? -127 : x > 127 ? 127 : x; };
+const _hf = new Float32Array(1), _hu = new Uint32Array(_hf.buffer);
+/** float → IEEE half (round-to-nearest; tiny values flush to 0). */
+function toHalf(v) {
+  _hf[0] = v; const x = _hu[0];
+  const s = (x >>> 16) & 0x8000, e = ((x >>> 23) & 0xff) - 112;
+  if (e <= 0) return s;
+  if (e > 30) return s | 0x7c00;
+  return s | ((e << 10) + (((x & 0x7fffff) + 0x1000) >>> 13));
+}
 const u8 = (v) => { const x = Math.round(v * 255); return x < 0 ? 0 : x > 255 ? 255 : x; };
 
 /**
@@ -236,6 +245,43 @@ export function buildChunk(T, job) {
       }
     }
   }
+  // ---- detail map: surface normal + cavity at 2× the vertex resolution ----
+  // (2N+1)² texels, texel 2i ↔ vertex i. Lighting between vertices follows the true
+  // height field → mid/far ridges, gullies and crests stay crisp with few triangles
+  // (Horizon/Far Cry-style per-chunk normal maps). Coarse chunks evaluate the field at
+  // half spacing (with its finer band limit); fine chunks (≤ 1.5 m) keep vertex normals
+  // (the material's own detail normals cover that range) → no extra cost near the camera.
+  const TM = 2 * N + 1, TG = TM + 2;
+  const tex = spacing > 1.5 ? new Uint16Array(TM * TM * 4) : null;
+  if (tex) {
+    const TH = new Float64Array(TG * TG), TX = new Float64Array(TG * TG), TY = new Float64Array(TG * TG), TZ = new Float64Array(TG * TG);
+    const ts = spacing * 0.5;
+    if (hasLod) T.setLod(ts);
+    for (let tj = -1; tj <= TM; tj++) {
+      const b = -1 + (2 * (iy * N + tj * 0.5)) / total;
+      for (let ti = -1; ti <= TM; ti++) {
+        const a = -1 + (2 * (ix * N + ti * 0.5)) / total;
+        const t = (tj + 1) * TG + (ti + 1);
+        faceDir(face, a, b, dir);
+        TX[t] = dir[0]; TY[t] = dir[1]; TZ[t] = dir[2];
+        TH[t] = T.evaluate(dir[0], dir[1], dir[2], false).h;
+      }
+    }
+    for (let tj = 0; tj < TM; tj++) for (let ti = 0; ti < TM; ti++) {
+      const t = (tj + 1) * TG + (ti + 1);
+      const rL = R + TH[t - 1], rR = R + TH[t + 1], rD = R + TH[t - TG], rU = R + TH[t + TG];
+      const ux = TX[t + 1] * rR - TX[t - 1] * rL, uy = TY[t + 1] * rR - TY[t - 1] * rL, uz = TZ[t + 1] * rR - TZ[t - 1] * rL;
+      const vx = TX[t + TG] * rU - TX[t - TG] * rD, vy = TY[t + TG] * rU - TY[t - TG] * rD, vz = TZ[t + TG] * rU - TZ[t - TG] * rD;
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      if (nx * TX[t] + ny * TY[t] + nz * TZ[t] < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const lap = (TH[t - 1] + TH[t + 1] + TH[t - TG] + TH[t + TG]) * 0.25 - TH[t];
+      const o = (tj * TM + ti) * 4;
+      tex[o] = toHalf(nx); tex[o + 1] = toHalf(ny); tex[o + 2] = toHalf(nz);
+      tex[o + 3] = toHalf(0.5 + Math.max(-0.5, Math.min(0.5, (lap / ts) * 2.5)));
+    }
+  }
   if (hasLod) T.setLod(0);
 
   // ---- origin: chunk center on the base sphere ----
@@ -333,11 +379,11 @@ export function buildChunk(T, job) {
 
   return {
     origin: [ox, oy, oz], center: [cx, cy, cz], radius: rad, minH, maxH, maxDelta, skirt,
-    position, morph, nrm, nrm2, matA, matB, hgt, horA, horB,
+    position, morph, nrm, nrm2, matA, matB, hgt, horA, horB, tex, texSize: TM,
   };
 }
 
 /** Transferable list for postMessage. */
 export function transferables(c) {
-  return [c.position.buffer, c.morph.buffer, c.nrm.buffer, c.nrm2.buffer, c.matA.buffer, c.matB.buffer, c.hgt.buffer, c.horA.buffer, c.horB.buffer];
+  return [c.position.buffer, c.morph.buffer, c.nrm.buffer, c.nrm2.buffer, c.matA.buffer, c.matB.buffer, c.hgt.buffer, c.horA.buffer, c.horB.buffer, ...(c.tex ? [c.tex.buffer] : [])];
 }

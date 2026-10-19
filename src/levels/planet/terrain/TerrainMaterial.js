@@ -154,6 +154,8 @@ attribute vec4 aMatB;
 attribute float aHgt;
 attribute vec4 aHorA;
 attribute vec4 aHorB;
+attribute float aTex;
+varying vec3 vTexUV;
 uniform vec3 uHorSun;
 uniform vec3 uHorAxis;
 varying vec3 vHor;
@@ -188,6 +190,17 @@ vMatA = aMatA;
 vMatB = aMatB;
 vH = aHgt + dot( aMorph * tMorph, vUp );
 vDist = tDist;
+// detail-map uv from the shared grid topology (texel 2i ↔ vertex i; skirts → edge vertex)
+{
+  int vid = gl_VertexID, VV = CHUNK_N + 1;
+  ivec2 ij;
+  if ( vid < VV * VV ) ij = ivec2( vid % VV, vid / VV );
+  else {
+    int sk = vid - VV * VV, e = sk / VV, t = sk - e * VV;
+    ij = e == 0 ? ivec2( t, 0 ) : e == 1 ? ivec2( t, CHUNK_N ) : e == 2 ? ivec2( 0, t ) : ivec2( CHUNK_N, t );
+  }
+  vTexUV = vec3( ( vec2( ij ) * 2.0 + 0.5 ) / float( 2 * CHUNK_N + 1 ), aTex );
+}
 // horizon-based terrain sun shadow + sky occlusion (8 azimuths baked per vertex)
 {
   vec3 hE = cross( uHorAxis, vUp );
@@ -235,6 +248,8 @@ uniform vec3 uGlow;
 uniform vec4 uStyleA;   // strataH, strata, runnel, ripple
 uniform vec4 uStyleB;   // moss, blocks, hue, glow
 uniform float uGrassK;
+uniform highp sampler2DArray tChunkN; // per-chunk normal (xyz) + cavity (w), 2× vertex res
+varying vec3 vTexUV;
 uniform sampler2D tSunVis;     // far terrain shadow (depth, sun ortho)
 uniform mat4 uSunVisMatrix;    // world (detail space) → sun shadow uv/depth
 uniform float uSunVisOn;
@@ -298,13 +313,18 @@ const FRAG_SURFACE = /* glsl */`
   vec3 D = vD;
   vec3 up = normalize( vUp );
   vec3 Ng = normalize( vWN );
+  float cavT = -1.0;
+  if ( vTexUV.z > -0.5 ) {
+    vec4 cn = texture( tChunkN, vec3( vTexUV.xy, floor( vTexUV.z + 0.5 ) ) );
+    if ( dot( cn.xyz, cn.xyz ) > 0.25 ) { Ng = normalize( cn.xyz ); cavT = cn.w; }
+  }
   tGeoN = Ng;
   // pixel footprint on the surface: grows at grazing incidence → octaves fade
   // before they alias into streaks/smears
   float nv = abs( dot( normalize( ( viewMatrix * vec4( Ng, 0.0 ) ).xyz ), normalize( -vViewPosition ) ) );
   float pix = max( vDist * uPixelAngle / max( nv, 0.22 ), 1e-4 );
   float moist = vMatA.x, temp = vMatA.y, rockA = vMatA.z, snowA = vMatA.w;
-  float sandA = vMatB.x, wetA = vMatB.y, cav = vMatB.z, cliffA = vMatB.w;
+  float sandA = vMatB.x, wetA = vMatB.y, cav = cavT >= 0.0 ? mix( vMatB.z, cavT, 0.7 ) : vMatB.z, cliffA = vMatB.w;
   float h = vH;
   float slope = 1.0 - dot( Ng, up );
   float w;
@@ -344,9 +364,11 @@ const FRAG_SURFACE = /* glsl */`
 
   // ---- strata coordinate (radial height, gently warped) ----
   float strataH = uStyleA.x;
-  float sCoord = ( h + m2.w * strataH * 0.45 + m3.w * strataH * 0.12 ) / strataH;
-  // irregular bed thickness (0.3x–1.7x, monotonic warp): real strata are never a ruled grid
-  sCoord += 0.3 * sin( sCoord * 1.3 ) + 0.12 * sin( sCoord * 2.9 + 1.7 );
+  // beds dip and swell across the km scale (m1) so neighbouring towers never share one ruled ring set
+  float sCoord = ( h + m1.w * strataH * 1.6 + m2.w * strataH * 0.45 + m3.w * strataH * 0.12 ) / strataH;
+  // irregular bed thickness (≈0.05x–1.95x, still monotonic: Σ amp·freq < 1): thin partings
+  // between massive beds, as in real limestone, never a concrete-pour grid
+  sCoord += 0.42 * sin( sCoord * 1.3 ) + 0.14 * sin( sCoord * 2.9 + 1.7 );
   float sBand = floor( sCoord );
   float sFrac = fract( sCoord );
   float bandRnd = hash11( sBand * 1.618 + 0.37 );
@@ -489,6 +511,23 @@ const FRAG_SURFACE = /* glsl */`
     gSand += wt * ( d1 / lam ) * 0.013 * w1 + wt * ( d2 / 1.6 ) * 0.009 * w2;
     hSand = p1 * 0.2 * w1 + p2 * 0.4 * w2 + wq.w * 0.3;
     rippleShade = ( p1 - 0.5 ) * w1 + ( p2 - 0.5 ) * w2 * 0.8;
+    // ripple trains seen from afar (5–12 m sinuous sand waves): survive to ~150 m as
+    // grazing-light bands where the 30 cm ripples are sub-pixel → dune stoss slopes
+    // never read as flat planes; troughs gather darker heavy-mineral lag
+    {
+      vec4 wq3 = nA( D.yzx - 9.0, 1.0 / 128.0 );
+      float lam3 = 7.5 * ( 1.0 + 0.4 * wq3.w );
+      float ph3 = dot( D, wt ) / lam3 + wq2.w * 1.4 + wq3.w * 2.2 + dot( D, wb ) * 0.03 * wq3.w;
+      float f3 = fract( ph3 );
+      float bl3 = 1.0 - smoothstep( 0.2, 0.6, fwidth( ph3 ) );
+      float p3 = f3 < 0.68 ? f3 / 0.68 : ( 1.0 - f3 ) / 0.32;
+      float d3 = f3 < 0.68 ? 1.0 / 0.68 : -1.0 / 0.32;
+      float w3 = octW( 1.0 / 7.5, pix ) * uStyleA.w * ( 1.0 - 0.9 * leeF ) * ( 1.0 - 0.6 * crestF ) * smoothstep( -0.35, 0.25, wq3.w + wq.w * 0.3 ) * bl3;
+      // smooth the sawtooth so the lee of each wave is a soft shadow line, not a crease
+      gSand += wt * ( d3 / lam3 ) * 0.05 * w3 * smoothstep( 0.0, 0.12, p3 );
+      rippleShade += ( p3 - 0.5 ) * w3 * 0.9;
+      hSand += p3 * 0.5 * w3;
+    }
     w = octW( 0.25, pix );
     if ( w > 0.0 ) { vec4 s1 = nA( D.yzx, 0.25 ); gSand += s1.xyz * 0.004 * w; } // faint: the old 0.015 read as orange-peel blotches
     // grain sparkle (1 cm-ish facets), very subtle
@@ -817,6 +856,7 @@ export function createTerrainMaterial(world, style) {
     uStyleB: { value: new THREE.Vector4(st.moss, st.blocks, st.hue, st.glow) },
     uGrassK: { value: st.grassK },
     tSunVis: { value: null },
+    tChunkN: { value: null },
     uSunVisMatrix: { value: new THREE.Matrix4() },
     uSunVisOn: { value: 0 },
     uSunVisParams: { value: new THREE.Vector4(1, 0.001, 20, 0) },
@@ -828,7 +868,7 @@ export function createTerrainMaterial(world, style) {
   material.name = 'TerrainMaterial';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
+    shader.vertexShader = '#define CHUNK_N 64\n' + shader.vertexShader
       .replace('#include <common>', '#include <common>\n' + VERT_PARS)
       .replace('#include <beginnormal_vertex>', VERT_NORMAL)
       .replace('#include <begin_vertex>', VERT_BEGIN);
@@ -845,7 +885,7 @@ export function createTerrainMaterial(world, style) {
       .replace('#include <lights_fragment_begin>', lights)
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n\treflectedLight.indirectDiffuse *= tAO;\n\treflectedLight.indirectSpecular *= tAO * tAO;\n\treflectedLight.directDiffuse *= mix( 1.0, tAO, 0.15 );');
   };
-  material.customProgramCacheKey = () => 'reveries-terrain-v5';
+  material.customProgramCacheKey = () => 'reveries-terrain-v6';
 
   // Shadow-map caster. Shadows render back faces (three's default for FrontSide), which
   // on a heightfield are exactly the slopes facing away from the light — plus the chunk
