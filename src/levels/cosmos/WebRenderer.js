@@ -214,10 +214,10 @@ void main(){
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float thr = mix(0.28, 0.56, uEarly);                       // early on, only the rarest peaks have lit up
+  float thr = mix(0.14, 0.56, uEarly);   // field galaxies light sheets and thin filaments too (faintly)                       // early on, only the rarest peaks have lit up
   // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
   // log-normal-ish luminosity function over ~2 decades, weighted to dense matter (rho^1.3 importance)
-  float u3 = u * u * u; float lum = smoothstep(thr, thr + 0.32, heat) * pow(10.0, 1.9 * u3 - 0.85) * (0.6 + 0.8 * smoothstep(0.5, 0.8, heat));
+  float u3 = u * u * u; float lum = smoothstep(thr, thr + 0.4, heat) * pow(10.0, 1.9 * u3 - 0.85) * (0.6 + 0.8 * smoothstep(0.5, 0.8, heat));
   if (dist < 0.3 || fade <= 0.0 || lum < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSpike = 0.0; vPx = 1.0; return; }
   float tr = exp(-max(dist - uFogNear, 0.0) / uFog);
   float b = lum * fade * tr * smoothstep(0.3, 2.5, dist) * uGal * 150.0 / sqrt(max(dist, 5.0));   // pin-sharp at every distance
@@ -364,7 +364,10 @@ void main(){
   // integrates. Driving brightness by that heat (gated by coverage, so voids stay black) draws the
   // proto-web's connected lattice — the same skeleton the z=0 web will grow from.
   float cov = A / (A + uA0 * 0.6);
-  float Il = uGain * 2.2 * cov * pow(smoothstep(0.15, 0.42, hm), uLatticeK) * (1.0 - 0.72 * smoothstep(0.40, 0.72, hm)) + uGain * 0.25 * cov * cov
+  // the first knots: no flat plateau — a log-column cusp that keeps rising toward their centres,
+  // while the lattice term itself backs off inside them (they are rare, small and pin-bright)
+  float Il = uGain * 2.2 * cov * pow(smoothstep(0.15, 0.42, hm), uLatticeK) * (1.0 - 0.88 * smoothstep(0.38, 0.66, hm))
+            + uGain * 0.22 * log(1.0 + A / (uA0 * 6.0)) * smoothstep(0.4, 0.7, hm)
             + uDetail * detail * 0.6;
   I = mix(I, Il, uEarly * uEarlyLattice);
   // optical-depth soft cap: a filament seen end-on integrates its whole length — it stays a bright

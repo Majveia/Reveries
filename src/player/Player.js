@@ -556,7 +556,7 @@ export default class Player {
     if (this.shotPose) {
       // posed "running": the air streams from the front; ambient wind only adds a sideways lift
       const sp = this.shotPose.air ?? this.shotPose.speed;
-      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 0.82); // ~1.8 m/s: tails stream back AND droop ~27° (tan = g / (kN·W)), never a rigid flag
+      S.airOffset.copy(ctl.facing).multiplyScalar(-sp * 1.08); // ~2.4 m/s: tails stream back and droop (2.9 m/s held a rigid flag, 1.8 m/s hung like a cape)
       const along = S.wind.dot(ctl.facing);
       S.wind.addScaledVector(ctl.facing, -along);
       const cap = 0.5 * Math.max(sp, 1.5);
@@ -894,6 +894,10 @@ export default class Player {
         // the silhouette from behind (dark bark swallowing the suit)
         const hp = this.ctl.pos;
         for (const [d, r] of [[-cam.distance, 3.5], [0, 3], [6, 5]]) level.floraClear(hp.clone().addScaledVector(camH, d), r);
+        // ...and the frame flanks: a trunk / shrub mass hugging one side of the lens filled a third
+        // of the p3 hero frame with dark bark — keep the near left / right thirds open too
+        const rt = new THREE.Vector3().crossVectors(camH, up).normalize();
+        for (const sd of [-1, 1]) level.floraClear(hp.clone().addScaledVector(camH, 1.5).addScaledVector(rt, sd * 3.6), 2.6);
       }
       // passing / push-off instant: the rear foot rolls onto its toe behind the hips while the
       // swing knee drives forward — the readable 'mid-stride' silhouette (not double contact)
