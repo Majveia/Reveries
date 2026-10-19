@@ -74,9 +74,11 @@ void main(){
   float t0 = max(max(ts.x, tcyl.x), 0.0), t1 = min(ts.y, tcyl.y);
   vec3 col = vec3(0.0);
   vec3 T = vec3(1.0);
-  vec3 KRGB = mix(vec3(0.62, 1.0, 1.48), vec3(0.85, 1.0, 1.18), uInside);   // milder inside: rifts read dark brown, not glowing orange   // wavelength-dependent extinction: lane edges redden
   vec3 cB = uColBulge * uBulgeAmp * uEmit * uBulgeDim;
   float grazeK = mix(smoothstep(0.03, 0.3, abs(rd.y)), 1.0, uInside);
+  // wavelength-dependent extinction: lane edges redden. Milder inside (rifts read dark brown) and
+  // along grazing chords (the whole edge-on disk would otherwise integrate into one orange smear)
+  vec3 KRGB = mix(mix(vec3(0.84, 1.0, 1.2), vec3(0.62, 1.0, 1.48), grazeK), vec3(0.85, 1.0, 1.18), uInside);
   float camR = length(ro * vec3(1.0, 1.0 / uBulgeQ, 1.0));
   float inBulge = max((1.0 - smoothstep(uBulgeScale * 0.2, uBulgeScale * 1.5, camR)) * 0.7, uInside);
   if (t1 > t0) {

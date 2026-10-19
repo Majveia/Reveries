@@ -170,8 +170,6 @@ export default class Flora {
 
   shot(name, spot) {
     this.sight = null;
-    if (this.engine.shotMode) console.warn(`[flora] shot ${name} glowPools ${!!this.profile?.glowPools} trees ${!!this.trees}`);
-    if (name === 'night' && spot?.lookAt && this.profile?.glowPools) { try { this._heroGrove(spot); } catch (e) { this._err('grove', e); } return false; }
     if (name !== 'flora' || !this.trees?.landmark) return false;
     const w = this.world, L = this.trees.landmark;
     const up = L.position.clone().normalize();
@@ -204,11 +202,14 @@ export default class Flora {
   // Night on a bioluminescent world: two glowing groves flank the sky-first
   // sightline (Pandora framing), giant glowing fungi close by, so the frame's
   // light comes from the forest itself. Deterministic per planet seed.
-  _heroGrove(spot) {
+  // level.flora.heroGrove(spotPosition, viewDir) — called by the night preset.
+  heroGrove(P, dir) { try { if (this.profile?.glowPools) this._heroGrove(P, dir); } catch (e) { this._err('grove', e); } }
+
+  _heroGrove(P, dir) {
     if (this._grove || !this.trees?.species?.length) return;
     this._grove = true;
-    const w = this.world, P = spot.position, up = P.clone().normalize();
-    const fw = spot.lookAt.clone().sub(P); fw.addScaledVector(up, -fw.dot(up));
+    const w = this.world, up = P.clone().normalize();
+    const fw = dir.clone(); fw.addScaledVector(up, -fw.dot(up));
     if (fw.lengthSq() < 1e-6) return; fw.normalize();
     const side = fw.clone().cross(up).normalize();
     // the level clears trees along the view: radius by distance along fw
@@ -241,7 +242,7 @@ export default class Flora {
     }
     void clearR;
     const n = this.trees.plant(list);
-    if (FLORA_STATS || this.engine.shotMode) console.warn(`[flora] night grove: ${n} planted of ${list.length}`);
+    if (FLORA_STATS) console.warn(`[flora] night grove: ${n} planted`);
   }
 
   // Streaming runs after camera rigs have placed the camera this frame.

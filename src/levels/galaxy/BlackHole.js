@@ -157,6 +157,9 @@ vec4 diskSample(vec3 hit, vec3 v){
   vec3 bb = blackbody(T);
   bb = max(mix(vec3(dot(bb, vec3(0.2126, 0.7152, 0.0722))), bb, 1.75), 0.0);   // photographic saturation (blue approaching / red receding side)
   vec3 c = bb * pow(g, 4.0) * em * uGain * (0.5 + 0.9 * n2) * (0.88 + 0.24 * n3);
+  // hue-preserving highlight shoulder: the beamed side keeps its plasma structure and blue-white
+  // colour under bloom instead of clipping to a flat cream plateau
+  c /= 1.0 + 0.3 * dot(c, vec3(0.2126, 0.7152, 0.0722));
   return vec4(c * alpha, alpha);
 }
 
@@ -287,7 +290,7 @@ export class BlackHole {
         uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() },
         uCam: { value: new THREE.Vector3() }, uTime: { value: 0 },
         uSteps: { value: engine.shotMode ? 380 : q.pick(170, 240, 320, 380) },
-        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.5 }, uTmax: { value: 7400 }, uRint: { value: 60.0 },
+        uIn: { value: 3.0 }, uOut: { value: 14.0 }, uBg: { value: 1 }, uDoppler: { value: 1.0 }, uGain: { value: 0.38 }, uTmax: { value: 9600 }, uRint: { value: 60.0 },
         uPix: { value: 0.001 }, uHoleAng: { value: 0.01 }, uStarGain: { value: 1 }, uSS: { value: engine.shotMode ? 4 : 1 },
         uHoleDir: { value: new THREE.Vector3(0, 0, 1) }, uCoreCol: { value: new THREE.Color(1.0, 0.72, 0.45) }, uRes: { value: new THREE.Vector2(1, 1) },
       },

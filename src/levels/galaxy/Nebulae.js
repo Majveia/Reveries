@@ -83,7 +83,11 @@ vec3 field(vec3 x){
   float gasF = nz(xw * 1.3 + SP).g;
   float gasW = nz(RT * xw * 3.1 + SP).b;
   // (ridged channel cubed: the Hα envelope breaks into filaments and sheets instead of a flat wash)
-  float gas = e * smoothstep(0.4, 0.62, gasN) * (0.15 + 1.6 * gasF * gasF) * (0.12 + 2.2 * gasW * gasW * gasW);
+  // sparse: most of the volume is transparent black, the gas lives in ridged filaments and sheets
+  // (a fine ridged octave splits the sheets into braided strands; voids stay OLED black)
+  float gasR = nz(RT * xw * 6.3 + SP * 0.9).b;
+  float gas = e * smoothstep(0.46, 0.7, gasN) * (0.03 + 1.9 * gasF * gasF * gasF) * (0.04 + 2.6 * gasW * gasW * gasW)
+            * (0.2 + 2.2 * pow(smoothstep(0.7, 0.97, gasR), 2.0));
   float dust = 0.0, skin = 0.0;
   if (uKind < 1.5) {
     float hg = cliffH(xw);
@@ -102,7 +106,7 @@ vec3 field(vec3 x){
     vec3 dS = normalize(STAR - x);
     float al = dot(xw, dS);
     float comb = nz(RT * ((xw - dS * al) * 22.0 + dS * al * 5.5) + SP).g;
-    skin = e * smoothstep(-0.004, 0.004, above) * (exp(-max(above, 0.0) / 0.006) * 2.2 + exp(-max(above, 0.0) / 0.035) * 0.22) * (0.2 + 1.5 * kn * kn) * (0.45 + 1.1 * comb);
+    skin = e * smoothstep(-0.004, 0.004, above) * (exp(-max(above, 0.0) / 0.008) * 2.6 + exp(-max(above, 0.0) / 0.035) * 0.18) * (0.2 + 1.5 * kn * kn) * (0.45 + 1.1 * comb);
     dust *= 0.75 + 0.5 * comb;
   } else if (uKind < 2.5) {
     vec3 sd = x - STAR; float rs = length(sd);
@@ -115,7 +119,7 @@ vec3 field(vec3 x){
     dust = dustF(x);
   }
   // hot, diffuse OIII-bright cavity carved by the cluster's winds and UV
-  if (uKind < 1.5) gas += e * e * smoothstep(0.95, 0.1, length(x - STAR)) * (0.15 + 1.3 * gasF * gasF) * smoothstep(0.0, 0.15, -cliffH(xw)) * 0.75;
+  if (uKind < 1.5) gas += e * e * smoothstep(0.95, 0.1, length(x - STAR)) * (0.04 + 1.6 * gasF * gasF * gasF) * smoothstep(0.0, 0.15, -cliffH(xw)) * 0.22;
   gas *= smoothstep(0.06, 0.3, length(x - STAR));   // ionized, cleared cavity right at the cluster
   return vec3(gas, dust, skin);
 }
@@ -137,7 +141,7 @@ void main(){
   float jit = fract(fract(sin(dot(fq, vec2(12.9898, 78.233))) * 43758.5453) + uFrameJ);
   vec3 col = vec3(0.0);
   float T = 1.0;
-  vec3 cHa = vec3(1.0, 0.09, 0.07), cOIII = vec3(0.05, 0.62, 1.0), cSII = vec3(1.0, 0.36, 0.08);
+  vec3 cHa = vec3(1.0, 0.14, 0.1), cOIII = vec3(0.12, 0.4, 1.0), cSII = vec3(1.0, 0.42, 0.12);   // JWST-like: cerulean cavity, amber dust light
   vec3 cStar = vec3(0.75, 0.85, 1.0);
   float stepU = dt / uRadius;
   vec3 rdl = rd; rdl.xz = rot(uRot) * rdl.xz;
@@ -162,7 +166,7 @@ void main(){
     vec3 toS = sd / max(rs, 1e-4);
     // short light march toward the cluster (dust only): shadows, rays, lit faces
     float occ = dustF(x + toS * 0.025) * 0.025 + dustF(x + toS * 0.07) * 0.045 + dustF(x + toS * 0.16) * 0.09 + dustF(x + toS * 0.32) * 0.16;
-    float tr = exp(-occ * 105.0);
+    float tr = exp(-occ * 170.0);   // (self-shadowed bodies: the far side of a pillar is truly dark)
     float I = tr / (0.25 + rs * rs * 2.5);
     float ion = smoothstep(0.9, 0.15, rs);
     // Henyey-Greenstein forward scattering (g = 0.6)
@@ -172,15 +176,15 @@ void main(){
     // colours stay separated (not averaged into lavender): OIII only deep in the hot cavity
     float ionC = smoothstep(0.5, 0.85, ion);
     vec3 gcol = mix(mix(cHa, cSII, 0.3), cOIII, ionC) * mix(1.0, 0.55, ionC * (1.0 - ionC) * 4.0);
-    vec3 e = gas * I * gcol * 0.55;
+    vec3 e = gas * I * gcol * 0.42;
     if (hitWall) {
       float limb = clamp(stepU * 1.2 / max(dHG, 1e-4), 1.0, 7.0);
       float wL = pow((limb - 1.0) / 6.0, 0.8);                    // silhouettes / skyline glow, faces stay modest
       float knR = nz(RT * x * 3.7 + SP * 0.7).b;
-      col += T * I * (0.03 + 0.8 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.9, 0.74), wL);
+      col += T * I * (0.03 + 1.5 * wL) * (0.5 + 1.0 * knR) * mix(vec3(1.0, 0.6, 0.38), vec3(1.0, 0.9, 0.74), wL);
     }
-    e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.55) * 14.0;               // ionization front
-    float sigD = dust * 130.0;   // (dense: pillars and cliffs read as solid bodies, not translucent sheets)
+    e += skin * I * mix(cSII, vec3(1.0, 0.86, 0.62), 0.6) * 20.0;               // ionization front
+    float sigD = dust * 280.0;   // (dense: pillars and cliffs read as solid bodies, not translucent sheets)
     // dust scatters starlight (albedo ~0.5, forward peaked): a lit cliff face reads as a surface
     e += sigD * I * vec3(1.0, 0.55, 0.26) * 0.12 * (0.25 + hg);
     e += sigD * vec3(0.9, 0.3, 0.16) * 0.0035 * (0.3 + ion);                      // Hα-reddened light on shadowed dust
@@ -278,7 +282,7 @@ export class Nebulae {
       const n = it.n;
       const rng = new Random(seedFrom(Math.floor(n.seed * 1000), 'neb-cluster', n.index));
       for (let k = 0; k < per; k++) {
-        const core = k < per * 0.18;
+        const core = k < per * 0.34;
         if (core) v.set(rng.gaussian(0, 0.05), 0.42 + rng.gaussian(0, 0.04), rng.gaussian(0, 0.05));
         else {
           // embedded stars fill the cleared cavity above the dust skyline
@@ -289,7 +293,7 @@ export class Nebulae {
         const hot = core || rng.chance(0.35);
         bbColor(hot ? rng.range(11000, 35000) : rng.range(3200, 7500), tmp);
         // Salpeter-like: dN/dL ∝ L^-2 → a handful of very bright stars get the diffraction spikes
-        const L = Math.min(4000, (core ? 6 : 0.6) * Math.pow(1 - rng.float() * 0.999, -1.15));
+        const L = Math.min(4000, (core ? 6 : 0.22) * Math.pow(1 - rng.float() * 0.999, -1.15));
         col.push(tmp[0] * 255, tmp[1] * 255, tmp[2] * 255, Math.max(0, Math.min(255, Math.round(Math.log2(L) * 16 + 128))));
       }
     }

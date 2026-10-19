@@ -329,7 +329,7 @@ export class PlanetLighting {
     {
       const dayK = this.sunVisible * THREE.MathUtils.smoothstep(sunElev, 0.03, 0.3) * (useMoon ? 0 : 1);
       const orbitK = THREE.MathUtils.smoothstep(alt, 18000, 70000);
-      this.level.scene.environmentIntensity = THREE.MathUtils.lerp(1 - 0.18 * dayK, 0.2, orbitK);
+      this.level.scene.environmentIntensity = THREE.MathUtils.lerp(1 - 0.15 * dayK, 0.2, orbitK);
     }
     // Hemisphere light: a fallback until the IBL exists, then off.
     const hemi = this.hemi;

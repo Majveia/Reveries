@@ -28,7 +28,9 @@ export function galaxyParams(g) {
     R, type: t, k, arms: g.arms, r0: R * 0.12, bar: g.bar, sf: g.starFormation, dust: g.dust,
     extent: R * 1.3,
     // vertical scale heights (kpc)
-    hOld: Math.max(0.2, thick * 0.9), hYoung: Math.max(0.09, thick * 0.38), hDust: Math.max(0.08, thick * 0.3),   // ~1/3 of the old disk: edge-on lane reads as a black slit (NGC 891)
+    // thin-disk scale heights capped relative to R (NGC 891: z0 ≈ 0.35 kpc at R ≈ 15 kpc), so seen
+    // edge-on the disk is a tapered luminous needle and the dust a razor slit (~0.4 of the young layer)
+    hOld: Math.min(Math.max(0.2, thick * 0.9), 0.026 * R), hYoung: Math.min(Math.max(0.09, thick * 0.38), 0.011 * R), hDust: Math.min(Math.max(0.08, thick * 0.3), 0.0062 * R),
     // bulge (flattened Gaussian mixture ≈ Sersic n~3 profile)
     bulgeQ: t === 2 ? 0.72 : t === 4 ? 0.6 : 0.62,
     bulgeScale: t === 2 ? R * 0.42 : R * (0.06 + g.bulge * 0.12) * (1 - 0.45 * Math.min(1, g.bar || 0)) * (t === 1 ? 0.62 : 1),
@@ -257,12 +259,12 @@ void main(){
     // leading-edge bar lanes: offset, curved (S-shaped through the centre), wandering in width,
     // fragmented into filaments, swinging out into the inner arm lanes at the bar ends
     float sx = sign(p.x), ax = abs(p.x) / a;
-    float lanePos = sx * (0.016 * uR + 0.035 * uR * ax * ax + 0.02 * uR * smoothstep(0.7, 1.6, ax) * ax)
+    float lanePos = sx * (0.024 * uR + 0.03 * uR * ax * ax + 0.02 * uR * smoothstep(0.7, 1.6, ax) * ax)
                   + 0.009 * uR * fbm2(vec2(p.x * 0.9, sx * 3.0), 3);
     float lw = 0.0045 * uR * (0.6 + 1.1 * max(0.0, fbm2(vec2(p.x * 0.7, sx * 7.0 + 2.0), 3) + 0.4));
     float ln = exp(-pow(p.y + lanePos, 2.0) / (2.0 * lw * lw));
     ln += 0.5 * exp(-pow(p.y + lanePos * 1.35, 2.0) / (2.0 * pow(lw * 0.6, 2.0))) * smoothstep(0.3, 0.9, ax);  // secondary strand
-    float along = smoothstep(0.015 * uR, 0.07 * uR, abs(p.x)) * (1.0 - smoothstep(1.3 * a, 2.3 * a, abs(p.x)));
+    float along = smoothstep(0.035 * uR, 0.1 * uR, abs(p.x)) * smoothstep(0.045 * uR, 0.08 * uR, r) * (1.0 - smoothstep(1.3 * a, 2.3 * a, abs(p.x)));
     float bfil = ridge2(vec2(p.x * 2.5, p.y * 6.0) + 21.0, 4);
     dust += ln * along * (0.12 + 2.2 * smoothstep(0.45, 0.72, bfil)) * 6.5;
     // dust spurs feathering off the lanes across the bar
@@ -270,7 +272,7 @@ void main(){
     // nuclear star-forming ring / mini spiral
     float nr = exp(-pow(r - 0.035 * uR, 2.0) / (2.0 * pow(0.008 * uR, 2.0)));
     young += nr * 1.5; hii += nr * smoothstep(0.3, 0.0, worley(q * 14.0).x) * 3.0;
-    dust += exp(-pow(r - 0.05 * uR, 2.0) / (2.0 * pow(0.01 * uR, 2.0))) * ridge2(q * 5.0, 3) * 1.2;
+    dust += exp(-pow(r - 0.05 * uR, 2.0) / (2.0 * pow(0.008 * uR, 2.0))) * pow(ridge2(q * 5.0, 3), 3.0) * 0.6;   // (wispy nuclear spiral: no slash through the nucleus)
   }
   // named emission nebulae: big HII complexes carved into the map
   for (int i = 0; i < 8; i++) {

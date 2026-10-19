@@ -253,13 +253,13 @@ export default class GalaxyLevel {
     // grazing views: the midplane lane must read as an opaque silhouette (NGC 891 / Sombrero)
     this.gu.uKappa.value *= 1 + 0.9 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.25)) * (1 - inside);
     // grazing views integrate the disk light along a long chord: keep the band luminous against the lane
-    this.volume.march.uniforms.uEmit.value *= 1 + 0.8 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.14)) * (1 - inside);
+    this.volume.march.uniforms.uEmit.value *= 1 + 0.35 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.14)) * (1 - inside);
     this.volume.scale = this.engine.shotMode && graze < 0.15 && camD > this.P.R * 0.5 ? 1.0 : this.volume.baseScale;
     // (a nebula in view carries the frame: the diffuse volume behind it drops resolution, keeping software renders in budget)
     if (this.nebulae.enabled) this.volume.scale = Math.min(this.volume.scale, this.engine.shotMode ? 0.5 : 0.45);
     this.volume.march.uniforms.uBulgeDim.value = THREE.MathUtils.lerp(0.05, 1, THREE.MathUtils.smoothstep(coreD, 0.002, 0.3)) * THREE.MathUtils.lerp(1, 0.3, this.volume.march.uniforms.uInside.value)
       // seen edge-on the bulge must stand above and below the lane as a compact luminous core
-      * (1 + 1.6 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
+      * (1 + 1.1 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
     this.volume.march.uniforms.uNucleus.value = 16 * (1 + 2.0 * (1 - THREE.MathUtils.smoothstep(graze, 0.04, 0.3)) * (1 - inside));
 
     // markers: visible within ~a kpc of the camera
@@ -359,7 +359,9 @@ export default class GalaxyLevel {
         // whole disk in frame (tapered needle ends) with a ~2° tilt: the lane crosses the bulge front (Sombrero / NGC 891)
         // longer lens, closer: the bulge sits on the left third and the disk tapers out of frame
         // (in the plane: the lane splits the bulge into two symmetric luminous halves, NGC 891 / Sombrero)
-        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.2), P.R * 1.5, 1.1, 0.006, 24);
+        // whole needle in frame: both tapered tips inside with ~10% margin; a ~1.3° tilt carries the
+        // slit across the bulge just below centre, so above and below are no longer mirror images
+        this._pose(new THREE.Vector3(Math.cos(1.1), 0, -Math.sin(1.1)).multiplyScalar(P.R * 0.04), P.R * 2.5, 1.1, 0.022, 26);
         this.engine.postfx?.setGrade?.({ exposure: 1.15 }, 0);
       },
       core: async () => { this._pose(new THREE.Vector3(0, 0, 0), this.blackHole.rs * 24, 2.2, 0.085); },

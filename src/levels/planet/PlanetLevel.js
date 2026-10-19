@@ -311,6 +311,7 @@ export default class PlanetLevel {
         if (gC) { const g = gC.clone().applyMatrix4(new THREE.Matrix4().makeRotationY(w.dayAngle || 0)); if (g.dot(up) > -0.05) fw = g; }
         fw.addScaledVector(up, -fw.dot(up)).normalize();
         if (this.floraClear) for (const [d, r] of [[-8, 9], [0, 10], [14, 15], [34, 24], [64, 34], [104, 46], [160, 60]]) this.floraClear(spot.position.clone().addScaledVector(fw, d), r);
+        this.flora?.heroGrove?.(spot.position, fw); // biolum worlds: glowing groves frame the sky
         const tgt = spot.position.clone().addScaledVector(up, 900).addScaledVector(fw, 600);
         if (!(await delegate('night', { ...spot, lookAt: tgt }))) free(spot.position.clone().addScaledVector(up, 1.7), tgt);
         else {
