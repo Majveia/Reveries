@@ -216,7 +216,7 @@ void main(){
   gl_Position = projectionMatrix * mv;
   // luminosity function: galaxies live in collapsed structures; a few are giants
   float u = float((hi >> 8) & 1023u) / 1023.0;
-  float thr = mix(0.14, 0.56, uEarly);   // field galaxies light sheets and thin filaments too (faintly)                       // early on, only the rarest peaks have lit up
+  float thr = mix(0.3, 0.56, uEarly);   // sparkle traces filaments and nodes, never the voids   // field galaxies light sheets and thin filaments too (faintly)                       // early on, only the rarest peaks have lit up
   // filament galaxies light up too (sharp HDR sparkle over the smooth web); a few are giants
   // log-normal-ish luminosity function over ~2 decades, weighted to dense matter (rho^1.3 importance)
   float u3 = u * u * u; float lum = smoothstep(thr, thr + 0.4, heat) * pow(10.0, 1.9 * u3 - 0.85) * (0.6 + 0.8 * smoothstep(0.5, 0.8, heat));
@@ -361,7 +361,7 @@ void main(){
   float haze = clamp(mix(env.g / max(env.a, 1e-12), acc.g / max(acc.a, 1e-12), sAcc), 0.0, 1.0);
   haze *= 1.0 - smoothstep(mix(0.6, 0.48, uEarly), mix(0.76, 0.66, uEarly), hm);
   float knC = smoothstep(0.5, 0.85, hmE * uHeatK);
-  vec3 C = mix(webPalette(hm), earlyPalette(mix(min(hm, 0.62), hm, knC * knC)), uEarly);
+  vec3 C = mix(webPalette(hm), earlyPalette(mix(min(hm, 0.62), hm, knC * knC * knC * knC)), uEarly);
   float lum = dot(C, vec3(0.2126, 0.7152, 0.0722));
   // aerial perspective: distant structure cools toward a dim violet veil (not toward black)
   C = mix(C, mix(vec3(0.24, 0.10, 0.66), vec3(0.08, 0.10, 0.50), uEarly) * (lum * 0.85 + 0.03), haze * 0.75);
@@ -377,7 +377,7 @@ void main(){
   // knot's edge and printed flat stickers)
   float kn = smoothstep(0.5, 0.85, hmE * uHeatK);
   float Il = uGain * 2.2 * cov * pow(smoothstep(0.15, 0.42, hm), uLatticeK) * (1.0 - 0.7 * kn)
-            + uGain * 1.5 * cov * kn * kn * kn * (0.6 + 0.4 * log(1.0 + A / (uA0 * 8.0)))
+            + uGain * 0.85 * (Ae / (Ae + uA0 * 0.6)) * kn * kn * kn * (0.6 + 0.4 * log(1.0 + Ae / (uA0 * 8.0)))
             + uDetail * detail * 0.6 * (1.0 - 0.75 * kn);
   I = mix(I, Il, uEarly * uEarlyLattice);
   // optical-depth soft cap: a filament seen end-on integrates its whole length — it stays a bright
