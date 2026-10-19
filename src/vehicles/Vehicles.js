@@ -693,14 +693,14 @@ export default class Vehicles {
       // dramatic low chase off the rear quarter, high enough that grass never sits between lens and bike;
       // tilted down so the horizon sits on the upper third and the bike on a lower-third power point
       const side = sp.side ?? (() => {
-        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.6 * sg, 1.7, -7.4), target: new THREE.Vector3(-1.2 * sg, 1.2, 25) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
+        const tryS = (sg) => { this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-1.4 * sg, 0.85, -5.2), target: new THREE.Vector3(-1.2 * sg, 0.9, 25) }; this._updateShotCam(); return this._segBlocked(this.level.freeCam.position, bike.position.clone().addScaledVector(bike.position.clone().normalize(), 1), 0.3) + this._segBlocked(this.level.freeCam.position, this.level.freeCam.target, 0.2) * 0.5 + this._treeDensity(this.level.freeCam.position.clone().normalize()) * 4; };
         return tryS(1) <= tryS(-1) ? 1 : -1;
       })();
       // the boost FOV kick (+14 live) is half-applied: wide enough to feel fast, not fish-eyed
-      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 2.0) * side, sp.by ?? 1.3, -(sp.bz ?? 6.2)), target: new THREE.Vector3(-(sp.tx ?? -0.6) * side, sp.ty ?? 0.6, 25), fov: sp.fov ?? 52, minClear: 0.8, bankRoll: 0.22, streaks: sp.streaks ?? 0.12 };
+      this.shotCam = { vehicle: bike, offset: new THREE.Vector3(-(sp.bx ?? 1.45) * side, sp.by ?? 0.85, -(sp.bz ?? 5.0)), target: new THREE.Vector3(-(sp.tx ?? -0.5) * side, sp.ty ?? 0.75, 25), fov: sp.fov ?? 58, minClear: 0.6, bankRoll: 0.22, streaks: sp.streaks ?? 0.08 };
       bike._holdForShot = true;
       this.shotGlide = true;
-      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.6, motionBlurNear: 10.5 }, 0);
+      this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.3, motionBlurNear: 6 }, 0);
       // the rider's cloth was not stepped during the scripted run: make it re-settle at the seat
       // (otherwise its interpolated anchors stretch it back along the 60 m path → a 'pole' in frame)
       const S = this.level.player?.scarf;
@@ -754,6 +754,18 @@ export default class Vehicles {
       // humid sunset air: thin warm-lit vortex corkscrews peel off the wingtips
       this.forceVortex = sp.vortex ?? 0.6;
       this._simulate(150);
+      if (!wetRun && sp.alt == null) {
+        // the autopilot climbs lazily: lift the hull clear of every crest within ~60 m, level the flight path
+        const up0 = ship.position.clone().normalize(), t0 = this._tangentTo(up0, up0.clone().add(new THREE.Vector3(0.3, 0.7, 0.1)));
+        let top = -Infinity;
+        for (const rr of [0, 25, 50, 70]) for (let k = 0; k < (rr ? 10 : 1); k++) {
+          const q = up0.clone().addScaledVector(t0.clone().applyAxisAngle(up0, k * 0.6283), rr / w.radius).normalize();
+          top = Math.max(top, w.radius + w.heightAt(q));
+        }
+        const want = top + Math.max(10, alt * 0.55);
+        if (ship.position.length() < want) ship.position.setLength(want);
+        ship.velocity.addScaledVector(up0, -ship.velocity.dot(up0));
+      }
       // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
       const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
       fw.addScaledVector(upS, -fw.dot(upS)).normalize();

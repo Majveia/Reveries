@@ -365,6 +365,9 @@ export class Ship {
     const sp = this.space;
     this.flames.forEach((f, i) => {
       f.set(i ? thr * 0.85 : thr, this.boost, t + i * 3.1);
+      // vacuum: no ambient pressure to confine a long plume — a short, wide, hot exhaust bloom
+      // (not a lightsaber beam running out of frame); the full flame returns with the air
+      if (sp > 0.01) { const sc = f.mesh.scale; sc.z *= 1 - 0.68 * sp; sc.x *= 1 + 0.3 * sp; sc.y *= 1 + 0.3 * sp; }
       // dense air: hot orange afterburner; vacuum: blue ion plume
       if (i === 0) { f.uniforms.uCore.value.copy(this._coreA).lerp(this._coreS, sp); f.uniforms.uEdge.value.copy(this._edgeA).lerp(this._edgeS, sp); }
     });

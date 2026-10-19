@@ -27,7 +27,7 @@ const mesh = (geo, mat, shadow = true) => {
 export function buildShip(M, { seed = 1, livery = 0 } = {}) {
   const rng = new Random(seed);
   const L = [
-    { red: '#c3161f', dark: '#1d1f24', light: '#e6cfbb', trim: '#c9a35a' }, // luminous Swordfish red; peach-cream (stays cream under ACES, never lime)
+    { red: '#b8121a', dark: '#1d1f24', light: '#e6cfbb', trim: '#c9a35a' }, // luminous Swordfish red; peach-cream (stays cream under ACES, never lime)
     { red: '#1d5d8f', dark: '#22252a', light: '#e2ddd0', trim: '#d08a3a' },
     { red: '#d9d4c8', dark: '#2b2d31', light: '#a3121a', trim: '#5b6066' },
   ][livery % 3];
@@ -168,7 +168,7 @@ export function buildShip(M, { seed = 1, livery = 0 } = {}) {
     if (s < 0) tail.scale(-1, 1, 1);
     tail.translate(0.42 * s, 0.68, 0);
     const t2 = s < 0 ? flipWinding(tail) : tail;
-    paint.push(finish(t2, (x, y, z, nx, ny, nz, o) => o.copy(y > 1.85 ? LIGHT : y > 1.75 ? DARK : RED), 0.5));
+    paint.push(finish(t2, (x, y, z, nx, ny, nz, o) => o.copy(y > 2.0 ? LIGHT : y > 1.92 ? DARK : RED), 0.5));
   }
   const vent = plate([[0, -3.0], [0, -4.7], [0.75, -4.95], [0.7, -4.4]], 0.07, 0.025);
   vent.rotateZ(-Math.PI / 2); vent.translate(0, -0.6, 0);

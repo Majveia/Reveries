@@ -494,13 +494,10 @@ const FRAG_SURFACE = /* glsl */`
     // ~12 cm wind ripples; a 1 m phase warp makes them bifurcate (Y-junctions)
     vec4 wf = octW( 1.0 / 8.0, pix ) > 0.0 ? nA( D.yzx + 7.0, 1.0 / 8.0 ) : vec4( 0.0 );
     vec4 wl4 = nA( D.zxy + 13.0, 1.0 / 32.0 );
-    // constant wavelengths: dividing the (km-sized) detail coordinate by a spatially
-    // varying wavelength turned the noise's iso-lines into closed 'contour rings';
-    // patchy coarseness now comes from an additive phase term instead
-    float lam = 0.3;
-    float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + wl4.w * 3.0 + dot( D, wb ) * 0.2;
+    float lam = 0.3 * ( 1.0 + 0.45 * wl4.w );   // 16–45 cm ripples, coarser in patches
+    float ph1 = dot( D, wt ) / lam + wq.w * 2.5 + wf.w * 1.6 + dot( D, wb ) * 0.2;
     vec4 wq2 = nA( D.zxy + 5.0, 1.0 / 64.0 );
-    float lam2 = 1.6;
+    float lam2 = 1.6 * ( 1.0 + 0.35 * wl4.w );
     float ph2 = dot( D, wt ) / lam2 + wq.w * 2.6 + wq2.w * 4.5 + dot( D, wb ) * ( 0.05 + 0.12 * wq2.w );
     float f1 = fract( ph1 ), f2 = fract( ph2 );
     // band-limit softly: ripples stay as shading bands well into the mid field
@@ -526,7 +523,7 @@ const FRAG_SURFACE = /* glsl */`
     // never read as flat planes; troughs gather darker heavy-mineral lag
     {
       vec4 wq3 = nA( D.yzx - 9.0, 1.0 / 128.0 );
-      float lam3 = 7.5;
+      float lam3 = 7.5 * ( 1.0 + 0.4 * wq3.w );
       float ph3 = dot( D, wt ) / lam3 + wq2.w * 0.7 + wq3.w * 0.9 + dot( D, wb ) * 0.03 * wq3.w; // gentle bends: strong warps closed the crests into onion rings
       float f3 = fract( ph3 );
       float bl3 = 1.0 - smoothstep( 0.2, 0.6, fwidth( ph3 ) );

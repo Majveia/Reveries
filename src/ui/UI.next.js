@@ -847,7 +847,7 @@ export class UI {
     // after ~6 s the free-cursor hint quiets to icon + keycaps (no words, no pill)
     if (lock === 'free') {
       this._freeAt ||= performance.now();
-      const compact = this.engine.shotMode || performance.now() - this._freeAt > 6000;
+      const compact = !this.engine.shotMode && performance.now() - this._freeAt > 6000;
       if (compact !== this._lockCompact) { this._lockCompact = compact; this.lockEl.classList.toggle('is-compact', compact); }
     } else this._freeAt = 0;
     // game modes: the breadcrumb settles to the current place after a few seconds
@@ -965,6 +965,7 @@ export class UI {
     let total = 0;
     for (const row of rows) { row.off = total; total += row.w * 4; }
     const buf = this._lbuf && this._lbuf.length >= total ? this._lbuf : (this._lbuf = new Uint8Array(Math.max(4096, total)));
+    if (!total) { this._applyLuma(jobs, buf, true); return; } // nothing visible: no readback (a 0-length copy means "whole buffer")
     try {
       try { R.setRenderTarget(null); } catch { /* ignore */ }
       if (async) {
@@ -999,7 +1000,7 @@ export class UI {
     const buf = this._lbuf && this._lbuf.length >= P.total ? this._lbuf : (this._lbuf = new Uint8Array(Math.max(4096, P.total)));
     try {
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, P.buf);
-      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf, 0, P.total);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, buf, 0, Math.min(P.total, P.size));
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     } catch { try { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); } catch { /* ignore */ } this._pbo = null; return; }
     this._applyLuma(P.jobs, buf, !!this.engine.shotMode);
