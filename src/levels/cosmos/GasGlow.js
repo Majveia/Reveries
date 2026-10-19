@@ -10,7 +10,7 @@ import { FULLSCREEN_VERT, COLOR_GLSL } from '../../core/glsl/common.js';
 
 const MARCH_FRAG = /* glsl */ `
 uniform sampler2D tForce; uniform float uL; uniform vec3 uCenter; uniform float uRadius;
-uniform mat4 uProjInv; uniform mat4 uViewInv; uniform vec3 uCam; uniform float uStrength; uniform float uThresh;
+uniform mat4 uProjInv; uniform mat4 uViewInv; uniform vec3 uCam; uniform float uStrength; uniform float uThresh; uniform float uNear;
 uniform vec2 uRes; uniform float uFrame; uniform float uFog; uniform float uFogNear;
 varying vec2 vUv;
 ${COLOR_GLSL}
@@ -50,7 +50,7 @@ void main(){
       float tr = exp(-max(t - uFogNear, 0.0) / uFog);
       vec3 col = mix(vec3(0.16, 0.05, 0.62), vec3(0.12, 0.50, 1.0), smoothstep(5.0, 14.0, rho) * (0.4 + 0.6 * tr));
       col = mix(col, vec3(1.2, 0.62, 0.32), 0.45 * smoothstep(20.0, 120.0, rho));
-      acc += col * e * edge * tr;
+      acc += col * e * edge * tr * smoothstep(0.3 * uNear, uNear, t);   // no glow ball around a halo beside the camera
     }
     t += dt;
   }
@@ -85,7 +85,7 @@ export class GasGlow {
       uniforms: {
         tForce: { value: sim.force.texture }, uL: { value: sim.L }, uCenter: { value: this.center }, uRadius: { value: this.radius },
         uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
-        uStrength: { value: 1 }, uThresh: { value: 1.6 }, uRes: { value: new THREE.Vector2() }, uFrame: { value: 0 }, uFog: { value: 1e6 }, uFogNear: { value: 0 },
+        uStrength: { value: 1 }, uThresh: { value: 1.6 }, uNear: { value: 10 }, uRes: { value: new THREE.Vector2() }, uFrame: { value: 0 }, uFog: { value: 1e6 }, uFogNear: { value: 0 },
       },
       depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
@@ -105,7 +105,7 @@ export class GasGlow {
     const u = this.marchMat.uniforms;
     u.tForce.value = this.sim.force.texture;
     u.uProjInv.value.copy(ctx.projInv); u.uViewInv.value.copy(ctx.viewInv); u.uCam.value.copy(ctx.cameraPosition);
-    u.uStrength.value = this.strength; u.uThresh.value = this.thresh; u.uRadius.value = this.radius; u.uFog.value = this.fog; u.uFogNear.value = this.fogNear;
+    u.uStrength.value = this.strength; u.uThresh.value = this.thresh; u.uNear.value = this.near ?? 10; u.uRadius.value = this.radius; u.uFog.value = this.fog; u.uFogNear.value = this.fogNear;
     u.uRes.value.set(w, h); u.uFrame.value = (this.frame++) % 64;
     ctx.fullscreen(this.marchMat, this.rt);
     this.addMat.uniforms.tInput.value = input; this.addMat.uniforms.tGlow.value = this.rt.texture;

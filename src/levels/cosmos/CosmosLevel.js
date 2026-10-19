@@ -318,7 +318,7 @@ export default class CosmosLevel {
     this.glow.center.copy(this.center);
     this.glow.enabled = this.mode !== 'early'; // the glow samples the live mesh, not the z≈5 snapshot
     this.glow.fog = p.fog; this.glow.fogNear = p.fogNear;
-    this.glow.thresh = p.glowThresh ?? 6;
+    this.glow.thresh = p.glowThresh ?? 6; this.glow.near = p.near;
     this.glow.strength = (p.glow ?? 0.02) * (1 - p.warm) * (1 - 0.6 * p.early) * (1 - 0.6 * inside);   // thresholded: voids stay black
 
     // flash of the Big Bang
@@ -494,7 +494,7 @@ export default class CosmosLevel {
         // instead of the whole box projecting into islands; a gentle toe keeps its low contrast
         this.mode = 'early';
         const o = this._dbg || {};
-        this._shotP = { floor: 0.05, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 2.6, galaxies: 0.5, lights: 0, veil: 0.2, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 1.2, heatK: 1.2, hi: 0.0, cap: 0.6, gain: 0.6, fog: 22 };
+        this._shotP = { floor: 0.3, a0: 30, toe: 1.35, sharpA: 3.0, smooth: 2.6, galaxies: 0.06, lights: 0, veil: 0.2, lattice: 1, latticeK: 1.2, envK: 0.1, detail: 1.2, heatK: 1.2, hi: 0.0, cap: 0.8, gain: 0.7, fog: 22 };
         this._pose(this.home, this._heroOffset((o.ed ?? 0.22) * this.L, HERO.yaw + 0.4, o.ep ?? 0.42), o.ef ?? 46, 0.0, 0);
       },
       // look-dev: the Big Bang at an intermediate epoch ("bang~a:0.05+d:40"); destroys the z=0 state, render last
@@ -510,7 +510,7 @@ export default class CosmosLevel {
       node: async () => {
         // far enough that particle resolution never shows: the cluster's luminous gold heart (BCG +
         // ICL + members) with the cyan filaments that feed it converging from every side
-        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.14, a0: 110, cap: 0.8, envK: 0.12 };
+        this.mode = 'live'; this._shotP = { gain: 0.24, hi: 0.17, a0: 110, cap: 0.92, envK: 0.12, hiPow: 1.2 };
         const o = this._dbg || {};
         this._pose(this.home, this._heroOffset(o.nd ?? 70, HERO.yaw + (o.ny ?? 2.2), 0.22), o.nf ?? 40, o.ns ?? -0.16, 0.04);
       },
@@ -518,7 +518,7 @@ export default class CosmosLevel {
       // it — the filament runs from the frame edge to its vanishing point at the far node
       web: async () => {
         this.mode = 'live';
-        this._shotP = { near: 16, clampK: 2.5, gain: 0.18, cap: 0.55, heatK: 0.9, hi: 0.06, lights: 0.3, opt: 0.7 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
+        this._shotP = { near: 16, clampK: 2.5, gain: 0.18, cap: 0.7, heatK: 0.9, hi: 0.06, lights: 0.3, opt: 1.4 };   // looking down a filament integrates its whole length: lower gain, fade the near field harder
         const o = this._dbg || {};
         const { A, d } = this._filamentPair();
         const B = A.clone().add(d);
