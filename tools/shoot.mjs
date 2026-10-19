@@ -21,6 +21,9 @@
 //   --eval "js"                            run JS in page after ready (before shots)
 //   --timeout SEC                          max wait for ready (default 300)
 //   --extra "k=v&k2=v2"                    extra URL params
+//   --port N                               dev server port (default 5173)
+//   --root DIR                             source tree a server auto-started on --port
+//                                          serves (e.g. a git worktree of an older version)
 //
 // Uses one shared Vite dev server on :5173 (auto-started) and a global lock so
 // parallel agents queue for the (CPU-bound) software renderer.
@@ -43,7 +46,9 @@ for (let i = 0; i < argv.length; i++) {
     args[k] = v;
   }
 }
-const PORT = 5173;
+const PORT = parseInt(args.port || '5173', 10);
+const SRC_ROOT = args.root ? path.resolve(args.root) : ROOT;
+const VITE_TAG = PORT === 5173 ? '' : '-' + PORT;
 const BASE = `http://localhost:${PORT}/`;
 const LOCK = '/tmp/reveries-shoot.lock';
 // Google Fonts: headless Chromium's font fetches fail behind the sandbox proxy
@@ -75,17 +80,17 @@ async function serverUp() {
 
 async function ensureServer() {
   if (await serverUp()) return;
-  const lock = '/tmp/reveries-vite.lock';
+  const lock = `/tmp/reveries-vite${VITE_TAG}.lock`;
   let owner = false;
   try { fs.mkdirSync(lock); owner = true; } catch { /* someone else is starting it */ }
   if (owner) {
-    const log = fs.openSync('/tmp/reveries-vite.log', 'a');
-    const child = spawn(process.execPath, [path.join(ROOT, 'node_modules/vite/bin/vite.js'), '--host', '0.0.0.0', '--port', String(PORT), '--strictPort'], { cwd: ROOT, detached: true, stdio: ['ignore', log, log] });
+    const log = fs.openSync(`/tmp/reveries-vite${VITE_TAG}.log`, 'a');
+    const child = spawn(process.execPath, [path.join(ROOT, 'node_modules/vite/bin/vite.js'), '--host', '0.0.0.0', '--port', String(PORT), '--strictPort'], { cwd: SRC_ROOT, detached: true, stdio: ['ignore', log, log] });
     child.unref();
   }
   for (let i = 0; i < 120; i++) { if (await serverUp()) break; await sleep(500); }
   if (owner) try { fs.rmdirSync(lock); } catch { /* ignore */ }
-  if (!(await serverUp())) throw new Error('Vite dev server did not start (see /tmp/reveries-vite.log)');
+  if (!(await serverUp())) throw new Error(`Vite dev server did not start (see /tmp/reveries-vite${VITE_TAG}.log)`);
 }
 
 async function acquire() {
