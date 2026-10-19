@@ -114,13 +114,20 @@ vec4 projectedLayer(vec3 ro, vec3 rd, float sceneDist, out float dOut){
   float cosV = dot(rd, uKeyDir);
   float thick = 1.0 - exp(-tau * 0.5);
   float dayK = smoothstep(-0.12, 0.2, muS);
-  // thick decks: bright multiple-scattering reflectance (sun-facing tops near-white);
+  // slab reflectance (two-stream, g≈0.85): R = τ(1-g) / (2 + τ(1-g)). Brightness now
+  // follows optical thickness: thin margins are dim, translucent grey veils over the
+  // surface, only the deep cores of the systems build up to brilliant white — graded
+  // bodies with internal structure instead of uniform white decals that read as snow.
+  // (×alpha below: the margins keep a quadratic toe, the cores keep brightening after the
+  // opacity has saturated → a strong mid-to-core gradient)
+  float tauR = tau * 3.0;
+  float Rs = tauR * 0.15 / (2.0 + tauR * 0.15);
+  float refl = max(muS, 0.0) * 1.05 * Rs * selfSh * topK + 0.035 * dayK * Rs;
   // thin veils: forward lobe (silver margins toward the sun)
-  float refl = max(muS, 0.0) * 0.5 * thick * selfSh * topK + 0.04 * dayK * thick;
   float fwd = hg(cosV, 0.65) * 0.5 * (1.0 - thick) * dayK;
   vec3 Ld = uKeyE * Tl * (refl + fwd);
   // ambient: zenith sky + a cool skylight floor in the self-shadowed flanks
-  vec3 Sa = (cloudSkyAmb(n, r) + uNightAmb) * PI * (0.32 + 0.22 * hMean) * (0.7 + 0.3 * selfSh);
+  vec3 Sa = (cloudSkyAmb(n, r) + uNightAmb) * PI * (0.32 + 0.22 * hMean) * (0.7 + 0.3 * selfSh) * (0.45 + 0.55 * Rs / 0.75);
   vec3 col = (Ld + Sa) * uCloudAlbedo * (1.0 - 0.3 * wx.b);
   vec2 ta = raySphere(ro, rd, uRt);
   float a0 = max(ta.x, 0.0);

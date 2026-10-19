@@ -246,11 +246,13 @@ export function floatingIsland(ctx, x, z, alt, R) {
     const a = ca + rng.range(-0.35, 0.35), r0 = Math.max(R * 0.05, cr * rng.range(0.7, 1.3));
     const tProf = Math.pow(Math.min(1, r0 / (R * 1.03)), 1 / 0.66) * 0.9;
     const ytop = -depth * Math.pow(1 - tProf, 1.15) - 3 + 4;
-    const len = (rng.chance(0.2) ? rng.range(60, 120) : rng.range(8, 40)) * (1.2 - r0 / R * 0.6);
-    const sw = rng.range(2, 9), ph = rng.range(0, TAU);
+    const len = (rng.chance(0.12) ? rng.range(45, 85) : rng.range(8, 34)) * (1.2 - r0 / R * 0.6);
+    // long roots coil and wander (a dead-straight dark line reads as a cable, not a root)
+    const sw = rng.range(3, 9) + len * 0.12, ph = rng.range(0, TAU);
     const pts = [];
-    for (let i = 0; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector3(Math.cos(a) * r0 + Math.sin(t * 3 + ph) * sw * t, ytop - len * t, Math.sin(a) * r0 + Math.cos(t * 2.4 + ph) * sw * t)); }
-    const rad = rng.range(0.5, 1.8) * (len > 60 ? 1.3 : 0.8);
+    for (let i = 0; i <= 14; i++) { const t = i / 14; pts.push(new THREE.Vector3(Math.cos(a) * r0 + (Math.sin(t * 4.2 + ph) * 0.7 + Math.sin(t * 9.1 + ph * 2) * 0.3) * sw * t, ytop - len * t * (1 - 0.08 * Math.sin(t * 6 + ph)), Math.sin(a) * r0 + (Math.cos(t * 3.4 + ph) * 0.7 + Math.cos(t * 8.3 + ph) * 0.3) * sw * t)); }
+    B.color(rng.pick([col('#4a3a2c'), col('#57502f'), col('#3e4a2a'), col('#5b4632')]));
+    const rad = rng.range(0.6, 1.8) * (len > 45 ? 1.5 : 0.85);
     B.tube(pts, (t) => rad * Math.pow(1 - t, 0.7) + 0.06, 7);
     if (rng.chance(0.65)) {
       const s0 = rng.int(2, 5);

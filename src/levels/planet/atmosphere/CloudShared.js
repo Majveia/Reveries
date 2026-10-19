@@ -249,6 +249,10 @@ float cloudLayer2D(vec3 P, vec3 wx){
   float cov = wx.r;
   if (cov < 0.015) return 0.0;
   vec3 q = normalize(P) * uCloudBase;
+  // low-frequency domain warp: the fields shear into swirls, comma heads and streets that
+  // follow the flow (seen from orbit), instead of isotropic blobs that read as snow patches
+  vec4 wv = cTex3D(tCloudShape, q * (uCloudShapeScale * 0.09) + 0.71, uCloud3DInfo.x);
+  q += (wv.gba - 0.5) * (0.65 / (uCloudShapeScale * 0.35));
   vec4 a = cTex3D(tCloudShape, q * (uCloudShapeScale * 0.35) + uCloudWind * 0.35, uCloud3DInfo.x);
   vec4 b = cTex3D(tCloudShape, cRotA * q * (uCloudShapeScale * 1.1) + uCloudWind * 1.1 + 0.37, uCloud3DInfo.x);
   vec3 dn = cTex3D(tCloudDetail, cRotA * q * (uCloudDetailScale * 0.5) + uCloudWind * 2.0, uCloud3DInfo.y).rgb;
@@ -287,8 +291,10 @@ float cloudShadow(vec3 P, vec3 L){
   vec3 wx = cloudWeather(Q);
   if (wx.r < 0.02) return 1.0;
   if (uCloudFlat > 0.5) {
+    // from orbit: soft, cool-grey shadows (~30% at most) so the deck sits on the surface,
+    // never navy drop-shadow decals beside each cloud
     float c2 = cloudLayer2D(Q, wx);
-    return mix(1.0, exp(-c2 * 2.2), 0.6);
+    return mix(1.0, exp(-c2 * 1.6), 0.36);
   }
   float d0 = cloudDensityW(Q, wx, 1.0);
   vec3 Q2 = P + L * (t + (uCloudTop - uCloudBase) * 0.35);

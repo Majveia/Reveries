@@ -309,9 +309,11 @@ void main(){
     }
     vec3 stars = vec3(0.0);
     // band density: faint stars crowd into the Milky Way, sparse elsewhere
-    float dens = smoothstep(0.0, 1.0, gl * 90.0);
-    stars += starLayer(dc, 70.0, 1.0, 0.16 + 0.12 * dens, 0.004, 12.0, uStarCut);                         // naked-eye stars, wide magnitude range
-    stars += starLayer(dc, 190.0, 7.0, 0.002 + 0.6 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
+    // (keyed to the band itself — the old gl*90 saturated over the whole diffuse disk, so
+    // ~60k faint stars covered every direction evenly: TV static instead of a river)
+    float dens = smoothstep(0.008, 0.05, gd) * (0.2 + 0.8 * bandM);
+    stars += starLayer(dc, 70.0, 1.0, 0.075 + 0.08 * dens, 0.004, 16.0, uStarCut);                         // naked-eye stars: a few dozen brilliant anchors per hemisphere
+    stars += starLayer(dc, 190.0, 7.0, 0.0012 + 0.5 * dens * dens, 0.0028, 0.14, uStarCut * 0.6);  // faint field, crowded into the band
     if (dens > 0.05) stars += starLayer(dc, 420.0, 13.0, 0.55 * dens, 0.0018, 0.05, uStarCut * 0.4); // band grain: the river is made of stars
     // scintillation near the horizon
     vec3 up = normalize(uCamPos);

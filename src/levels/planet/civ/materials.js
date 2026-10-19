@@ -287,7 +287,16 @@ void civWindows(inout CivS s, vec2 uv, vec2 fw, float fwm, vec3 wall){
     a = mix(a, mix(paper, wood * 0.9, lat), panel);
     a = mix(a, wood * 0.7, dado * 0.6);
     s.alb = a;
-    s.emit += vec3(1.0, 0.62, 0.3) * panel * (1.0 - lat) * lit * uCivWinI * 0.55 * mix(1.0, 0.7, far) * (0.7 + 0.3 * smoothstep(y0, y1, uv.y));
+    // each paper bay its own interior: lamp temperature (~2200-3600 K), brightness, the soft hotspot
+    // of a lamp behind the paper, and now and then a figure or a screen in silhouette
+    float r2 = civH12(vec2(bi * 3.1 + 7.0, seed * 11.0 + W));
+    vec3 warm = mix(vec3(1.0, 0.46, 0.17), vec3(1.0, 0.74, 0.47), r2);
+    float inten = 0.5 + 0.9 * fract(r2 * 7.3);
+    vec2 lpp = vec2(cx - (fract(r2 * 3.7) - 0.5) * Bw * 0.5, uv.y - (y0 + (y1 - y0) * 0.3));
+    float spot = exp(-dot(lpp, lpp) / (0.4 + Bw * 0.35));
+    float sil = step(0.62, fract(r2 * 19.0)) * civBox(vec2(cx - (fract(r2 * 5.1) - 0.5) * Bw * 0.6, uv.y - y0 - 0.85), vec2(0.2, 0.85), fw);
+    float pe = (0.4 + 1.1 * spot) * inten * (1.0 - 0.8 * sil);
+    s.emit += warm * panel * (1.0 - lat) * lit * uCivWinI * 0.6 * mix(pe, 0.7, far) * (0.7 + 0.3 * smoothstep(y0, y1, uv.y));
     s.h += (panel * (lat - 1.0) * 0.02 - dado * 0.01) * (1.0 - far);
     s.rough = mix(s.rough, 0.8, panel);
   } else if (st == 4) {
@@ -300,13 +309,14 @@ void civWindows(inout CivS s, vec2 uv, vec2 fw, float fwm, vec3 wall){
     float r1 = civH13(vec3(bi, fi, seed * 53.0));
     float has = step(r1, 0.62);
     float sw = 0.16 + 0.1 * fract(seed * 17.0);
-    float sl = civBox(c - vec2(0.0, Fh * 0.5), vec2(sw, Fh * 0.38), fw) * has;
+    float sl = civBox(c - vec2(0.0, Fh * 0.5), vec2(sw, Fh * (0.2 + 0.2 * fract(r1 * 5.3))), fw) * has; // staggered slit lengths
     float band = civLines(uv.y + 0.2, Fh, 0.18, fw.y) * 0.6;
     float far = smoothstep(0.08, 0.3, fwm);
     float lit = step(fract(r1 * 13.7), litP * 0.75) * has;
     s.alb = mix(s.alb, s.alb * 0.45, band);
     s.alb = mix(s.alb, vec3(0.02), sl);
-    s.emit += vec3(1.0, 0.55, 0.22) * mix(sl * lit * 1.4, (2.0 * sw * Fh * 0.76) / (Bw * Fh) * 0.62 * litP * 0.75 * 1.4, far) * uCivWinI;
+    vec3 slc = mix(vec3(1.0, 0.48, 0.16), vec3(1.0, 0.7, 0.42), fract(r1 * 29.0));
+    s.emit += slc * mix(sl * lit * (1.4 + 1.6 * fract(r1 * 41.0)), (2.0 * sw * Fh * 0.6) / (Bw * Fh) * 0.62 * litP * 0.75 * 2.1, far) * uCivWinI;
     s.h += (-sl * 0.25 - band * 0.06) * (1.0 - far);
     s.ao *= 1.0 - 0.4 * sl;
   } else if (st == 5) {

@@ -303,7 +303,7 @@ export default class CosmosLevel {
     // violet sheets survive and no hard iso-contour edges appear)
     p.veilFloor = 0.4 + 0.75 * inside;
     p.floor = 0.5 + 0.45 * inside;
-    p.envK = 0.12; p.detail = 2.6; p.latticeK = 1.6; p.veil = 0.3; p.toe = 1.7; p.heatK = 1;
+    p.envK = 0.12; p.detail = 2.6; p.latticeK = 1.6; p.veil = 0.14; p.toe = 1.7; p.heatK = 1;
     // the young universe is smooth: integrate its tracers over a wider kernel (no speckle)
     p.smooth = 3.2 * (1 + 0.25 * p.early); p.sharpA = 2.6 + 1.5 * p.early;
     p.dim = 1; p.lights = 1;

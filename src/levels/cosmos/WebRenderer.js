@@ -17,19 +17,19 @@ vec3 webPalette(float h){
   vec3 c0 = vec3(0.003, 0.002, 0.008);   // void
   vec3 c1 = vec3(0.050, 0.016, 0.120);   // faint sheet: plum-indigo
   vec3 c2 = vec3(0.230, 0.110, 0.520);   // violet sheet / thin filament
-  vec3 c3 = vec3(0.200, 0.320, 0.860);   // periwinkle filament skirt
-  vec3 c4 = vec3(0.380, 0.760, 0.950);   // cyan filament spine
-  vec3 c45 = vec3(0.880, 0.920, 0.940);  // near-white crossover (where filaments feed a node)
-  vec3 c5 = vec3(1.650, 0.980, 0.420);   // gold group
+  vec3 c3 = vec3(0.130, 0.220, 0.640);   // dim indigo-blue filament skirt (recedes; spines carry the light)
+  vec3 c4 = vec3(0.300, 0.800, 0.980);   // electric cyan filament spine
+  vec3 c45 = vec3(0.860, 0.930, 0.950);  // near-white crossover (where filaments feed a node)
+  vec3 c5 = vec3(1.700, 0.880, 0.300);   // gold-amber group
   vec3 c6 = vec3(3.000, 2.300, 1.450);   // white-gold cluster core (HDR: blooms)
   h = clamp(h, 0.0, 1.2);
   if (h < 0.18) return mix(c0, c1, h / 0.18);
   if (h < 0.42) return mix(c1, c2, (h - 0.18) / 0.24);   // a wide violet veil band
-  if (h < 0.50) return mix(c2, c3, (h - 0.42) / 0.08);
-  if (h < 0.58) return mix(c3, c4, (h - 0.50) / 0.08);
-  if (h < 0.66) return mix(c4, c45, smoothstep(0.60, 0.66, h));
-  if (h < 0.74) return mix(c45, c5, smoothstep(0.66, 0.74, h));
-  return mix(c5, c6, clamp((h - 0.74) / 0.30, 0.0, 1.0));
+  if (h < 0.49) return mix(c2, c3, (h - 0.42) / 0.07);
+  if (h < 0.55) return mix(c3, c4, (h - 0.49) / 0.06);
+  if (h < 0.66) return mix(c4, c45, smoothstep(0.61, 0.66, h));
+  if (h < 0.72) return mix(c45, c5, smoothstep(0.66, 0.72, h));
+  return mix(c5, c6, clamp((h - 0.72) / 0.32, 0.0, 1.0));
 }
 // the young universe (z ≳ 3): a delicate indigo-teal lattice whose first knots burn blue-white
 vec3 earlyPalette(float h){
@@ -304,7 +304,7 @@ vec4 texBicubic(sampler2D t, vec2 uv, vec2 size){
 }
 float ignC(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 // soft black floor: C1 toe instead of a hard max(x - floor, 0) (no hard iso-contour edges)
-float softFloor(float x, float fl){ float d = x - fl; const float w = 0.16; return d > w ? d : (d < -w ? 0.0 : (d + w) * (d + w) / (4.0 * w)); }
+float softFloor(float x, float fl){ float d = x - fl; const float w = 0.32; return d > w ? d : (d < -w ? 0.0 : (d + w) * (d + w) / (4.0 * w)); }
 // log column-density response with a black floor (faint sheets fall to true black, OLED)
 // + an unbounded power-law term for collapsed cores: a cusp that keeps rising toward the centre
 float respI(float A){
@@ -333,7 +333,7 @@ void main(){
   // back to the half level (σ≈4 px), and only near-empty ones to the quarter level; the envelope
   // adds a faint additive halo (a PSF wing), never the body, so spines stay pin-sharp.
   float kH = smoothstep(0.02 * sA, 0.22 * sA, cq);
-  float kF = smoothstep(0.12 * sA, 0.80 * sA, ch);
+  float kF = smoothstep(0.06 * sA, 0.55 * sA, ch);
   vec4 env = mix(q, h, kH);
   vec4 acc = mix(h, f, kF);
   acc = mix(env, acc, kH);

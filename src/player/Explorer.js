@@ -1191,8 +1191,8 @@ function visorPoint(f, u, v, out) {
   // mirrored strip, not a single round 'eye'). The band narrows and sweeps down toward
   // the temples like a sports visor.
   const au = Math.abs(u);
-  const phi = u * 1.2; // wide continuous wrap (one band of glass, temple to temple)
-  const el = -0.06 + v * 0.4 * (1 - 0.42 * au * au) - 0.1 * au * au;
+  const phi = u * 1.3; // wide continuous wrap (one band of glass, temple to temple)
+  const el = -0.05 + v * 0.47 * (1 - 0.4 * au * au) - 0.1 * au * au; // taller face shield (~55% of the front)
   const dx = Math.sin(phi) * Math.cos(el), dy = Math.sin(el), dz = Math.cos(phi) * Math.cos(el);
   const [cx, cy, cz] = HELM_C;
   let t0 = 0.0, t1 = 0.3;
