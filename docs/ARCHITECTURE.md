@@ -185,16 +185,22 @@ directions. Main thread and workers must produce identical heights.
     then the other side, then under its body, and never covers another body's anchor; an explicit
     `opts.align` pins the side). `labelWorld(id, centre, camera, text, {radius})` (world units, or
     `radiusPx`) anchors the name on the body's projected limb at 45° instead of a point above it
-    (pass the body centre as the vec3, or `opts.center`). `ui.mapNames` (default on) lets map
-    levels show quiet names for every body, in shots too.
+    (pass the body centre as the vec3, or `opts.center`). `opts.bodyRadius` (world units, with
+    `opts.center`; include rings) adds the body's projected disc as an obstacle, so no other name
+    is placed over it. `ui.mapNames` (default on) lets map levels show quiet names for every body,
+    in shots too.
   - Legibility: the UI samples the presented frame under each HUD anchor every ~18 frames
-    (every 2 in shot mode; live play reads back asynchronously through a fenced pixel-pack buffer, so
-    it never stalls the GPU) and fades in a feathered "ink" scrim + stronger text halo where the
-    background is bright; pure-black space stays untouched. The scrim is a masked local backdrop blur
-    (no grey cast; plain veil at quality low); the compass flips to dark ink over bright sky
-    (`.is-onlight`), and the pointer-lock hint carries its own frosted pill.
-  - `ui.arrival` in game modes (planet) renders as a lower-left plaque (phones: compact top-left
-    caption, auto-fades ≤ 4.6 s, compass hidden meanwhile); map levels keep the centred title card.
+    (every 2 in shot mode; reads back asynchronously through a fenced pixel-pack buffer) and fades in
+    a feathered "ink" scrim + tight text outline where the background is bright; pure-black space
+    stays untouched. Strength is contrast-driven: the 85th-percentile *linear* luminance under the
+    glyphs (a bright stretch is never averaged away by a dark one) sets the scrim alpha needed for
+    ~4.5:1 against light text. One polarity everywhere (light ink, no dark-ink flips, no backdrop
+    blur over the canvas). The breadcrumb collapses to the current place while it would touch the
+    compass; while an arrival plaque is on screen the breadcrumb and compass step aside.
+  - `ui.arrival` in game modes (planet) renders as a compact lower-left plaque on an edge-anchored
+    shade (phones: top caption on a full-width top shade, whole myth — never ellipsized — auto-fades
+    after a reading time, compass hidden meanwhile); map levels keep the centred title card. Every
+    place name (title, arrival, card, veil) uses the logotype serif; mono is for data only.
     The pointer-lock hint lives bottom-right; bottom-centre is for contextual prompts/hints.
   - `ui.toast(title, text, ms, {kind:'lore'|'note', kicker})` — short text → discovery note under
     the breadcrumb; long text (>70 chars) or `kind:'lore'` → cinematic serif myth reveal (upper third).

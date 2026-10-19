@@ -22,17 +22,18 @@ function lobe(B, x, y, z, r, sy, seed, segs, rings, amp) {
 /** A canopy mass: a core lobe crowded by smaller leaf clumps so the silhouette breaks up and self-shades. */
 function blob(B, x, y, z, r, color, seed, sy = 0.8) {
   B.mat(M.FOLIAGE, (seed * 0.137) % 1, 0, 3).color(color).ext(0.9, 0, F.NOWIN, 0);
-  lobe(B, x, y, z, r * 0.82, sy, seed, 9, 6, 0.24);
-  const n = 7;
+  lobe(B, x, y, z, r * 0.7, sy, seed, 9, 6, 0.3);
+  const n = 11;
   for (let i = 0; i < n; i++) {
     const t = (i + 0.5) / n;
     const el = Math.asin(1 - 2 * t * 0.85) ; // biased to the upper hemisphere
     const az = i * 2.39996 + seed * 1.7;
-    const rr = r * (0.36 + 0.14 * ((seed * 7 + i * 3) % 5) / 5);
-    const px = x + Math.cos(az) * Math.cos(el) * r * 0.72, pz = z + Math.sin(az) * Math.cos(el) * r * 0.72, py = y + Math.sin(el) * r * sy * 0.72;
+    const rr = r * (0.3 + 0.14 * ((seed * 7 + i * 3) % 5) / 5);
+    const sp = 0.74 + 0.14 * (((seed * 5 + i * 11) % 7) / 7);
+    const px = x + Math.cos(az) * Math.cos(el) * r * sp, pz = z + Math.sin(az) * Math.cos(el) * r * sp, py = y + Math.sin(el) * r * sy * sp;
     const c = color.clone().multiplyScalar(0.85 + 0.3 * (((seed * 13 + i * 7) % 10) / 10));
     B.mat(M.FOLIAGE, ((seed + i) * 0.173) % 1, 0, 3).color(c).ext(0.95, 0, F.NOWIN, 0);
-    lobe(B, px, py, pz, rr, Math.max(0.6, sy), seed * 10 + i, 6, 4, 0.3);
+    lobe(B, px, py, pz, rr, Math.max(0.6, sy), seed * 10 + i, 7, 4, 0.38);
   }
 }
 
@@ -76,13 +77,13 @@ function treeGeometry(kind) {
       const red = kind === 'maple_red';
       trunk(B, [[0, -0.5, 0], [0.2, 1.8, 0], [0.6, 3.2, 0.3]], 0.2, col('#3a2a20'));
       trunk(B, [[0.15, 1.6, 0], [-1.0, 3.0, -0.4]], 0.11, col('#3a2a20'));
-      const a = red ? col('#a8281e') : col('#d8642a'), b = red ? col('#c8382a') : col('#e88a34'), c = red ? col('#8a1e18') : col('#c85424');
+      const a = red ? col('#9a2a1e') : col('#c4602c'), b = red ? col('#b8402a') : col('#d27a36'), c = red ? col('#7a2018') : col('#a84a24');
       blob(B, 0.4, 4.0, 0.2, 2.3, a, 11, 0.62); blob(B, -1.1, 3.6, -0.5, 1.7, b, 12, 0.6); blob(B, 1.4, 3.4, 0.9, 1.5, c, 13, 0.6); blob(B, 0, 4.9, -0.4, 1.5, b, 14, 0.6);
       break;
     }
     case 'golden': {
       trunk(B, [[0, -0.5, 0], [0.2, 2.6, 0], [0.1, 4.2, 0.2]], 0.25, col('#5a4632'));
-      const g = [col('#d8a830'), col('#e8bc44'), col('#c08a24')];
+      const g = [col('#c49a34'), col('#d4ac46'), col('#a87a26')];
       blob(B, 0, 5.0, 0, 2.6, g[0], 15); blob(B, 1.4, 4.5, 0.7, 1.9, g[1], 16); blob(B, -1.2, 4.6, -0.6, 1.9, g[2], 17); blob(B, 0.3, 6.3, -0.2, 1.6, g[1], 18);
       break;
     }

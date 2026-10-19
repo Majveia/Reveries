@@ -27,7 +27,7 @@ import { Random, seedFrom } from '../core/Random.js';
 import { valueFbm3, valueNoise3 } from '../levels/planet/flora/scatter.js';
 
 const clamp = THREE.MathUtils.clamp, smooth = THREE.MathUtils.smoothstep;
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3();
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _p = new THREE.Vector3(), _q2v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 
@@ -319,7 +319,20 @@ export default class Vehicles {
     const g1 = w.groundAt(v.position, this._gg);
     const top1 = Math.max(g1.radius, g1.water ? g1.waterRadius : -Infinity);
     // ease toward the terrain (a hover vehicle follows it; a ship holds its line more stiffly)
-    const want = top1 + this._glideClear, k = v.type === 'bike' ? 0.6 : 0.2;
+    let top = top1;
+    if (v.type === 'ship') {
+      // a ship holds its line over the highest ground just ahead (never sinks into a trough behind a crest)
+      const fwd = _p.copy(v.velocity).addScaledVector(up1, -v.velocity.dot(up1));
+      if (fwd.lengthSq() > 1e-6) {
+        fwd.normalize();
+        const R = v.position.length();
+        for (const m of [15, 30, 45, 60]) {
+          const gq = w.groundAt(_q2v.copy(v.position).addScaledVector(fwd, m).setLength(R), this._gg2 || (this._gg2 = {}));
+          top = Math.max(top, gq.radius, gq.water ? gq.waterRadius : -Infinity);
+        }
+      }
+    }
+    const want = top + this._glideClear, k = v.type === 'bike' ? 0.6 : 0.2;
     v.position.setLength(v.position.length() + (want - v.position.length()) * k);
     if (v.speed !== undefined) v.speed = v.velocity.length();
     // the rider's cloth can't integrate a 1 m/frame scripted glide (it stretches into a long
@@ -519,6 +532,18 @@ export default class Vehicles {
   }
 
   /** Number of collider samples along segment a→b that fall inside a collider grown by `pad` (m). */
+  /** Terrain occlusion along a segment: number of samples (of 14) that sit under the ground. */
+  _terrBlocked(a, b, pad = 1) {
+    const w = this.world, q = new THREE.Vector3(), g = this._gt || (this._gt = {});
+    let hits = 0;
+    for (let i = 1; i < 14; i++) {
+      q.lerpVectors(a, b, i / 14);
+      const gg = w.groundAt(q, g);
+      if (q.length() < gg.radius + pad) hits++;
+    }
+    return hits;
+  }
+
   _segBlocked(a, b, pad = 0.3) {
     const cols = this.world.colliders;
     if (!cols || !cols.size) return 0;
@@ -693,7 +718,7 @@ export default class Vehicles {
       // fly roughly across the low sun so the hull is side-lit (key + rim), not a backlit silhouette
       const head = sunT.clone().applyAxisAngle(sdir, sp.head ?? (R.chance(0.5) ? 1 : -1) * R.range(1.2, 1.9));
       // prefer a run over open water (spray, reflections) if there is sea nearby
-      let start = sdir.clone().addScaledVector(head, -1400 / w.radius).normalize();
+      let start = sdir.clone().addScaledVector(head, -1400 / w.radius).normalize(), wetRun = false;
       if (w.hasOcean) {
         const wet = (d) => w.heightAt(d) < w.seaLevel - 4;
         search: for (const dist of [600, 1000, 1500, 2200, 3200, 4500]) {
@@ -703,7 +728,7 @@ export default class Vehicles {
             const hd = this._tangentTo(c, c.clone().addScaledVector(head, 0.01));
             let ok = true;
             for (const m of [150, 300, 450, 600]) if (!wet(c.clone().addScaledVector(hd, m / w.radius).normalize())) { ok = false; break; }
-            if (ok) { start = c; break search; }
+            if (ok) { start = c; wetRun = true; break search; }
           }
         }
       }
@@ -714,28 +739,49 @@ export default class Vehicles {
       ship.fly(pos, pos.clone().addScaledVector(hd, 100), 115, start);
       const turn = (R.chance(0.5) ? 1 : -1) * R.range(0.14, 0.3);
       // low and a little slower: the sea is torn up right under the hull and the spray stays in frame
-      this.autopilot = ship; this.apParams = { alt: sp.alt ?? R.range(6.5, 10), throttle: 0.48, yaw: sp.yaw ?? turn };
-      this.forceVortex = 0;
+      // over land (dunes, hills) the pass flies higher above the local relief: a crest must never
+      // stand between the lens and the hull
+      let alt = sp.alt ?? R.range(6.5, 10);
+      if (!wetRun && sp.alt == null) {
+        let lo = Infinity, hi = -Infinity;
+        for (let m = 0; m <= 1800; m += 60) {
+          const hm = w.heightAt(start.clone().addScaledVector(hd, m / w.radius).normalize());
+          lo = Math.min(lo, hm); hi = Math.max(hi, hm);
+        }
+        alt = clamp(16 + (hi - lo) * 0.3, 16, 40);
+      }
+      this.autopilot = ship; this.apParams = { alt, throttle: 0.48, yaw: sp.yaw ?? turn };
+      // humid sunset air: thin warm-lit vortex corkscrews peel off the wingtips
+      this.forceVortex = sp.vortex ?? 0.6;
       this._simulate(150);
       // camera: candidates around the ship, scored for a side/back-quarter key light (sun ~95-150° off the view axis)
       const fw = _v.copy(Z).applyQuaternion(ship.quaternion), upS = ship.position.clone().normalize();
       fw.addScaledVector(upS, -fw.dot(upS)).normalize();
       const lft = new THREE.Vector3().crossVectors(upS, fw).normalize();
       let best = null, bs = -Infinity;
-      for (let k = 0; k < 18; k++) {
-        const az = (R.chance(0.5) ? 1 : -1) * R.range(0.5, 2.6), d = R.range(14, 20), h = R.range(0.8, 4.5);
+      const ahead = ship.position.clone().addScaledVector(fw, 14), shipC = ship.position.clone().addScaledVector(upS, 0.6);
+      for (let k = 0; k < 24; k++) {
+        // rear three-quarter, a little above the hull: the swept planform and the wake both read
+        const az = (R.chance(0.5) ? 1 : -1) * R.range(1.75, 2.55), d = R.range(19, 25), h = R.range(1.6, 3.8);
         const o = new THREE.Vector3(Math.sin(az) * d, h, Math.cos(az) * d);
         const cam = ship.position.clone().addScaledVector(lft, o.x).addScaledVector(upS, o.y).addScaledVector(fw, o.z);
         const view = ship.position.clone().sub(cam).normalize();
-        // sunset: low sun 35-60° off the view axis (just off-frame) → hot specular rim on the hull,
+        // sunset: low sun ~60° off the view axis (just off-frame) → hot specular rim on the hull,
         // glowing horizon behind; the hull keeps a lit side (not a pure silhouette)
         const th = Math.acos(clamp(view.dot(w.sunDir), -1, 1)) * 180 / Math.PI;
-        const sc = -Math.abs(th - (sp.sunAng ?? 62)) / 20 - Math.abs(h - 2.2) * 0.15 + R.range(0, 0.6);
+        let sc = -Math.abs(th - (sp.sunAng ?? 62)) / 20 - Math.abs(h - 2.4) * 0.15 + R.range(0, 0.6);
+        // line of sight to the hull and to the air just ahead of it: terrain crests and buildings
+        sc -= (this._terrBlocked(cam, shipC, 0.5) * 6 + this._terrBlocked(cam, ahead, 0.5) * 2);
+        sc -= this._segBlocked(cam, shipC, 1.0) * 6;
+        const gc = w.groundAt(cam, this._cg || (this._cg = {}));
+        if (cam.length() < Math.max(gc.radius, gc.water ? gc.waterRadius : -Infinity) + 1.5) sc -= 8;
         if (sc > bs) { bs = sc; best = o; }
       }
+      // still occluded (deep dune field): rise and look down onto the hull
+      if (bs < -5) best.set(best.x * 0.8, Math.max(best.y, 9), best.z * 0.8);
       const ox = sp.ox ?? best.x, oy = sp.oy ?? best.y, oz = sp.oz ?? best.z;
       // aim slightly ahead of the ship along its path: the ship sits off-centre, leading the frame
-      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(44, 54), minClear: 1.2, bankRoll: 0.25, streaks: sp.streaks ?? 0 };
+      this.shotCam = { vehicle: ship, offset: new THREE.Vector3(ox, oy, oz), target: new THREE.Vector3(-ox * 0.06, 0.8, 1.5), fov: sp.fov ?? R.range(37, 42), minClear: 1.2, bankRoll: 0.25, streaks: sp.streaks ?? 0 };
       ship._holdForShot = true;
       this.shotGlide = true;
       this.engine.postfx?.setGrade?.({ motionBlur: sp.mb ?? 0.55, motionBlurNear: Math.hypot(ox, oy, oz) + 9 }, 0);

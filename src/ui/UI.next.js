@@ -255,7 +255,7 @@ export class UI {
       }
     });
     this.crumbs.classList.remove('is-in', 'is-collapsed'); void this.crumbs.offsetWidth; this.crumbs.classList.add('is-in');
-    this._locAt = performance.now();
+    this._locAt = performance.now(); this._crumbHit = false;
   }
 
   // ---- info card --------------------------------------------------------------
@@ -854,7 +854,12 @@ export class UI {
     // (full trail on hover, on map/menus, or while the cursor is free and near it)
     const ptr = I.pointer;
     const near = !I.pointerLocked && ptr && ptr.x < 360 && ptr.y < 70;
-    const col = game && !near && performance.now() - (this._locAt || 0) > 4200;
+    let col = game && !near && performance.now() - (this._locAt || 0) > 4200;
+    if (!col && !this._crumbCol && this._compassOn && this._frame % 10 === 0) {
+      const cr = this.crumbs.getBoundingClientRect(), cp = this.compass.getBoundingClientRect();
+      this._crumbHit = cr.right > cp.left + cp.width * 0.24 - 20;
+    }
+    if (this._compassOn && this._crumbHit) col = true;
     if (col !== this._crumbCol) { this._crumbCol = col; this.crumbs.classList.toggle('is-collapsed', col); }
     if (lock !== this._lock) {
       this._lock = lock;
@@ -947,7 +952,8 @@ export class UI {
     for (const j of jobs) {
       if (!j.title && !j.vis) continue;
       const r = j.r;
-      const x0 = clamp(r.left - 10, 0, W - 2), x1 = clamp(r.right + 10, x0 + 1, W);
+      const pad = j.title ? 10 : 4;
+      const x0 = clamp(r.left - pad, 0, W - 2), x1 = clamp(r.right + pad, x0 + 1, W);
       const w = Math.min(1024, Math.max(1, Math.floor((x1 - x0) * sx)));
       j.rows = [];
       for (let k = 0; k < 3; k++) {
@@ -999,26 +1005,36 @@ export class UI {
     this._applyLuma(P.jobs, buf, !!this.engine.shotMode);
   }
   _applyLuma(jobs, buf, snap) {
+    // linear-light luminance; the 85th percentile, not the mean, so the brightest stretch under
+    // the glyphs (sun haze beside a dark island) decides the ink — never an average of the two
+    const lin = (this._linLUT ||= Float32Array.from({ length: 256 }, (_, i) => { const c = i / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }));
+    const acc = (this._lumAcc ||= []);
     const lumOf = (j) => {
-      let sum = 0, n = 0, br = 0;
+      acc.length = 0;
       for (const row of j.rows) {
         const step = Math.max(1, Math.floor(row.w / 48));
         for (let i = 0; i < row.w; i += step) {
-          const o = row.off + i * 4, l = (0.2126 * buf[o] + 0.7152 * buf[o + 1] + 0.0722 * buf[o + 2]) / 255;
-          sum += l; n++; if (l > 0.5) br++;
+          const o = row.off + i * 4;
+          acc.push(0.2126 * lin[buf[o]] + 0.7152 * lin[buf[o + 1]] + 0.0722 * lin[buf[o + 2]]);
         }
       }
-      return n ? clamp(0.4 * sum / n + 0.6 * br / n, 0, 1) : 0;
+      if (!acc.length) return 0;
+      acc.sort((a, b) => a - b);
+      return clamp(acc[Math.min(acc.length - 1, Math.floor(acc.length * 0.85))], 0, 1);
     };
     for (const j of jobs) {
-      if (j.title) { this.titleEl?.style.setProperty('--bg-l', lumOf(j).toFixed(2)); continue; }
+      if (j.title) { this.titleEl?.style.setProperty('--bg-l', Math.min(1, Math.sqrt(lumOf(j)) * 1.1).toFixed(2)); continue; }
       const { g, r, vis } = j;
       const L = vis ? lumOf(j) : 0;
       g.L = snap ? L : g.L + (L - g.L) * 0.5;
       // compass over a bright sky flips to dark ink (Death Stranding-style) instead of a grey scrim
       // one polarity for the whole HUD: light ink, a feathered scrim and a per-glyph halo
       // (no dark-ink flips — a band of mixed polarities reads as two different UIs)
-      const a = clamp((g.L - 0.12) / 0.4, 0, 1) * (g.ink.classList.contains('is-touch') ? 0.5 : 0.6);
+      // contrast-driven: light text (L≈0.9) wants ≥ 4.5:1, i.e. ground under it ≤ ~0.16 linear;
+      // the scrim's core alpha (CSS .62) is scaled so ground·(1 − a) meets that, capped
+      const touchInk = g.ink.classList.contains('is-touch');
+      const need = g.L > 0.05 ? clamp(1 - 0.16 / g.L, 0, touchInk ? 0.4 : 0.6) : 0;
+      const a = need / 0.62;
       if (vis) {
         const f = g.ink.classList.contains('is-big') ? 40 : 26;
         const s = g.ink.style;
@@ -1027,16 +1043,17 @@ export class UI {
       }
       g.ink.style.opacity = vis ? a.toFixed(2) : '0';
       const on = g.el.classList.contains('is-bright');
-      g.el.classList.toggle('is-bright', vis && g.L > (on ? 0.22 : 0.3));
+      g.el.classList.toggle('is-bright', vis && g.L > (on ? 0.14 : 0.19));
     }
   }
   _regionOn(el) {
     if (el === this.compass) return this._compassOn && getComputedStyle(el).opacity > 0.05;
-    if (el === this.arrivalEl) return el.classList.contains('is-on') && !el.classList.contains('is-out');
+    if (el === this.arrivalEl) return el.classList.contains('is-on') && !el.classList.contains('is-out') && !el.classList.contains('is-plaque');
     if (el === this.lockEl) return el.classList.contains('is-on');
     if (el === this.tele) return el.classList.contains('is-on');
     if (el === this.buttons || el === this.ghost) return !!this._touchOn && !(el === this.ghost && this.touch.classList.contains('used-stick'));
     if (el === this.stack) return this.hintEl.classList.contains('is-on') || this.promptEl.classList.contains('is-on');
+    if (el === this.crumbs) return +getComputedStyle(el).opacity > 0.05; // hidden under an arrival plaque
     return true;
   }
 

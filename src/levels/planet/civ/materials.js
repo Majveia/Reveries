@@ -744,9 +744,12 @@ CivS civSurface(){
     if (id == 22) {
       // leaf clumps: dark gaps between sunlit tufts, cooler deep inside, lighter tips on top
       float far = smoothstep(0.08, 0.4, fwm);
-      float cl = civN2(uv * 2.6 + seed * 11.0) * 0.6 + civN2(uv * 6.3 + seed * 5.0) * 0.4;
-      float gap = smoothstep(0.5, 0.25, cl) * (1.0 - far);
-      s.alb *= mix(1.0, 0.45, gap);
+      // tufts: metre-scale leaf masses with soft dark pockets (not a coral-like crack pattern),
+      // fine leaf speckle only up close
+      float cl = civN2(uv * 1.3 + seed * 11.0) * 0.65 + civN2(uv * 3.1 + seed * 5.0) * 0.35;
+      float gap = smoothstep(0.46, 0.22, cl) * (1.0 - far);
+      float leaf = civN2(uv * 14.0 + seed) * (1.0 - smoothstep(0.02, 0.08, fwm));
+      s.alb *= mix(1.0, 0.62, gap) * (0.9 + 0.2 * leaf);
       s.ao *= mix(1.0, 0.55, gap) * (0.75 + 0.25 * clamp(up * 0.5 + 0.5, 0.0, 1.0));
       s.alb *= mix(vec3(0.8, 0.9, 1.0), vec3(1.12, 1.08, 0.9), clamp(up * 0.5 + 0.5, 0.0, 1.0));
       s.h += cl * 0.25 * (1.0 - far);

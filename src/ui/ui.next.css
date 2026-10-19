@@ -348,14 +348,6 @@ body.rvu-shot .rvu-ink, body.rvu-shot .rvu-lock { transition: none; animation: n
 .rvu-cmark::after { content: ''; position: absolute; left: 3px; top: -4px; width: 1px; height: 3px; background: rgba(var(--rvu-warm), .8); }
 .rvu-compass-cap { font-size: 8.5px; top: 29px; color: rgb(var(--rvu-warm)); }
 .rvu-compass-cap { transition: opacity .5s, transform .5s var(--rvu-ease); }
-/* compass over a bright sky: dark ink + light halo instead of a grey scrim */
-.rvu-compass.is-onlight::before { background: linear-gradient(90deg, transparent, rgba(10, 12, 18, .42) 30%, rgba(10, 12, 18, .42) 70%, transparent); }
-.rvu-compass.is-onlight .rvu-compass-strip i { background: rgba(10, 12, 18, .55); }
-.rvu-compass.is-onlight .rvu-compass-strip b { color: rgba(10, 12, 18, .78); text-shadow: 0 0 6px rgba(255, 255, 255, .45), 0 0 1px rgba(255, 255, 255, .5); }
-.rvu-compass.is-onlight .rvu-compass-strip b.is-card { color: rgba(6, 8, 12, .92); }
-.rvu-compass.is-onlight::after { background: rgb(150, 72, 24); box-shadow: 0 0 4px rgba(255, 255, 255, .6); }
-.rvu-compass.is-onlight .rvu-compass-cap { color: rgb(120, 60, 18); text-shadow: 0 0 6px rgba(255, 255, 255, .5); }
-.rvu-compass.is-onlight .rvu-cmark svg { filter: drop-shadow(0 0 1px rgba(10, 12, 18, .8)); }
 .rvu-compass-strip b, .rvu-compass::before, .rvu-compass-strip i { transition: color .6s, background .6s; }
 
 /* arrival: kicker legible; game modes → lower-left plaque (hero owns the centre) */
@@ -493,3 +485,57 @@ body.rvu-arriving .rvu:has(> .rvu-arrival.is-plaque.is-on) > .rvu-compass.is-on 
   .rvu-arrival p, .rvu-arrival.is-plaque p { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
   .rvu-arrival.is-plaque p { font-size: 12px; line-height: 1.42; }
 }
+
+/* ======================================================================
+   round 17 — one display voice, edge-anchored plaques, contrast-driven ink
+   ====================================================================== */
+/* ink: a plain feathered scrim (no backdrop blur — blur over the canvas reads as dirty glass and
+   costs a compositor pass per region); strength is set per frame from linear luminance */
+.rvu-ink, .rvu-ink.is-big, .rvu-ink.is-wide, .rvu-ink.is-touch { background: rgba(3, 5, 9, .62); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.rvu-ink.is-touch { background: radial-gradient(closest-side, rgba(3, 5, 9, .62), rgba(3, 5, 9, .3) 70%, transparent); -webkit-mask-image: none; mask-image: none; }
+/* small text over bright ground: a tight outline, never a wide soft halo (that reads as mud at 9 px) */
+.rvu .is-bright, .rvu .is-bright :not(kbd):not(.rvu-pad) { text-shadow: 0 0 1px #000, 0 0 2px rgba(0, 0, 0, .8), 0 0 5px rgba(0, 0, 0, .45); }
+.rvu-crumbs { max-width: calc(50vw - 150px); font-weight: 600; }
+.rvu-crumbs, .rvu-tele, .rvu-compass-strip b { text-rendering: geometricPrecision; }
+
+/* compass: light ink only; the waypoint caption sits on its own tight ink pill */
+.rvu-compass { height: 46px; }
+.rvu-compass-strip b { font-size: 9px; font-weight: 600; color: rgba(240, 244, 252, .86); }
+.rvu-compass-cap { left: 50%; right: auto; transform: translateX(-50%); top: 27px; padding: 3px 9px 3px 10px; border-radius: 999px; background: rgba(4, 6, 10, .42); font: 600 9px/1 var(--rvu-mono); letter-spacing: .2em; color: rgba(255, 242, 226, .96); text-shadow: 0 0 1px rgba(0, 0, 0, .8); max-width: 200px; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 0 0 0 1px rgba(var(--rvu-warm), .18); }
+
+/* one display voice: every place name in the logotype serif (mono = data, sans = prompts) */
+.rvu-arrival h3, .rvu-card h2, .rvu-veil-title { font-family: var(--rvu-serif); font-weight: 400; text-transform: uppercase; }
+.rvu-arrival h3 { font-size: clamp(28px, 3.6vw, 44px); letter-spacing: .26em; margin-right: -.26em; text-shadow: 0 0 1px rgba(0, 0, 0, .6), 0 0 18px rgba(0, 0, 0, .55), 0 0 40px rgba(var(--rvu-accent), .18); }
+.rvu-card h2 { font-size: 23px; letter-spacing: .14em; }
+
+/* game-mode plaque: compact, lower-left, on an edge-anchored shade (a vignette, not a floating blob) */
+.rvu-arrival.is-plaque { width: min(360px, 34vw); bottom: calc(var(--rvu-b) + 22px); isolation: isolate; }
+.rvu-arrival.is-plaque::before { display: block; position: absolute; z-index: -1; left: calc(-1 * var(--rvu-l)); top: -64px; bottom: calc(-1 * (var(--rvu-b) + 22px)); width: calc(100% + var(--rvu-l) + 180px); right: auto; inset-inline-end: auto; border-radius: 0; background: radial-gradient(120% 100% at 0% 100%, rgba(3, 5, 9, .62), rgba(3, 5, 9, .38) 45%, rgba(3, 5, 9, 0) 78%); -webkit-backdrop-filter: none; backdrop-filter: none; -webkit-mask-image: none; mask-image: none; pointer-events: none; }
+.rvu-arrival.is-plaque .rvu-arr-kick { font-size: 9px; letter-spacing: .38em; color: rgba(240, 236, 228, .74); }
+.rvu-arrival.is-plaque h3 { margin-top: 7px; font-size: clamp(22px, 2.2vw, 29px); font-weight: 400; letter-spacing: .22em; }
+.rvu-arrival.is-plaque .rvu-arr-line { width: 72px; margin-top: 10px; }
+.rvu-arrival.is-plaque p { margin-top: 10px; max-width: 25em; font: italic 500 14.5px/1.42 var(--rvu-serif); letter-spacing: .015em; color: rgba(248, 246, 240, .95); text-shadow: 0 0 1px rgba(0, 0, 0, .9), 0 0 3px rgba(0, 0, 0, .6), 0 1px 12px rgba(0, 0, 0, .5); }
+
+/* title: a cool, tighter shade that deepens the web toward navy instead of greying it */
+.rvu-title-inner::before { inset: -6% -10%; background: radial-gradient(closest-side, rgba(6, 8, 20, .84), rgba(6, 8, 20, .62) 42%, rgba(6, 8, 20, .22) 74%, rgba(6, 8, 20, 0)); mix-blend-mode: multiply; opacity: calc(.7 + .3 * var(--bg-l, .6)); }
+.rvu-title-tag { position: relative; isolation: isolate; }
+.rvu-title-tag::before { content: ''; position: absolute; z-index: -1; inset: -40% -8%; background: radial-gradient(closest-side, rgba(6, 8, 20, .7), rgba(6, 8, 20, 0)); mix-blend-mode: multiply; pointer-events: none; }
+.rvu-wm span.is-i::before { width: .8em; height: .17em; margin-left: -.4em; border-width: 1.5px; border-color: rgba(var(--rvu-warm), .55); }
+.rvu-wm span.is-i::after { width: .09em; height: .09em; margin-left: -.045em; }
+
+/* touch: edges that read on bright and dark ground alike */
+.rvu-ghost { border: 1.5px solid rgba(255, 255, 255, .42); background: radial-gradient(circle, rgba(4, 6, 10, .22), rgba(4, 6, 10, .08) 70%, transparent); box-shadow: 0 0 0 1px rgba(0, 0, 0, .18), inset 0 0 12px rgba(0, 0, 0, .25); }
+.rvu-ghost::after { font-size: 10px; color: rgba(255, 255, 255, .86); }
+.rvu-tbtn { border-width: 1.5px; border-color: rgba(255, 255, 255, .4); background: rgba(8, 10, 16, .34); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .22), inset 0 0 10px rgba(0, 0, 0, .22); }
+.rvu-tbtn svg { stroke-width: 1.75; }
+
+@media (max-width: 640px) {
+  /* phones: the caption rides a full-width top shade (like a letterbox), no blur, no blob */
+  .rvu-arrival.is-plaque { top: var(--rvu-t); bottom: auto; width: min(300px, 74vw); }
+  .rvu-arrival.is-plaque::before { display: block; left: calc(-1 * var(--rvu-l)); top: calc(-1 * var(--rvu-t)); bottom: -56px; width: 100vw; background: linear-gradient(180deg, rgba(3, 5, 9, .62), rgba(3, 5, 9, .4) 55%, rgba(3, 5, 9, 0)); }
+  .rvu-arrival.is-plaque h3 { margin-top: 5px; font-size: 19px; letter-spacing: .2em; }
+  .rvu-arrival.is-plaque p { margin-top: 7px; font-size: 13px; line-height: 1.38; max-width: none; }
+  .rvu-arrival.is-plaque .rvu-arr-kick { font-size: 8.5px; }
+}
+/* quiet map names: never a leader (consistency — a leader marks only the named/hovered body) */
+.rvu-label.is-quiet .rvu-label-ln { opacity: 0; }

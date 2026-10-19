@@ -166,7 +166,11 @@ export function vehicleMaterials(engine) {
           reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, hL3)), reflectedLight.indirectDiffuse, 0.4);
           // the env probe sees a saturated cyan sea / green meadow under the hull: keep the reflection's
           // value and most of the warm sky, but not enough chroma to tint cream paint lime
-          reflectedLight.indirectSpecular = mix(vec3(dot(reflectedLight.indirectSpecular, hL3)), reflectedLight.indirectSpecular, 0.6);
+          reflectedLight.indirectSpecular = mix(vec3(dot(reflectedLight.indirectSpecular, hL3)), reflectedLight.indirectSpecular, 0.3);
+          // hue guard: a warm sky + cyan sea in the probe sums to lime/olive at grazing edges — never let
+          // the reflected/ambient terms go green-dominant on the lacquer (yellows and blues pass)
+          reflectedLight.indirectSpecular.g = min(reflectedLight.indirectSpecular.g, max(reflectedLight.indirectSpecular.r, reflectedLight.indirectSpecular.b));
+          reflectedLight.indirectDiffuse.g = min(reflectedLight.indirectDiffuse.g, max(reflectedLight.indirectDiffuse.r, reflectedLight.indirectDiffuse.b));
         }
         {
           // sun rim, masked by the sun's actual visibility here (shadow maps): direct diffuse

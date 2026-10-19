@@ -36,7 +36,7 @@ export const plazaMat = () => G.SANDSTONE;
 export const podium = { r: 0.82, maxR: 48, blur: 110, lift: 0.7, raise: 1.5 };
 export const key = { shade: 0.3, gain: 2.0, rim: 0.9 }; // brutal key: slabs split into a hot sun plane and a deep shadow plane through the dust
 export const shotSun = 0.17; // low evening sun high enough to cut through the dust: slabs split into a hot rim and deep shadow planes
-export const shot = { dist: 2.0, height: 27, sunAngle: 1.75, lmLift: 0.25, minFov: 24, maxFov: 36, sunPref: 1.45, maxDown: 0.09, skyTop: 0.16, fgOcc: 3 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
+export const shot = { dist: 2.0, height: 18, sunAngle: 1.75, lmLift: 0.25, minFov: 24, maxFov: 36, sunPref: 1.45, maxDown: 0.06, skyTop: 0.16, fgOcc: 3 }; // Arrakeen from the ground: tiny lives under colossal slabs standing against the dust-lit sky
 
 function slab(ctx, lot, w, d, H) {
   const { rng, pal } = ctx, B = ctx.B;
